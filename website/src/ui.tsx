@@ -12,7 +12,6 @@ export const NAV: { route: Route; label: string }[] = [
     { route: 'contact', label: 'Contact us' },
 ];
 
-export const EXAMHUB_URL = (import.meta as any).env?.VITE_EXAMHUB_URL || 'http://localhost:5174/';
 export const MOTTO = 'Innovating Today, Transforming Tomorrow.';
 
 export function hrefFor(r: Route): string {

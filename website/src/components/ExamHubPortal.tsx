@@ -22,7 +22,7 @@ import {
     ClipboardCheck,
 } from 'lucide-react';
 
-type Level = number | string;
+export type Level = number | string;
 type Subject = { id: string; name: string };
 type ExamQ = { id: string; text: string; options: string[] };
 type AdminQ = ExamQ & { subjectId: string; level: Level; correctIndex: number; explanation: string };
@@ -45,7 +45,6 @@ const EXAM_TRACKS: { id: string; label: string }[] = [
     { id: 'GTLE', label: 'GTLE' },
     { id: 'GES-PROMO', label: 'GES Promotion' },
 ];
-const ALL_LEVELS: Level[] = [...SCHOOL_LEVELS, ...EXAM_TRACKS.map((t) => t.id)];
 const LETTERS = ['A', 'B', 'C', 'D'];
 
 function levelLabel(l: Level): string {
@@ -55,17 +54,6 @@ function levelLabel(l: Level): string {
 
 function parseLevel(v: string): Level {
     return /^\d+$/.test(v) ? Number(v) : v;
-}
-
-function levelFromUrl(): Level | null {
-    try {
-        const p = new URLSearchParams(window.location.search).get('level');
-        if (!p) return null;
-        const v = parseLevel(p.trim().toUpperCase());
-        return ALL_LEVELS.includes(v) ? v : null;
-    } catch {
-        return null;
-    }
 }
 
 function errMsg(e: any, fallback: string): string {
@@ -84,26 +72,27 @@ function SubjectIcon({ name, size = 20 }: { name: string; size?: number }) {
 
 type Tab = 'student' | 'admin';
 
-function App() {
+export default function ExamHubPortal({ initialLevel, sectionLabel }: { initialLevel: Level | null; sectionLabel: string }) {
     const [tab, setTab] = useState<Tab>('student');
 
     return (
-        <div className="min-h-screen bg-slate-50 text-slate-900">
-            <header className="border-b border-slate-200 bg-white">
-                <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-slate-900 shadow-sm">
+            <div className="border-b border-slate-200 bg-white">
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
                     <div className="flex items-center gap-2.5">
                         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white">
                             <GraduationCap size={19} />
                         </div>
                         <div>
-                            <h1 className="text-base font-semibold leading-tight">ExamHub</h1>
-                            <p className="text-xs leading-tight text-slate-500">Basic 4 to 9, BECE, WASSCE, GTLE and GES promotion</p>
+                            <div className="text-base font-semibold leading-tight text-slate-900">ExamHub</div>
+                            <p className="text-xs leading-tight text-slate-500">{sectionLabel}</p>
                         </div>
                     </div>
-                    <nav className="flex gap-1 rounded-lg bg-slate-100 p-1">
+                    <nav className="flex gap-1 rounded-lg bg-slate-100 p-1" aria-label="Portal mode">
                         {(['student', 'admin'] as Tab[]).map((t) => (
                             <button
                                 key={t}
+                                type="button"
                                 onClick={() => setTab(t)}
                                 className={`rounded-md px-3.5 py-1.5 text-sm font-medium capitalize transition ${
                                     tab === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
@@ -114,10 +103,10 @@ function App() {
                         ))}
                     </nav>
                 </div>
-            </header>
-            <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
-                {tab === 'student' ? <StudentView /> : <AdminView />}
-            </main>
+            </div>
+            <div className="px-4 py-8 sm:px-6">
+                {tab === 'student' ? <StudentView key={String(initialLevel ?? 'basic')} initialLevel={initialLevel} /> : <AdminView />}
+            </div>
         </div>
     );
 }
@@ -126,10 +115,10 @@ function App() {
 /* Student                                                             */
 /* ------------------------------------------------------------------ */
 
-function StudentView() {
+function StudentView({ initialLevel }: { initialLevel: Level | null }) {
     const [stage, setStage] = useState<'select' | 'exam' | 'result'>('select');
     const [name, setName] = useState('');
-    const [level, setLevel] = useState<Level | null>(levelFromUrl());
+    const [level, setLevel] = useState<Level | null>(initialLevel);
     const [subjects, setSubjects] = useState<Subject[]>([]);
     const [counts, setCounts] = useState<Record<string, number>>({});
     const [loading, setLoading] = useState(true);
@@ -204,7 +193,6 @@ function StudentView() {
             });
             setResult(res.data);
             setStage('result');
-            window.scrollTo({ top: 0 });
             loadCatalog().catch(() => undefined);
         } catch (e) {
             setNotice(errMsg(e, 'Could not submit the exam. Please try again.'));
@@ -260,13 +248,14 @@ function StudentView() {
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                         Question {index + 1} of {questions.length}
                     </p>
-                    <h2 className="mt-2 text-lg font-semibold leading-snug">{q.text}</h2>
+                    <h2 className="mt-2 text-lg font-semibold leading-snug text-slate-900">{q.text}</h2>
                     <div className="mt-4 space-y-2.5">
                         {q.options.map((opt, i) => {
                             const selected = answers[q.id] === i;
                             return (
                                 <button
                                     key={i}
+                                    type="button"
                                     onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: i }))}
                                     className={`flex w-full items-center gap-3 rounded-lg border px-3.5 py-3 text-left text-sm transition ${
                                         selected
@@ -292,6 +281,7 @@ function StudentView() {
                     {questions.map((x, i) => (
                         <button
                             key={x.id}
+                            type="button"
                             onClick={() => setIndex(i)}
                             aria-label={`Go to question ${i + 1}`}
                             className={`h-8 w-8 rounded-md text-xs font-medium transition ${
@@ -309,6 +299,7 @@ function StudentView() {
 
                 <div className="mt-5 flex items-center justify-between">
                     <button
+                        type="button"
                         onClick={() => setIndex((i) => Math.max(0, i - 1))}
                         disabled={index === 0}
                         className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
@@ -318,6 +309,7 @@ function StudentView() {
                     </button>
                     {isLast ? (
                         <button
+                            type="button"
                             onClick={submitExam}
                             disabled={submitting}
                             className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
@@ -327,6 +319,7 @@ function StudentView() {
                         </button>
                     ) : (
                         <button
+                            type="button"
                             onClick={() => setIndex((i) => Math.min(questions.length - 1, i + 1))}
                             className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700"
                         >
@@ -353,12 +346,13 @@ function StudentView() {
                     <p className="mt-3 text-sm text-slate-500">
                         {name.trim()} &middot; {subject.name} &middot; {levelLabel(level)}
                     </p>
-                    <p className="mt-1 text-4xl font-bold">
+                    <p className="mt-1 text-4xl font-bold text-slate-900">
                         {result.score}/{result.total}
                     </p>
                     <p className="mt-1 text-lg font-semibold text-indigo-600">{result.percent}%</p>
                     <p className="mt-2 text-sm text-slate-600">{msg}</p>
                     <button
+                        type="button"
                         onClick={backToStart}
                         className="mt-5 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
                     >
@@ -367,7 +361,7 @@ function StudentView() {
                     </button>
                 </div>
 
-                <h3 className="mt-8 text-sm font-semibold">Review your answers</h3>
+                <h3 className="mt-8 text-sm font-semibold text-slate-900">Review your answers</h3>
                 <div className="mt-3 space-y-3">
                     {questions.map((q, i) => {
                         const r = reviewById.get(q.id);
@@ -380,7 +374,7 @@ function StudentView() {
                                     ) : (
                                         <XCircle className="mt-0.5 shrink-0 text-red-500" size={17} />
                                     )}
-                                    <p className="text-sm font-medium">
+                                    <p className="text-sm font-medium text-slate-900">
                                         {i + 1}. {q.text}
                                     </p>
                                 </div>
@@ -421,7 +415,7 @@ function StudentView() {
 
     return (
         <div className="mx-auto max-w-2xl">
-            <h2 className="text-xl font-semibold">
+            <h2 className="text-xl font-semibold text-slate-900">
                 {isTrackSection && level ? `Start a ${levelLabel(level)} exam` : 'Start an exam'}
             </h2>
             <p className="mt-1 text-sm text-slate-500">
@@ -464,7 +458,7 @@ function StudentView() {
 
             {level !== null && (
                 <div className="mt-6">
-                    <h3 className="text-sm font-semibold">{levelLabel(level)} subjects</h3>
+                    <h3 className="text-sm font-semibold text-slate-900">{levelLabel(level)} subjects</h3>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                         {subjects.map((s) => {
                             const count = counts[`${s.id}|${level}`] || 0;
@@ -472,6 +466,7 @@ function StudentView() {
                             return (
                                 <button
                                     key={s.id}
+                                    type="button"
                                     onClick={() => startExam(s)}
                                     disabled={disabled}
                                     className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-indigo-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-none"
@@ -480,7 +475,7 @@ function StudentView() {
                                         {starting === s.id ? <Loader2 className="animate-spin" size={18} /> : <SubjectIcon name={s.name} />}
                                     </span>
                                     <span>
-                                        <span className="block text-sm font-semibold">{s.name}</span>
+                                        <span className="block text-sm font-semibold text-slate-900">{s.name}</span>
                                         <span className="block text-xs text-slate-500">
                                             {count === 0 ? 'No questions yet' : `${count} question${count === 1 ? '' : 's'}`}
                                         </span>
@@ -498,6 +493,7 @@ function StudentView() {
 function LevelButton({ l, active, onPick }: { l: Level; active: boolean; onPick: () => void }) {
     return (
         <button
+            type="button"
             onClick={onPick}
             className={`rounded-lg border px-2 py-2.5 text-sm font-medium transition ${
                 active
@@ -599,7 +595,9 @@ function AdminView() {
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
                         <Lock size={18} />
                     </div>
-                    <h2 className="mt-3 text-lg font-semibold">{status === 'setup' ? 'Create admin passcode' : 'Admin sign in'}</h2>
+                    <h2 className="mt-3 text-lg font-semibold text-slate-900">
+                        {status === 'setup' ? 'Create admin passcode' : 'Admin sign in'}
+                    </h2>
                     <p className="mt-1 text-sm text-slate-500">
                         {status === 'setup'
                             ? 'This is the first run. Choose a passcode (at least 4 characters) to protect the admin area.'
@@ -692,6 +690,7 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
                     {tabs.map((t) => (
                         <button
                             key={t.id}
+                            type="button"
                             onClick={() => setTab(t.id)}
                             className={`rounded-md px-3.5 py-1.5 text-sm font-medium transition ${
                                 tab === t.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
@@ -702,6 +701,7 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
                     ))}
                 </div>
                 <button
+                    type="button"
                     onClick={onLogout}
                     className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
                 >
@@ -791,7 +791,7 @@ function SubjectsAdmin({
 
     return (
         <section className="rounded-xl border border-slate-200 bg-white p-5">
-            <h2 className="text-sm font-semibold">Subjects</h2>
+            <h2 className="text-sm font-semibold text-slate-900">Subjects</h2>
             <form onSubmit={add} className="mt-3 flex gap-2">
                 <input
                     value={name}
@@ -811,7 +811,7 @@ function SubjectsAdmin({
             <div className="mt-4 divide-y divide-slate-100">
                 {subjects.map((s) => (
                     <div key={s.id} className="flex items-center justify-between py-2.5">
-                        <span className="flex items-center gap-2.5 text-sm font-medium">
+                        <span className="flex items-center gap-2.5 text-sm font-medium text-slate-900">
                             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
                                 <SubjectIcon name={s.name} size={16} />
                             </span>
@@ -821,6 +821,7 @@ function SubjectsAdmin({
                             </span>
                         </span>
                         <button
+                            type="button"
                             onClick={() => remove(s)}
                             className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
                             aria-label={`Delete ${s.name}`}
@@ -912,7 +913,7 @@ function QuestionsAdmin({
     return (
         <div className="space-y-6">
             <section className="rounded-xl border border-slate-200 bg-white p-5">
-                <h2 className="text-sm font-semibold">Add a question</h2>
+                <h2 className="text-sm font-semibold text-slate-900">Add a question</h2>
                 <form onSubmit={save} className="mt-4 space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                         <Field label="Subject">
@@ -983,7 +984,7 @@ function QuestionsAdmin({
 
             <section className="rounded-xl border border-slate-200 bg-white p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h2 className="text-sm font-semibold">Question bank ({shown.length})</h2>
+                    <h2 className="text-sm font-semibold text-slate-900">Question bank ({shown.length})</h2>
                     <div className="flex gap-2">
                         <select
                             value={String(fLevel)}
@@ -1011,9 +1012,10 @@ function QuestionsAdmin({
                                     <p className="text-xs font-medium text-indigo-600">
                                         {subjectName(q.subjectId)} &middot; {levelLabel(q.level)}
                                     </p>
-                                    <p className="mt-1 text-sm font-medium">{q.text}</p>
+                                    <p className="mt-1 text-sm font-medium text-slate-900">{q.text}</p>
                                 </div>
                                 <button
+                                    type="button"
                                     onClick={() => remove(q)}
                                     className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
                                     aria-label="Delete question"
@@ -1062,8 +1064,9 @@ function ResultsAdmin({
     return (
         <section className="rounded-xl border border-slate-200 bg-white p-5">
             <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold">Student results ({results.length})</h2>
+                <h2 className="text-sm font-semibold text-slate-900">Student results ({results.length})</h2>
                 <button
+                    type="button"
                     onClick={refresh}
                     className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
                 >
@@ -1089,7 +1092,7 @@ function ResultsAdmin({
                         <tbody>
                             {results.map((r) => (
                                 <tr key={r.id} className="border-b border-slate-100 last:border-0">
-                                    <td className="py-2.5 pr-3 font-medium">{r.studentName}</td>
+                                    <td className="py-2.5 pr-3 font-medium text-slate-900">{r.studentName}</td>
                                     <td className="py-2.5 pr-3 text-slate-500">{levelLabel(r.level)}</td>
                                     <td className="py-2.5 pr-3 text-slate-500">{r.subjectName}</td>
                                     <td className="py-2.5 pr-3 text-slate-500">
@@ -1106,5 +1109,3 @@ function ResultsAdmin({
         </section>
     );
 }
-
-export default App;

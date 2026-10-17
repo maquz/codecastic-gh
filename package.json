@@ -1,11 +1,11 @@
 {
-  "name": "codecastic-gh-monorepo",
+  "name": "codecastic-gh",
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "install:all": "npm --prefix website install && npm --prefix examhub install",
-    "dev:website": "npm --prefix website run dev",
-    "dev:examhub": "npm --prefix examhub run dev",
-    "build": "npm --prefix website run build && npm --prefix examhub run build"
+    "install:all": "npm --prefix website install",
+    "dev": "npm --prefix website run dev",
+    "build": "npm --prefix website run build",
+    "preview": "npm --prefix website run preview"
   }
 }

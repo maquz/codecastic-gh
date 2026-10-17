@@ -1,22 +1,9 @@
-import { PageHead, EXAMHUB_URL } from '../ui';
+import { PageHead } from '../ui';
 import { TRACKS } from '../exams';
+import ExamHubPortal from '../components/ExamHubPortal';
 
 export default function Exams({ sub }: { sub: string }) {
     const track = TRACKS.find((t) => t.slug === sub);
-    const src = track && track.code ? `${EXAMHUB_URL}?level=${encodeURIComponent(track.code)}` : EXAMHUB_URL;
-    const frameTitle = track ? `ExamHub: ${track.label} practice` : 'ExamHub exam portal';
-
-    const frame = (
-        <div className="frame">
-            <div className="frame-bar">
-                <span>{frameTitle}</span>
-                <a className="btn btn-line" style={{ padding: '8px 16px' }} href={src} target="_blank" rel="noopener noreferrer">
-                    Open in a new tab
-                </a>
-            </div>
-            <iframe key={src} src={src} title={frameTitle} loading="lazy" />
-        </div>
-    );
 
     if (track) {
         return (
@@ -27,7 +14,7 @@ export default function Exams({ sub }: { sub: string }) {
                         <div className="prose" style={{ marginBottom: 32 }}>
                             <p>{track.about}</p>
                         </div>
-                        {frame}
+                        <ExamHubPortal initialLevel={track.code} sectionLabel={`${track.label} practice`} />
                         <p className="note">
                             Enter your name, pick a subject and start. The starter questions in this section are practice
                             questions written for ExamHub, not official past papers. Teachers and administrators can add
