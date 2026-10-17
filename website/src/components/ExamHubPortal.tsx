@@ -24,6 +24,8 @@ import {
     ArrowLeft,
     UserCheck,
     School,
+    Eye,
+    EyeOff,
 } from 'lucide-react';
 
 export type Level = number | string;
@@ -48,8 +50,11 @@ type StudentUser = {
     id: string;
     name: string;
     email: string;
+    accountType?: 'student' | 'ges-promo';
     schoolName: string;
     gradeLevel: number;
+    region?: string;
+    promotionRank?: string;
 };
 
 const TOKEN_KEY = 'codecastic_examhub_token';
@@ -59,6 +64,30 @@ const EXAM_TRACKS: { id: string; label: string }[] = [
     { id: 'WASSCE', label: 'WASSCE' },
     { id: 'GTLE', label: 'GTLE' },
     { id: 'GES-PROMO', label: 'GES Promotion' },
+];
+const GHANA_REGIONS: string[] = [
+    'Ahafo',
+    'Ashanti',
+    'Bono',
+    'Bono East',
+    'Central',
+    'Eastern',
+    'Greater Accra',
+    'North East',
+    'Northern',
+    'Oti',
+    'Savannah',
+    'Upper East',
+    'Upper West',
+    'Volta',
+    'Western',
+    'Western North',
+];
+const PROMOTION_RANKS: string[] = [
+    'Assistant Director II (AD II)',
+    'Assistant Director I (AD I)',
+    'Deputy Director (DD)',
+    'Director II (Dir II)',
 ];
 const LETTERS = ['A', 'B', 'C', 'D'];
 
@@ -100,6 +129,7 @@ export default function ExamHubPortal({
     const [user, setUser] = useState<StudentUser | null>(null);
     const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) || '');
     const [checkingAuth, setCheckingAuth] = useState<boolean>(true);
+    const isGesPromoSection = activeSlug === 'ges-promotion' || initialLevel === 'GES-PROMO';
 
     useEffect(() => {
         const saved = localStorage.getItem(TOKEN_KEY);
@@ -137,6 +167,8 @@ export default function ExamHubPortal({
         setToken('');
     };
 
+    const requiresAuth = !user || (isGesPromoSection && user.accountType !== 'ges-promo');
+
     return (
         <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
             {/* Full-screen Portal Top Bar */}
@@ -163,14 +195,17 @@ export default function ExamHubPortal({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">
-                        {tab === 'student' && user && (
+                        {tab === 'student' && user && !requiresAuth && (
                             <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs">
                                 <UserCheck size={14} className="text-emerald-600 shrink-0" />
                                 <div className="leading-tight">
                                     <span className="font-semibold text-slate-800">{user.name}</span>
                                     <span className="text-slate-500">
                                         {' '}
-                                        &middot; {user.schoolName} (Basic {user.gradeLevel})
+                                        &middot;{' '}
+                                        {user.accountType === 'ges-promo'
+                                            ? `${user.region} (${user.promotionRank})`
+                                            : `${user.schoolName} (Basic ${user.gradeLevel})`}
                                     </span>
                                 </div>
                                 <button
@@ -237,8 +272,12 @@ export default function ExamHubPortal({
                         <Loader2 className="animate-spin" size={18} />
                         Loading your account...
                     </div>
-                ) : !user ? (
-                    <StudentAuthView onAuthenticated={handleAuthenticated} />
+                ) : requiresAuth ? (
+                    <StudentAuthView
+                        key={isGesPromoSection ? 'ges-promo-auth' : 'student-auth'}
+                        isGesPromo={isGesPromoSection}
+                        onAuthenticated={handleAuthenticated}
+                    />
                 ) : (
                     <StudentView
                         key={`${activeSlug}-${user.id}`}
@@ -253,16 +292,25 @@ export default function ExamHubPortal({
 }
 
 /* ------------------------------------------------------------------ */
-/* Student Registration & Login Gate                                   */
+/* Student / Candidate Registration & Login Gate                       */
 /* ------------------------------------------------------------------ */
 
-function StudentAuthView({ onAuthenticated }: { onAuthenticated: (u: StudentUser, token: string) => void }) {
-    const [mode, setMode] = useState<'login' | 'register'>('login');
+function StudentAuthView({
+    isGesPromo,
+    onAuthenticated,
+}: {
+    isGesPromo: boolean;
+    onAuthenticated: (u: StudentUser, token: string) => void;
+}) {
+    const [mode, setMode] = useState<'login' | 'register'>(isGesPromo ? 'register' : 'login');
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [schoolName, setSchoolName] = useState('');
     const [gradeLevel, setGradeLevel] = useState<number>(4);
+    const [region, setRegion] = useState('');
+    const [promotionRank, setPromotionRank] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [err, setErr] = useState('');
     const [busy, setBusy] = useState(false);
 
@@ -272,13 +320,24 @@ function StudentAuthView({ onAuthenticated }: { onAuthenticated: (u: StudentUser
         setBusy(true);
         try {
             if (mode === 'register') {
-                const res = await api.post('/api/auth/register', {
-                    name: name.trim(),
-                    email: email.trim(),
-                    schoolName: schoolName.trim(),
-                    gradeLevel,
-                    password,
-                });
+                const payload = isGesPromo
+                    ? {
+                          accountType: 'ges-promo',
+                          name: name.trim(),
+                          email: email.trim(),
+                          region,
+                          promotionRank,
+                          password,
+                      }
+                    : {
+                          accountType: 'student',
+                          name: name.trim(),
+                          email: email.trim(),
+                          schoolName: schoolName.trim(),
+                          gradeLevel,
+                          password,
+                      };
+                const res = await api.post('/api/auth/register', payload);
                 onAuthenticated(res.data.user, res.data.token);
             } else {
                 const res = await api.post('/api/auth/login', {
@@ -293,6 +352,176 @@ function StudentAuthView({ onAuthenticated }: { onAuthenticated: (u: StudentUser
             setBusy(false);
         }
     };
+
+    if (isGesPromo) {
+        return (
+            <div className="mx-auto max-w-md py-2">
+                <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+                    <div className="text-center">
+                        <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">
+                            {mode === 'register' ? 'Create Account' : 'Candidate Sign In'}
+                        </h2>
+                        <p className="mt-2 text-xs font-bold uppercase tracking-wider text-[#364c83]">
+                            {mode === 'register'
+                                ? 'REGISTER TO ACCESS YOUR GES PROMOTION TRIAL EXAM PORTAL'
+                                : 'SIGN IN TO ACCESS YOUR GES PROMOTION TRIAL EXAM PORTAL'}
+                        </p>
+                    </div>
+
+                    {err && (
+                        <div className="mt-5 rounded-lg bg-red-50 px-3.5 py-2.5 text-sm font-medium text-red-700" role="alert">
+                            {err}
+                        </div>
+                    )}
+
+                    <form onSubmit={submit} className="mt-6 space-y-4">
+                        {mode === 'register' && (
+                            <label className="block">
+                                <span className="mb-1.5 block text-sm font-semibold text-slate-800">
+                                    Full Name (Candidate) <span className="text-red-500">*</span>
+                                </span>
+                                <input
+                                    required
+                                    value={name}
+                                    onChange={(e) => setName(e.target.value)}
+                                    placeholder="e.g. Kwaku Mensah Addo"
+                                    autoComplete="name"
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
+                                />
+                            </label>
+                        )}
+
+                        <label className="block">
+                            <span className="mb-1.5 block text-sm font-semibold text-slate-800">
+                                Candidate Email Address <span className="text-red-500">*</span>
+                            </span>
+                            <input
+                                required
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="admin@ges.gov.gh"
+                                autoComplete="email"
+                                className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
+                            />
+                        </label>
+
+                        {mode === 'register' && (
+                            <label className="block">
+                                <span className="mb-1.5 block text-sm font-semibold text-slate-800">
+                                    Ghana Region <span className="text-red-500">*</span>
+                                </span>
+                                <select
+                                    required
+                                    value={region}
+                                    onChange={(e) => setRegion(e.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
+                                >
+                                    <option value="" disabled>
+                                        Select Your Region in Ghana...
+                                    </option>
+                                    {GHANA_REGIONS.map((reg) => (
+                                        <option key={reg} value={reg}>
+                                            {reg}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        )}
+
+                        <label className="block">
+                            <span className="mb-1.5 block text-sm font-semibold text-slate-800">
+                                Candidate Password <span className="text-red-500">*</span>
+                            </span>
+                            <div className="relative">
+                                <input
+                                    required
+                                    type={showPassword ? 'text' : 'password'}
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="••••••••"
+                                    autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-3 pl-4 pr-11 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword((s) => !s)}
+                                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg bg-slate-200/70 p-1.5 text-slate-600 transition hover:bg-slate-300/70"
+                                >
+                                    {showPassword ? <Eye size={16} /> : <EyeOff size={16} />}
+                                </button>
+                            </div>
+                        </label>
+
+                        {mode === 'register' && (
+                            <label className="block">
+                                <span className="mb-1.5 block text-sm font-semibold text-slate-800">
+                                    Eligible Promotion Rank <span className="text-red-500">*</span>
+                                </span>
+                                <select
+                                    required
+                                    value={promotionRank}
+                                    onChange={(e) => setPromotionRank(e.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
+                                >
+                                    <option value="" disabled>
+                                        Select Your Promotion Trial Examination Rank...
+                                    </option>
+                                    {PROMOTION_RANKS.map((rk) => (
+                                        <option key={rk} value={rk}>
+                                            {rk}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        )}
+
+                        <button
+                            type="submit"
+                            disabled={busy}
+                            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#364c83] py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#1f2d57] disabled:opacity-50"
+                        >
+                            {busy && <Loader2 className="animate-spin" size={16} />}
+                            {mode === 'register' ? 'Register Account & Launch Portal →' : 'Sign In & Launch Portal →'}
+                        </button>
+                    </form>
+
+                    <div className="mt-5 border-t border-slate-100 pt-4 text-center text-xs text-slate-500">
+                        {mode === 'register' ? (
+                            <>
+                                Already registered for GES Promotion?{' '}
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setMode('login');
+                                        setErr('');
+                                    }}
+                                    className="font-semibold text-[#364c83] hover:underline"
+                                >
+                                    Sign in here
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                Need to create a candidate account?{' '}
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setMode('register');
+                                        setErr('');
+                                    }}
+                                    className="font-semibold text-[#364c83] hover:underline"
+                                >
+                                    Register Account
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="mx-auto max-w-md py-4">

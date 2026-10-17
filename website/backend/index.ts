@@ -25,8 +25,11 @@ function publicUser(u: any) {
         id: u.id as string,
         name: u.name as string,
         email: u.email as string,
-        schoolName: u.schoolName as string,
-        gradeLevel: u.gradeLevel as number,
+        accountType: (u.accountType || 'student') as 'student' | 'ges-promo',
+        schoolName: (u.schoolName || '') as string,
+        gradeLevel: (u.gradeLevel ?? 4) as number,
+        region: (u.region || '') as string,
+        promotionRank: (u.promotionRank || '') as string,
     };
 }
 
@@ -215,17 +218,32 @@ export const handler = router({
     'POST /api/auth/register': [
         async (ctx) => {
             const b = (ctx.body || {}) as any;
+            const accountType = b.accountType === 'ges-promo' ? 'ges-promo' : 'student';
             const name = String(b.name || '').trim();
             const email = String(b.email || '').trim().toLowerCase();
-            const schoolName = String(b.schoolName || '').trim();
-            const gradeLevel = Number(b.gradeLevel);
             const password = String(b.password || '');
 
             if (!name) return error('Full name is required', 400);
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('Enter a valid email address', 400);
-            if (!schoolName) return error('School name is required', 400);
-            if (!SCHOOL_LEVELS.includes(gradeLevel)) return error('Choose a grade level from Basic 4 to Basic 9', 400);
             if (password.length < 6) return error('Password must be at least 6 characters', 400);
+
+            let schoolName = '';
+            let gradeLevel = 4;
+            let region = '';
+            let promotionRank = '';
+
+            if (accountType === 'ges-promo') {
+                region = String(b.region || '').trim();
+                promotionRank = String(b.promotionRank || '').trim();
+                if (!region) return error('Select your Ghana Region', 400);
+                if (!promotionRank) return error('Select your Eligible Promotion Rank', 400);
+                schoolName = `${region} (${promotionRank})`;
+            } else {
+                schoolName = String(b.schoolName || '').trim();
+                gradeLevel = Number(b.gradeLevel);
+                if (!schoolName) return error('School name is required', 400);
+                if (!SCHOOL_LEVELS.includes(gradeLevel)) return error('Choose a grade level from Basic 4 to Basic 9', 400);
+            }
 
             const { items: users } = await db.list('users', { limit: 1000 });
             if (users.some((u: any) => String(u.email).toLowerCase() === email)) {
@@ -236,8 +254,11 @@ export const handler = router({
             const userRecord = {
                 name,
                 email,
+                accountType,
                 schoolName,
                 gradeLevel,
+                region,
+                promotionRank,
                 passwordHash,
                 createdAt: Date.now(),
             };
