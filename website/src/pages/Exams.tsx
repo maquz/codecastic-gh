@@ -46,7 +46,7 @@ export default function Exams({ sub }: { sub: string }) {
                 lead="Multiple choice practice from Basic 4 to Basic 9, plus sections for the BECE, WASSCE, GTLE and GES promotion exams."
             />
 
-            <section className="section" style={{ paddingBottom: 24 }}>
+            <section className="section">
                 <div className="wrap">
                     <div className="section-head" style={{ marginBottom: 12 }}>
                         <h2>Choose a section</h2>
@@ -63,16 +63,6 @@ export default function Exams({ sub }: { sub: string }) {
                             <p>{t.about}</p>
                         </div>
                     ))}
-                </div>
-            </section>
-
-            <section className="section" style={{ paddingTop: 24 }}>
-                <div className="wrap">
-                    {frame}
-                    <p className="note">
-                        Teachers and school administrators: choose the Admin tab inside the portal to add subjects and
-                        questions and to see student results. The first person to open it sets the admin passcode.
-                    </p>
                 </div>
             </section>
         </>
