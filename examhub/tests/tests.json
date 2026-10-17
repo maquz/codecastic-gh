@@ -1,0 +1,70 @@
+[
+  {
+    "name": "Student takes a Basic 4 Mathematics exam",
+    "sanity": true,
+    "viewport": "desktop",
+    "covers": ["level selection", "exam taking", "server grading", "result review"],
+    "description": "Verifies a student can pick a level and subject, answer questions, submit and see a score.",
+    "steps": [
+      "Go to the Student tab",
+      "Enter the name \"Kofi Mensah\"",
+      "Choose the level \"Basic 4\"",
+      "Click the \"Mathematics\" subject card",
+      "Select option A on every question using Next to move through them",
+      "Click Submit exam on the last question and accept any confirmation"
+    ],
+    "expected": "A result screen appears showing a score like X/2 with a percentage, the student name and Basic 4 Mathematics, followed by a review of each question with the correct answer marked."
+  },
+  {
+    "name": "Exam sections show their own subjects and questions",
+    "viewport": "desktop",
+    "covers": ["level isolation", "exam sections", "question counts"],
+    "description": "Verifies Basic 9 has no content, while BECE, WASSCE, GTLE and GES Promotion have their own.",
+    "steps": [
+      "Go to the Student tab",
+      "Choose the level \"Basic 9\" and look at the subject cards",
+      "Choose the exam section \"BECE\" and look at the subject cards",
+      "Choose the exam section \"GTLE\" and look at the subject cards"
+    ],
+    "expected": "For Basic 9 every subject card shows \"No questions yet\". For BECE the Mathematics, English and Science cards show question counts. For GTLE the Professional Studies card shows a question count, while Mathematics shows \"No questions yet\"."
+  },
+  {
+    "name": "Opening a link with a section preselects it",
+    "viewport": "desktop",
+    "covers": ["deep link", "exam sections"],
+    "description": "Verifies the portal can be opened directly on a section using ?level=.",
+    "steps": [
+      "Open the ExamHub address with ?level=WASSCE added to the end",
+      "Look at the Student tab"
+    ],
+    "expected": "The WASSCE section button is already selected and the heading \"WASSCE subjects\" is shown with subject cards for Mathematics, English and Science showing question counts."
+  },
+  {
+    "name": "Admin adds a question to an exam section",
+    "viewport": "desktop",
+    "covers": ["question creation", "exam section scoping", "admin auth", "persistence"],
+    "description": "Verifies an admin can add a GES Promotion question that students then see in that section only.",
+    "steps": [
+      "Go to the Admin tab and sign in with \"admin1234\" (create it if prompted)",
+      "Open the Questions section",
+      "Choose subject \"Professional Studies\" and the exam section \"GES Promotion\"",
+      "Enter the question \"Which document records what a class will learn in a term?\" with options \"Scheme of learning\", \"Attendance register\", \"Fee receipt\", \"Timetable\" and mark A as correct",
+      "Click Add question",
+      "Go to the Student tab and choose the exam section \"GES Promotion\""
+    ],
+    "expected": "The question appears in the admin question bank for Professional Studies and GES Promotion, and the Professional Studies card under GES Promotion on the Student tab shows one more question than before."
+  },
+  {
+    "name": "Student must enter a name before starting",
+    "viewport": "mobile",
+    "covers": ["required-field validation", "invalid-start guardrail"],
+    "description": "Verifies a student cannot start an exam without entering a name.",
+    "steps": [
+      "Go to the Student tab",
+      "Leave the name empty",
+      "Choose the level \"Basic 4\"",
+      "Click the \"Mathematics\" subject card"
+    ],
+    "expected": "A message asks the student to enter their name and the exam does not start."
+  }
+]

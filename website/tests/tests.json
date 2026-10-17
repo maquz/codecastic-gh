@@ -1,0 +1,68 @@
+[
+  {
+    "name": "Visitor can reach every main page and see the services",
+    "sanity": true,
+    "viewport": "desktop",
+    "covers": ["navigation", "home", "about", "services", "governance", "contact", "logo"],
+    "description": "Verifies the logo and menu work and that each page shows its own content.",
+    "steps": [
+      "Open the home page",
+      "Click 'About us' in the menu",
+      "Click 'Services' in the menu",
+      "Click 'Governance' in the menu",
+      "Click 'Contact us' in the menu"
+    ],
+    "expected": "The header shows the book-and-leaves logo with the text 'codeCasticgh' and six menu items: Home, About us, Services, ExamHub, Governance, Contact us. The home page shows the hero and an ExamHub section with links to Basic 4 to 9, BECE, WASSCE, GTLE and GES Promotion Exams. About us shows the vision and mission. Services lists the Build, Run, Advise and Grow groups with all eleven services. Governance shows the Board of Directors and principal officers. Contact us shows a message form."
+  },
+  {
+    "name": "ExamHub overview lists sections and embedded portal",
+    "viewport": "desktop",
+    "covers": ["examhub overview", "embedded portal"],
+    "description": "Verifies the ExamHub tab shows all sections and the embedded portal.",
+    "steps": ["Click 'ExamHub' in the menu", "Scroll through the page"],
+    "expected": "The page shows a section menu with Overview, Basic 4 to 9, BECE, WASSCE, GTLE and GES Promotion Exams, a 'Choose a section' list, and a framed exam portal titled 'ExamHub exam portal' with an 'Open in a new tab' link."
+  },
+  {
+    "name": "Each exam section opens its own page and portal",
+    "viewport": "desktop",
+    "covers": ["exam section pages", "deep link into portal"],
+    "description": "Verifies the BECE and GTLE sections have their own content and open the portal on that section.",
+    "steps": [
+      "Click 'ExamHub' in the menu",
+      "Click 'BECE' in the section menu",
+      "Look at the framed portal",
+      "Click 'GTLE' in the section menu",
+      "Look at the framed portal"
+    ],
+    "expected": "The BECE page has the heading 'BECE practice' and a framed portal that opens with the BECE section selected and shows 'BECE subjects'. The GTLE page has the heading 'GTLE practice', and its portal shows 'GTLE subjects' with Professional Studies."
+  },
+  {
+    "name": "Contact form saves a message that staff can read",
+    "viewport": "desktop",
+    "covers": ["contact form submit", "database create", "staff inbox", "persistence"],
+    "description": "Verifies a submitted message appears in the passcode-protected staff inbox.",
+    "steps": [
+      "Go to the Contact us page",
+      "Enter name 'Ama Boateng' and email 'ama@example.com'",
+      "Choose the topic 'ExamHub for teachers (GTLE, GES promotion)'",
+      "Enter the message 'We would like to use ExamHub for our teachers.'",
+      "Click 'Send message'",
+      "Click 'Staff inbox' in the footer",
+      "If asked to create a passcode, enter 'staff1234' and create it; otherwise sign in with 'staff1234'"
+    ],
+    "expected": "After sending, a 'Message sent' confirmation is shown. The staff inbox then lists the message from Ama Boateng with the topic 'ExamHub for teachers (GTLE, GES promotion)' and the message text."
+  },
+  {
+    "name": "Contact form rejects missing and invalid details",
+    "viewport": "mobile",
+    "covers": ["form validation", "invalid-write guardrail", "mobile menu"],
+    "description": "Verifies the form blocks an empty or badly formed submission.",
+    "steps": [
+      "Open the menu and choose 'Contact us'",
+      "Click 'Send message' without filling anything in",
+      "Enter the name 'Kojo' and the email 'not-an-email', leave the message empty",
+      "Click 'Send message'"
+    ],
+    "expected": "Messages ask for the name, a valid email address and the message, and no 'Message sent' confirmation appears."
+  }
+]
