@@ -1,4 +1,43 @@
+import crypto from 'node:crypto';
 import { router, json, error, db } from './sdk';
+
+/* ------------------------------------------------------------------ */
+/* Password & Auth Helpers                                             */
+/* ------------------------------------------------------------------ */
+
+function hashPassword(password: string): string {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const derived = crypto.scryptSync(password, salt, 64).toString('hex');
+    return `${salt}:${derived}`;
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+    const [salt, key] = (stored || '').split(':');
+    if (!salt || !key) return false;
+    const derivedBuf = crypto.scryptSync(password, salt, 64);
+    const keyBuf = Buffer.from(key, 'hex');
+    if (derivedBuf.length !== keyBuf.length) return false;
+    return crypto.timingSafeEqual(derivedBuf, keyBuf);
+}
+
+function publicUser(u: any) {
+    return {
+        id: u.id as string,
+        name: u.name as string,
+        email: u.email as string,
+        schoolName: u.schoolName as string,
+        gradeLevel: u.gradeLevel as number,
+    };
+}
+
+async function getUserByToken(token: unknown): Promise<any | null> {
+    if (!token || typeof token !== 'string') return null;
+    const { items: sessions } = await db.list('sessions', { limit: 1000 });
+    const sess: any = sessions.find((s: any) => s.token === token);
+    if (!sess) return null;
+    const { items: users } = await db.list('users', { limit: 1000 });
+    return users.find((u: any) => u.id === sess.userId) || null;
+}
 
 /* ------------------------------------------------------------------ */
 /* Staff Inbox Helpers                                                 */
@@ -172,6 +211,95 @@ async function allQuestions(): Promise<any[]> {
 export const handler = router({
     'GET /api/_healthcheck': [async () => json({ message: 'Success' })],
 
+    // ---------- ExamHub: Student Auth (Register / Login / Session) ----------
+    'POST /api/auth/register': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const name = String(b.name || '').trim();
+            const email = String(b.email || '').trim().toLowerCase();
+            const schoolName = String(b.schoolName || '').trim();
+            const gradeLevel = Number(b.gradeLevel);
+            const password = String(b.password || '');
+
+            if (!name) return error('Full name is required', 400);
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return error('Enter a valid email address', 400);
+            if (!schoolName) return error('School name is required', 400);
+            if (!SCHOOL_LEVELS.includes(gradeLevel)) return error('Choose a grade level from Basic 4 to Basic 9', 400);
+            if (password.length < 6) return error('Password must be at least 6 characters', 400);
+
+            const { items: users } = await db.list('users', { limit: 1000 });
+            if (users.some((u: any) => String(u.email).toLowerCase() === email)) {
+                return error('An account with this email already exists. Please sign in.', 409);
+            }
+
+            const passwordHash = hashPassword(password);
+            const userRecord = {
+                name,
+                email,
+                schoolName,
+                gradeLevel,
+                passwordHash,
+                createdAt: Date.now(),
+            };
+            const [userId] = await db.add('users', [userRecord]);
+            const token = crypto.randomBytes(24).toString('hex');
+            await db.add('sessions', [{ userId, token, createdAt: Date.now() }]);
+
+            return json(
+                {
+                    token,
+                    user: publicUser({ id: userId, ...userRecord }),
+                },
+                201
+            );
+        },
+    ],
+
+    'POST /api/auth/login': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const email = String(b.email || '').trim().toLowerCase();
+            const password = String(b.password || '');
+
+            if (!email || !password) return error('Enter your email and password', 400);
+
+            const { items: users } = await db.list('users', { limit: 1000 });
+            const user: any = users.find((u: any) => String(u.email).toLowerCase() === email);
+            if (!user || !verifyPassword(password, user.passwordHash)) {
+                return error('Invalid email or password', 401);
+            }
+
+            const token = crypto.randomBytes(24).toString('hex');
+            await db.add('sessions', [{ userId: user.id, token, createdAt: Date.now() }]);
+
+            return json({
+                token,
+                user: publicUser(user),
+            });
+        },
+    ],
+
+    'POST /api/auth/me': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const user = await getUserByToken(b.token);
+            if (!user) return error('Not signed in', 401);
+            return json({ user: publicUser(user) });
+        },
+    ],
+
+    'POST /api/auth/logout': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            if (b.token) {
+                const { items: sessions } = await db.list('sessions', { limit: 1000 });
+                const matching = sessions.filter((s: any) => s.token === b.token).map((s: any) => s.id as string);
+                if (matching.length > 0) await db.delete('sessions', matching);
+            }
+            return json({ ok: true });
+        },
+    ],
+
     // ---------- Website: Contact Form & Staff Inbox ----------
     'POST /api/contact': [
         async (ctx) => {
@@ -274,12 +402,15 @@ export const handler = router({
     'POST /api/exam/submit': [
         async (ctx) => {
             const b = (ctx.body || {}) as any;
-            const studentName = String(b.studentName || '').trim();
+            const user = await getUserByToken(b.token);
+            const studentName = String(user?.name || b.studentName || '').trim();
+            const schoolName = String(user?.schoolName || b.schoolName || '').trim();
+            const studentEmail = String(user?.email || b.studentEmail || '').trim();
             const level = normLevel(b.level);
             const subjectId = String(b.subjectId || '');
             const answers = (b.answers || {}) as Record<string, number>;
 
-            if (!studentName) return error('Student name is required', 400);
+            if (!studentName) return error('Please sign in before submitting an exam', 401);
             if (level === null) return error('Invalid level', 400);
             if (!subjectId) return error('Subject is required', 400);
 
@@ -307,7 +438,10 @@ export const handler = router({
 
             await db.add('results', [
                 {
+                    userId: user?.id || null,
                     studentName,
+                    studentEmail,
+                    schoolName,
                     level,
                     subjectId,
                     subjectName: subj ? subj.name : 'Unknown',

@@ -6,24 +6,7 @@ export default function Exams({ sub }: { sub: string }) {
     const track = TRACKS.find((t) => t.slug === sub);
 
     if (track) {
-        return (
-            <>
-                <PageHead title={track.title} lead={track.lead} />
-                <section className="section" style={{ paddingTop: 32 }}>
-                    <div className="wrap">
-                        <div className="prose" style={{ marginBottom: 32 }}>
-                            <p>{track.about}</p>
-                        </div>
-                        <ExamHubPortal initialLevel={track.code} sectionLabel={`${track.label} practice`} />
-                        <p className="note">
-                            Enter your name, pick a subject and start. The starter questions in this section are practice
-                            questions written for ExamHub, not official past papers. Teachers and administrators can add
-                            more from the Admin tab inside the portal.
-                        </p>
-                    </div>
-                </section>
-            </>
-        );
+        return <ExamHubPortal activeSlug={track.slug} initialLevel={track.code} sectionLabel={`${track.label} practice`} />;
     }
 
     return (
@@ -37,7 +20,7 @@ export default function Exams({ sub }: { sub: string }) {
                 <div className="wrap">
                     <div className="section-head" style={{ marginBottom: 12 }}>
                         <h2>Choose a section</h2>
-                        <p>Each section opens the exam portal on the right questions for you.</p>
+                        <p>Each section opens the full ExamHub portal where students register or sign in to start practising.</p>
                     </div>
                     {TRACKS.map((t) => (
                         <div className="section-row" key={t.slug}>
@@ -47,7 +30,12 @@ export default function Exams({ sub }: { sub: string }) {
                                 </h3>
                                 <p className="small">{t.lead}</p>
                             </div>
-                            <p>{t.about}</p>
+                            <div>
+                                <p style={{ marginBottom: 14 }}>{t.about}</p>
+                                <a className="btn btn-navy" style={{ padding: '8px 18px', fontSize: '0.9rem' }} href={`#/exams/${t.slug}`}>
+                                    Open {t.label} Portal
+                                </a>
+                            </div>
                         </div>
                     ))}
                 </div>

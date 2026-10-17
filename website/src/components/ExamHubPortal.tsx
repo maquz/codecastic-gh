@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { api } from '@appdeploy/client';
+import { TRACKS } from '../exams';
 import {
     GraduationCap,
     BookOpen,
@@ -20,6 +21,9 @@ import {
     RotateCcw,
     Trophy,
     ClipboardCheck,
+    ArrowLeft,
+    UserCheck,
+    School,
 } from 'lucide-react';
 
 export type Level = number | string;
@@ -30,6 +34,8 @@ type ReviewItem = { id: string; correctIndex: number; chosen: number | null; cor
 type ResultRow = {
     id: string;
     studentName: string;
+    studentEmail?: string;
+    schoolName?: string;
     level: Level;
     subjectName: string;
     score: number;
@@ -38,7 +44,16 @@ type ResultRow = {
     createdAt: number;
 };
 
-const SCHOOL_LEVELS: Level[] = [4, 5, 6, 7, 8, 9];
+type StudentUser = {
+    id: string;
+    name: string;
+    email: string;
+    schoolName: string;
+    gradeLevel: number;
+};
+
+const TOKEN_KEY = 'codecastic_examhub_token';
+const SCHOOL_LEVELS: number[] = [4, 5, 6, 7, 8, 9];
 const EXAM_TRACKS: { id: string; label: string }[] = [
     { id: 'BECE', label: 'BECE' },
     { id: 'WASSCE', label: 'WASSCE' },
@@ -72,53 +87,393 @@ function SubjectIcon({ name, size = 20 }: { name: string; size?: number }) {
 
 type Tab = 'student' | 'admin';
 
-export default function ExamHubPortal({ initialLevel, sectionLabel }: { initialLevel: Level | null; sectionLabel: string }) {
+export default function ExamHubPortal({
+    activeSlug,
+    initialLevel,
+    sectionLabel,
+}: {
+    activeSlug: string;
+    initialLevel: Level | null;
+    sectionLabel: string;
+}) {
     const [tab, setTab] = useState<Tab>('student');
+    const [user, setUser] = useState<StudentUser | null>(null);
+    const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) || '');
+    const [checkingAuth, setCheckingAuth] = useState<boolean>(true);
+
+    useEffect(() => {
+        const saved = localStorage.getItem(TOKEN_KEY);
+        if (!saved) {
+            setCheckingAuth(false);
+            return;
+        }
+        api.post('/api/auth/me', { token: saved })
+            .then((r) => {
+                setUser(r.data.user);
+                setToken(saved);
+            })
+            .catch(() => {
+                localStorage.removeItem(TOKEN_KEY);
+                setUser(null);
+                setToken('');
+            })
+            .finally(() => setCheckingAuth(false));
+    }, []);
+
+    const handleAuthenticated = (newUser: StudentUser, newToken: string) => {
+        localStorage.setItem(TOKEN_KEY, newToken);
+        setUser(newUser);
+        setToken(newToken);
+    };
+
+    const handleStudentLogout = async () => {
+        try {
+            if (token) await api.post('/api/auth/logout', { token });
+        } catch {
+            // ignore
+        }
+        localStorage.removeItem(TOKEN_KEY);
+        setUser(null);
+        setToken('');
+    };
 
     return (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-slate-900 shadow-sm">
-            <div className="border-b border-slate-200 bg-white">
-                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
-                    <div className="flex items-center gap-2.5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white">
-                            <GraduationCap size={19} />
-                        </div>
-                        <div>
-                            <div className="text-base font-semibold leading-tight text-slate-900">ExamHub</div>
-                            <p className="text-xs leading-tight text-slate-500">{sectionLabel}</p>
+        <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+            {/* Full-screen Portal Top Bar */}
+            <header className="sticky top-0 z-30 border-b border-slate-200 bg-white shadow-sm">
+                <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
+                    <div className="flex items-center gap-3">
+                        <a
+                            href="#/"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
+                        >
+                            <ArrowLeft size={14} />
+                            Back to Website
+                        </a>
+                        <div className="h-5 w-px bg-slate-200 hidden sm:block" />
+                        <div className="flex items-center gap-2.5">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#364c83] text-white">
+                                <GraduationCap size={19} />
+                            </div>
+                            <div>
+                                <div className="text-base font-bold leading-tight text-slate-900">ExamHub Portal</div>
+                                <p className="text-xs leading-tight text-slate-500">{sectionLabel}</p>
+                            </div>
                         </div>
                     </div>
-                    <nav className="flex gap-1 rounded-lg bg-slate-100 p-1" aria-label="Portal mode">
-                        {(['student', 'admin'] as Tab[]).map((t) => (
-                            <button
-                                key={t}
-                                type="button"
-                                onClick={() => setTab(t)}
-                                className={`rounded-md px-3.5 py-1.5 text-sm font-medium capitalize transition ${
-                                    tab === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                                }`}
-                            >
-                                {t}
-                            </button>
-                        ))}
-                    </nav>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                        {tab === 'student' && user && (
+                            <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs">
+                                <UserCheck size={14} className="text-emerald-600 shrink-0" />
+                                <div className="leading-tight">
+                                    <span className="font-semibold text-slate-800">{user.name}</span>
+                                    <span className="text-slate-500">
+                                        {' '}
+                                        &middot; {user.schoolName} (Basic {user.gradeLevel})
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleStudentLogout}
+                                    className="ml-1 rounded px-1.5 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                                >
+                                    Sign out
+                                </button>
+                            </div>
+                        )}
+
+                        <nav className="flex gap-1 rounded-lg bg-slate-100 p-1" aria-label="Portal mode">
+                            {(['student', 'admin'] as Tab[]).map((t) => (
+                                <button
+                                    key={t}
+                                    type="button"
+                                    onClick={() => setTab(t)}
+                                    className={`rounded-md px-3.5 py-1.5 text-sm font-medium capitalize transition ${
+                                        tab === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                                    }`}
+                                >
+                                    {t}
+                                </button>
+                            ))}
+                        </nav>
+                    </div>
                 </div>
-            </div>
-            <div className="px-4 py-8 sm:px-6">
-                {tab === 'student' ? <StudentView key={String(initialLevel ?? 'basic')} initialLevel={initialLevel} /> : <AdminView />}
+
+                {/* Section Sub-Tabs inside Full-Screen Portal */}
+                <div className="border-t border-slate-100 bg-slate-50/70">
+                    <div className="mx-auto flex max-w-6xl items-center gap-1.5 overflow-x-auto px-4 py-2 sm:px-6">
+                        <a
+                            href="#/exams"
+                            className="rounded-full px-3.5 py-1 text-xs font-semibold text-slate-600 transition hover:bg-white hover:text-slate-900 whitespace-nowrap"
+                        >
+                            All Sections
+                        </a>
+                        {TRACKS.map((t) => {
+                            const isCurrent = t.slug === activeSlug;
+                            return (
+                                <a
+                                    key={t.slug}
+                                    href={`#/exams/${t.slug}`}
+                                    className={`rounded-full px-3.5 py-1 text-xs font-semibold transition whitespace-nowrap ${
+                                        isCurrent
+                                            ? 'bg-[#364c83] text-white shadow-sm'
+                                            : 'text-slate-600 hover:bg-white hover:text-slate-900'
+                                    }`}
+                                >
+                                    {t.label}
+                                </a>
+                            );
+                        })}
+                    </div>
+                </div>
+            </header>
+
+            <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:px-6">
+                {tab === 'admin' ? (
+                    <AdminView />
+                ) : checkingAuth ? (
+                    <div className="flex items-center justify-center gap-2 py-24 text-slate-400">
+                        <Loader2 className="animate-spin" size={18} />
+                        Loading your account...
+                    </div>
+                ) : !user ? (
+                    <StudentAuthView onAuthenticated={handleAuthenticated} />
+                ) : (
+                    <StudentView
+                        key={`${activeSlug}-${user.id}`}
+                        user={user}
+                        token={token}
+                        initialLevel={initialLevel}
+                    />
+                )}
+            </main>
+        </div>
+    );
+}
+
+/* ------------------------------------------------------------------ */
+/* Student Registration & Login Gate                                   */
+/* ------------------------------------------------------------------ */
+
+function StudentAuthView({ onAuthenticated }: { onAuthenticated: (u: StudentUser, token: string) => void }) {
+    const [mode, setMode] = useState<'login' | 'register'>('login');
+    const [name, setName] = useState('');
+    const [email, setEmail] = useState('');
+    const [schoolName, setSchoolName] = useState('');
+    const [gradeLevel, setGradeLevel] = useState<number>(4);
+    const [password, setPassword] = useState('');
+    const [err, setErr] = useState('');
+    const [busy, setBusy] = useState(false);
+
+    const submit = async (e: FormEvent) => {
+        e.preventDefault();
+        setErr('');
+        setBusy(true);
+        try {
+            if (mode === 'register') {
+                const res = await api.post('/api/auth/register', {
+                    name: name.trim(),
+                    email: email.trim(),
+                    schoolName: schoolName.trim(),
+                    gradeLevel,
+                    password,
+                });
+                onAuthenticated(res.data.user, res.data.token);
+            } else {
+                const res = await api.post('/api/auth/login', {
+                    email: email.trim(),
+                    password,
+                });
+                onAuthenticated(res.data.user, res.data.token);
+            }
+        } catch (e2) {
+            setErr(errMsg(e2, mode === 'register' ? 'Could not create account.' : 'Could not sign in.'));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="mx-auto max-w-md py-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+                <div className="flex items-center justify-between">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-[#364c83]">
+                        <GraduationCap size={22} />
+                    </div>
+                    <div className="flex rounded-lg bg-slate-100 p-1">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setMode('login');
+                                setErr('');
+                            }}
+                            className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                                mode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                        >
+                            Sign in
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setMode('register');
+                                setErr('');
+                            }}
+                            className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                                mode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                        >
+                            Register
+                        </button>
+                    </div>
+                </div>
+
+                <h2 className="mt-4 text-xl font-bold text-slate-900">
+                    {mode === 'login' ? 'Sign in to ExamHub' : 'Create your ExamHub account'}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                    {mode === 'login'
+                        ? 'Enter your registered email and password to access exams and track your scores.'
+                        : 'Register with your details below to start practising exams on ExamHub.'}
+                </p>
+
+                {err && (
+                    <div className="mt-4 rounded-lg bg-red-50 px-3.5 py-2.5 text-sm font-medium text-red-700" role="alert">
+                        {err}
+                    </div>
+                )}
+
+                <form onSubmit={submit} className="mt-5 space-y-4">
+                    {mode === 'register' && (
+                        <Field label="Full Name">
+                            <input
+                                required
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                placeholder="e.g. Kofi Mensah"
+                                autoComplete="name"
+                                className="input"
+                            />
+                        </Field>
+                    )}
+
+                    <Field label="Email Address">
+                        <input
+                            required
+                            type="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="e.g. kofi@example.com"
+                            autoComplete="email"
+                            className="input"
+                        />
+                    </Field>
+
+                    {mode === 'register' && (
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                            <div className="sm:col-span-2">
+                                <Field label="School Name">
+                                    <input
+                                        required
+                                        value={schoolName}
+                                        onChange={(e) => setSchoolName(e.target.value)}
+                                        placeholder="e.g. Achimota Basic School"
+                                        className="input"
+                                    />
+                                </Field>
+                            </div>
+                            <div>
+                                <Field label="Grade Level">
+                                    <select
+                                        value={gradeLevel}
+                                        onChange={(e) => setGradeLevel(Number(e.target.value))}
+                                        className="input"
+                                    >
+                                        {SCHOOL_LEVELS.map((lvl) => (
+                                            <option key={lvl} value={lvl}>
+                                                Basic {lvl}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </Field>
+                            </div>
+                        </div>
+                    )}
+
+                    <Field label={mode === 'register' ? 'Password (min. 6 characters)' : 'Password'}>
+                        <input
+                            required
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="••••••••"
+                            autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                            className="input"
+                        />
+                    </Field>
+
+                    <button
+                        type="submit"
+                        disabled={busy}
+                        className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#364c83] py-2.5 text-sm font-semibold text-white transition hover:bg-[#1f2d57] disabled:opacity-50"
+                    >
+                        {busy && <Loader2 className="animate-spin" size={16} />}
+                        {mode === 'login' ? 'Sign in to ExamHub' : 'Create account & continue'}
+                    </button>
+                </form>
+
+                <div className="mt-5 border-t border-slate-100 pt-4 text-center text-xs text-slate-500">
+                    {mode === 'login' ? (
+                        <>
+                            Don&apos;t have an account yet?{' '}
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMode('register');
+                                    setErr('');
+                                }}
+                                className="font-semibold text-[#364c83] hover:underline"
+                            >
+                                Register now
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            Already have an account?{' '}
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMode('login');
+                                    setErr('');
+                                }}
+                                className="font-semibold text-[#364c83] hover:underline"
+                            >
+                                Sign in
+                            </button>
+                        </>
+                    )}
+                </div>
             </div>
         </div>
     );
 }
 
 /* ------------------------------------------------------------------ */
-/* Student                                                             */
+/* Student Exam Interface                                              */
 /* ------------------------------------------------------------------ */
 
-function StudentView({ initialLevel }: { initialLevel: Level | null }) {
+function StudentView({
+    user,
+    token,
+    initialLevel,
+}: {
+    user: StudentUser;
+    token: string;
+    initialLevel: Level | null;
+}) {
     const [stage, setStage] = useState<'select' | 'exam' | 'result'>('select');
-    const [name, setName] = useState('');
-    const [level, setLevel] = useState<Level | null>(initialLevel);
+    const [level, setLevel] = useState<Level>(initialLevel ?? user.gradeLevel);
     const [subjects, setSubjects] = useState<Subject[]>([]);
     const [counts, setCounts] = useState<Record<string, number>>({});
     const [loading, setLoading] = useState(true);
@@ -152,10 +507,6 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
     }, [loadCatalog]);
 
     const startExam = async (s: Subject) => {
-        if (!name.trim()) {
-            setNotice('Please enter your name before starting an exam.');
-            return;
-        }
         if (level === null) return;
         setNotice('');
         setStarting(s.id);
@@ -186,13 +537,17 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
         setSubmitting(true);
         try {
             const res = await api.post('/api/exam/submit', {
-                studentName: name.trim(),
+                token,
+                studentName: user.name,
+                schoolName: user.schoolName,
+                studentEmail: user.email,
                 level,
                 subjectId: subject.id,
                 answers,
             });
             setResult(res.data);
             setStage('result');
+            window.scrollTo({ top: 0 });
             loadCatalog().catch(() => undefined);
         } catch (e) {
             setNotice(errMsg(e, 'Could not submit the exam. Please try again.'));
@@ -227,7 +582,7 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
         return (
             <div className="mx-auto max-w-2xl">
                 <div className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-2 font-medium text-indigo-700">
+                    <span className="flex items-center gap-2 font-medium text-[#364c83]">
                         <SubjectIcon name={subject.name} size={16} />
                         {subject.name} &middot; {levelLabel(level)}
                     </span>
@@ -237,14 +592,14 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
                 </div>
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
                     <div
-                        className="h-full rounded-full bg-indigo-600 transition-all"
+                        className="h-full rounded-full bg-[#364c83] transition-all"
                         style={{ width: `${((index + 1) / questions.length) * 100}%` }}
                     />
                 </div>
 
                 {notice && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
 
-                <div className="mt-5 rounded-xl border border-slate-200 bg-white p-5">
+                <div className="mt-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                         Question {index + 1} of {questions.length}
                     </p>
@@ -259,13 +614,13 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
                                     onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: i }))}
                                     className={`flex w-full items-center gap-3 rounded-lg border px-3.5 py-3 text-left text-sm transition ${
                                         selected
-                                            ? 'border-indigo-600 bg-indigo-50 text-indigo-900'
+                                            ? 'border-[#364c83] bg-indigo-50 text-slate-900'
                                             : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                                     }`}
                                 >
                                     <span
                                         className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
-                                            selected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+                                            selected ? 'bg-[#364c83] text-white' : 'bg-slate-100 text-slate-500'
                                         }`}
                                     >
                                         {LETTERS[i]}
@@ -286,9 +641,9 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
                             aria-label={`Go to question ${i + 1}`}
                             className={`h-8 w-8 rounded-md text-xs font-medium transition ${
                                 i === index
-                                    ? 'bg-indigo-600 text-white'
+                                    ? 'bg-[#364c83] text-white'
                                     : answers[x.id] !== undefined
-                                    ? 'bg-indigo-100 text-indigo-700'
+                                    ? 'bg-indigo-100 text-[#364c83]'
                                     : 'bg-white text-slate-500 ring-1 ring-slate-200'
                             }`}
                         >
@@ -312,7 +667,7 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
                             type="button"
                             onClick={submitExam}
                             disabled={submitting}
-                            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+                            className="flex items-center gap-2 rounded-lg bg-[#364c83] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2d57] disabled:opacity-60"
                         >
                             {submitting && <Loader2 className="animate-spin" size={15} />}
                             Submit exam
@@ -321,7 +676,7 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
                         <button
                             type="button"
                             onClick={() => setIndex((i) => Math.min(questions.length - 1, i + 1))}
-                            className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                            className="flex items-center gap-1 rounded-lg bg-[#364c83] px-3.5 py-2 text-sm font-medium text-white hover:bg-[#1f2d57]"
                         >
                             Next
                             <ChevronRight size={16} />
@@ -339,22 +694,22 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
         const reviewById = new Map(result.review.map((r) => [r.id, r]));
         return (
             <div className="mx-auto max-w-2xl">
-                <div className="rounded-xl border border-slate-200 bg-white p-6 text-center">
-                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
+                <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-indigo-50 text-[#364c83]">
                         <Trophy size={22} />
                     </div>
                     <p className="mt-3 text-sm text-slate-500">
-                        {name.trim()} &middot; {subject.name} &middot; {levelLabel(level)}
+                        {user.name} ({user.schoolName}) &middot; {subject.name} &middot; {levelLabel(level)}
                     </p>
                     <p className="mt-1 text-4xl font-bold text-slate-900">
                         {result.score}/{result.total}
                     </p>
-                    <p className="mt-1 text-lg font-semibold text-indigo-600">{result.percent}%</p>
+                    <p className="mt-1 text-lg font-semibold text-[#364c83]">{result.percent}%</p>
                     <p className="mt-2 text-sm text-slate-600">{msg}</p>
                     <button
                         type="button"
                         onClick={backToStart}
-                        className="mt-5 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                        className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[#364c83] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2d57]"
                     >
                         <RotateCcw size={15} />
                         Take another exam
@@ -415,30 +770,24 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
 
     return (
         <div className="mx-auto max-w-2xl">
-            <h2 className="text-xl font-semibold text-slate-900">
-                {isTrackSection && level ? `Start a ${levelLabel(level)} exam` : 'Start an exam'}
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-                {isTrackSection
-                    ? 'Enter your name, then pick a subject below.'
-                    : 'Enter your name, choose your school level, then pick a subject.'}
-            </p>
-
-            {notice && <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
-
-            <div className="mt-5 space-y-5 rounded-xl border border-slate-200 bg-white p-5">
-                <Field label="Your name">
-                    <input
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="e.g. Kofi Mensah"
-                        className="input"
-                    />
-                </Field>
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 className="text-xl font-bold text-slate-900">
+                            {isTrackSection ? `${levelLabel(level)} Practice` : 'Basic 4 to 9 Exams'}
+                        </h2>
+                        <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
+                            <School size={14} className="text-slate-400" />
+                            Signed in as <strong className="text-slate-700">{user.name}</strong> &middot; {user.schoolName}
+                        </p>
+                    </div>
+                </div>
 
                 {!isTrackSection && (
-                    <div>
-                        <span className="mb-2 block text-xs font-medium text-slate-600">School level</span>
+                    <div className="mt-5 border-t border-slate-100 pt-4">
+                        <span className="mb-2 block text-xs font-medium text-slate-600">
+                            School level (your registered grade is Basic {user.gradeLevel})
+                        </span>
                         <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
                             {SCHOOL_LEVELS.map((l) => (
                                 <LevelButton
@@ -456,9 +805,11 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
                 )}
             </div>
 
+            {notice && <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+
             {level !== null && (
                 <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-slate-900">{levelLabel(level)} subjects</h3>
+                    <h3 className="text-sm font-semibold text-slate-900">Choose a {levelLabel(level)} subject to start</h3>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                         {subjects.map((s) => {
                             const count = counts[`${s.id}|${level}`] || 0;
@@ -469,9 +820,9 @@ function StudentView({ initialLevel }: { initialLevel: Level | null }) {
                                     type="button"
                                     onClick={() => startExam(s)}
                                     disabled={disabled}
-                                    className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-indigo-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-none"
+                                    className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-[#364c83] hover:shadow disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-none"
                                 >
-                                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
                                         {starting === s.id ? <Loader2 className="animate-spin" size={18} /> : <SubjectIcon name={s.name} />}
                                     </span>
                                     <span>
@@ -497,7 +848,7 @@ function LevelButton({ l, active, onPick }: { l: Level; active: boolean; onPick:
             onClick={onPick}
             className={`rounded-lg border px-2 py-2.5 text-sm font-medium transition ${
                 active
-                    ? 'border-indigo-600 bg-indigo-600 text-white'
+                    ? 'border-[#364c83] bg-[#364c83] text-white'
                     : 'border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
             }`}
         >
@@ -591,8 +942,8 @@ function AdminView() {
     if (status !== 'in') {
         return (
             <div className="mx-auto max-w-sm">
-                <div className="rounded-xl border border-slate-200 bg-white p-6">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
                         <Lock size={18} />
                     </div>
                     <h2 className="mt-3 text-lg font-semibold text-slate-900">
@@ -615,7 +966,7 @@ function AdminView() {
                         <button
                             type="submit"
                             disabled={busy || !input.trim()}
-                            className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                            className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#364c83] py-2.5 text-sm font-medium text-white hover:bg-[#1f2d57] disabled:opacity-50"
                         >
                             {busy && <Loader2 className="animate-spin" size={15} />}
                             {status === 'setup' ? 'Create passcode' : 'Sign in'}
@@ -802,7 +1153,7 @@ function SubjectsAdmin({
                 <button
                     type="submit"
                     disabled={adding || !name.trim()}
-                    className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                    className="flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3.5 text-sm font-medium text-white hover:bg-[#1f2d57] disabled:opacity-50"
                 >
                     <Plus size={15} />
                     Add
@@ -812,7 +1163,7 @@ function SubjectsAdmin({
                 {subjects.map((s) => (
                     <div key={s.id} className="flex items-center justify-between py-2.5">
                         <span className="flex items-center gap-2.5 text-sm font-medium text-slate-900">
-                            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
                                 <SubjectIcon name={s.name} size={16} />
                             </span>
                             {s.name}
@@ -953,7 +1304,7 @@ function QuestionsAdmin({
                                         checked={correct === i}
                                         onChange={() => setCorrect(i)}
                                         aria-label={`Option ${LETTERS[i]} is correct`}
-                                        className="h-4 w-4 accent-indigo-600"
+                                        className="h-4 w-4 accent-[#364c83]"
                                     />
                                     <span className="w-4 text-xs font-semibold text-slate-400">{LETTERS[i]}</span>
                                     <input
@@ -974,7 +1325,7 @@ function QuestionsAdmin({
                     <button
                         type="submit"
                         disabled={saving || subjects.length === 0}
-                        className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                        className="flex items-center gap-2 rounded-lg bg-[#364c83] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2d57] disabled:opacity-50"
                     >
                         {saving ? <Loader2 className="animate-spin" size={15} /> : <Plus size={15} />}
                         Add question
@@ -1009,7 +1360,7 @@ function QuestionsAdmin({
                         <div key={q.id} className="rounded-lg border border-slate-200 p-3.5">
                             <div className="flex items-start justify-between gap-3">
                                 <div>
-                                    <p className="text-xs font-medium text-indigo-600">
+                                    <p className="text-xs font-medium text-[#364c83]">
                                         {subjectName(q.subjectId)} &middot; {levelLabel(q.level)}
                                     </p>
                                     <p className="mt-1 text-sm font-medium text-slate-900">{q.text}</p>
@@ -1082,6 +1433,7 @@ function ResultsAdmin({
                         <thead>
                             <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
                                 <th className="py-2 pr-3 font-medium">Student</th>
+                                <th className="py-2 pr-3 font-medium">School</th>
                                 <th className="py-2 pr-3 font-medium">Level</th>
                                 <th className="py-2 pr-3 font-medium">Subject</th>
                                 <th className="py-2 pr-3 font-medium">Score</th>
@@ -1093,6 +1445,7 @@ function ResultsAdmin({
                             {results.map((r) => (
                                 <tr key={r.id} className="border-b border-slate-100 last:border-0">
                                     <td className="py-2.5 pr-3 font-medium text-slate-900">{r.studentName}</td>
+                                    <td className="py-2.5 pr-3 text-slate-500">{r.schoolName || '—'}</td>
                                     <td className="py-2.5 pr-3 text-slate-500">{levelLabel(r.level)}</td>
                                     <td className="py-2.5 pr-3 text-slate-500">{r.subjectName}</td>
                                     <td className="py-2.5 pr-3 text-slate-500">

@@ -23,11 +23,16 @@ const TITLES: Record<Route, string> = {
 function App() {
     const { route, sub } = useRoute();
     const [open, setOpen] = useState(false);
+    const isFullExamPortal = route === 'exams' && TRACKS.some((t) => t.slug === sub);
 
     useEffect(() => {
         setOpen(false);
         document.title = TITLES[route];
     }, [route, sub]);
+
+    if (isFullExamPortal) {
+        return <Exams sub={sub} />;
+    }
 
     return (
         <>
