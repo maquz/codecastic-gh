@@ -264,7 +264,7 @@ export default function ExamHubPortal({
 
                 {/* Section Sub-Tabs inside Full-Screen Portal (All Sections removed; locked to user's section once signed in) */}
                 <div className="border-t border-slate-100 bg-slate-50/70">
-                    <div className="mx-auto flex max-w-6xl items-center gap-1.5 overflow-x-auto px-4 py-2 sm:px-6">
+                    <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-2 px-4 py-2.5 sm:px-6">
                         {visibleTracks.map((t) => {
                             const isCurrent = t.slug === activeSlug;
                             const labelText =
@@ -279,7 +279,7 @@ export default function ExamHubPortal({
                                 <a
                                     key={t.slug}
                                     href={`#/exams/${t.slug}`}
-                                    className={`rounded-full px-3.5 py-1 text-xs font-semibold transition whitespace-nowrap ${
+                                    className={`rounded-full px-4 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
                                         isCurrent
                                             ? 'bg-[#364c83] text-white shadow-sm'
                                             : 'text-slate-600 hover:bg-white hover:text-slate-900'
