@@ -27,6 +27,11 @@ import {
     Eye,
     EyeOff,
     Pencil,
+    Download,
+    Upload,
+    FileText,
+    FileSpreadsheet,
+    FileCode,
 } from 'lucide-react';
 
 export type Level = number | string;
@@ -1483,6 +1488,11 @@ function QuestionsAdmin({
     const [editExplanation, setEditExplanation] = useState('');
     const [updating, setUpdating] = useState(false);
 
+    // Bulk template & file upload state
+    const [uploadingBulk, setUploadingBulk] = useState(false);
+    const [dragOverBulk, setDragOverBulk] = useState(false);
+    const [bulkNotice, setBulkNotice] = useState<{ ok: boolean; msg: string } | null>(null);
+
     useEffect(() => {
         if (!subjectId && subjects.length > 0) setSubjectId(subjects[0].id);
     }, [subjects, subjectId]);
@@ -1500,6 +1510,7 @@ function QuestionsAdmin({
         setSelectedTrackSlug(slug);
         setSelectedSubjectId(null);
         setEditingId(null);
+        setBulkNotice(null);
         if (track.code === null) {
             setLevel(4);
             setFLevel('all');
@@ -1513,6 +1524,7 @@ function QuestionsAdmin({
         setSelectedSubjectId(subjId);
         setSubjectId(subjId);
         setEditingId(null);
+        setBulkNotice(null);
         if (activeTrack) {
             if (activeTrack.code === null) {
                 setLevel(4);
@@ -1521,6 +1533,145 @@ function QuestionsAdmin({
                 setLevel(activeTrack.code);
                 setFLevel(activeTrack.code);
             }
+        }
+    };
+
+    const downloadBlankTemplate = (format: 'word' | 'csv' | 'json') => {
+        if (!activeTrack || !activeSubject) return;
+        const safeSubj = activeSubject.name.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '');
+        const safeTrack = activeTrack.label.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '');
+        const lvlDisplay = levelLabel(level);
+
+        const triggerDownload = (content: string, mime: string, ext: string) => {
+            const blob = new Blob([content], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ExamHub_${safeTrack}_${safeSubj}_Template.${ext}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        };
+
+        if (format === 'json') {
+            const sample = [
+                {
+                    question: `Sample ${activeSubject.name} (${lvlDisplay}) Question 1: Replace this with your question text?`,
+                    options: ['Option A text', 'Option B text', 'Option C text', 'Option D text'],
+                    correctAnswer: 'B',
+                    explanation: 'Optional explanation shown to the candidate after submitting the exam.',
+                    level: String(level),
+                },
+                {
+                    question: `Sample ${activeSubject.name} (${lvlDisplay}) Question 2: Replace this with your second question?`,
+                    options: ['First choice', 'Second choice', 'Third choice', 'Fourth choice'],
+                    correctAnswer: 'A',
+                    explanation: 'Optional explanation for question 2.',
+                    level: String(level),
+                },
+            ];
+            triggerDownload(JSON.stringify(sample, null, 2), 'application/json;charset=utf-8', 'json');
+            return;
+        }
+
+        if (format === 'csv') {
+            const rows = [
+                ['Question', 'Option A', 'Option B', 'Option C', 'Option D', 'Correct Answer', 'Explanation', 'Level'],
+                [
+                    `Sample ${activeSubject.name} (${lvlDisplay}) Question 1: Replace with your question?`,
+                    'Option A text',
+                    'Option B text',
+                    'Option C text',
+                    'Option D text',
+                    'B',
+                    'Optional explanation for question 1',
+                    String(level),
+                ],
+                [
+                    `Sample ${activeSubject.name} (${lvlDisplay}) Question 2: Replace with your second question?`,
+                    'First choice',
+                    'Second choice',
+                    'Third choice',
+                    'Fourth choice',
+                    'A',
+                    'Optional explanation for question 2',
+                    String(level),
+                ],
+            ];
+            const csvText =
+                '\uFEFF' +
+                rows
+                    .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+                    .join('\r\n');
+            triggerDownload(csvText, 'text/csv;charset=utf-8', 'csv');
+            return;
+        }
+
+        // Word (.doc) template — plain structured Q&A format that opens in MS Word and can be saved as .doc, .docx, or .txt
+        const wordContent = [
+            `EXAMHUB BULK QUESTION TEMPLATE — ${activeSubject.name.toUpperCase()} (${activeTrack.label.toUpperCase()})`,
+            `================================================================================`,
+            `Instructions: Fill in your questions below using this pattern (Question, A-D options, Answer: A/B/C/D, and optional Explanation).`,
+            `Save this file in Word (.doc / .docx) or Text (.txt) and upload it in the Admin Portal to import all questions instantly.`,
+            ``,
+            `Question 1: Sample ${activeSubject.name} (${lvlDisplay}) question — replace this line with your first question?`,
+            `A) Option A text`,
+            `B) Option B text`,
+            `C) Option C text`,
+            `D) Option D text`,
+            `Answer: B`,
+            `Explanation: Optional explanation shown after the exam.`,
+            `Level: ${lvlDisplay}`,
+            ``,
+            `Question 2: Sample ${activeSubject.name} (${lvlDisplay}) question — replace this line with your second question?`,
+            `A) First choice`,
+            `B) Second choice`,
+            `C) Third choice`,
+            `D) Fourth choice`,
+            `Answer: A`,
+            `Explanation: Optional explanation for question 2.`,
+            `Level: ${lvlDisplay}`,
+            ``,
+        ].join('\r\n');
+
+        triggerDownload(wordContent, 'application/msword;charset=utf-8', 'doc');
+    };
+
+    const handleBulkFileUpload = async (file: File | null | undefined) => {
+        if (!file || !activeSubject) return;
+        setUploadingBulk(true);
+        setBulkNotice(null);
+        try {
+            const fileBase64 = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const res = String(reader.result || '');
+                    const commaIdx = res.indexOf(',');
+                    resolve(commaIdx !== -1 ? res.slice(commaIdx + 1) : res);
+                };
+                reader.onerror = () => reject(new Error('Could not read the selected file.'));
+                reader.readAsDataURL(file);
+            });
+
+            const res = await api.post('/api/admin/questions/bulk', {
+                passcode: code,
+                subjectId: activeSubject.id,
+                level,
+                fileName: file.name,
+                fileBase64,
+            });
+            const count = Number(res.data?.imported || 0);
+            await reload();
+            const msg = `Successfully imported ${count} question${count === 1 ? '' : 's'} from "${file.name}" into ${activeSubject.name}.`;
+            setBulkNotice({ ok: true, msg });
+            flash(true, msg);
+        } catch (e2) {
+            const msg = errMsg(e2, 'Could not import questions from file.');
+            setBulkNotice({ ok: false, msg });
+            flash(false, msg);
+        } finally {
+            setUploadingBulk(false);
         }
     };
 
@@ -1828,6 +1979,7 @@ function QuestionsAdmin({
                             onClick={() => {
                                 setSelectedSubjectId(null);
                                 setEditingId(null);
+                                setBulkNotice(null);
                             }}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-[#364c83] hover:bg-white hover:text-[#364c83]"
                         >
@@ -1840,6 +1992,7 @@ function QuestionsAdmin({
                                 setSelectedTrackSlug(null);
                                 setSelectedSubjectId(null);
                                 setEditingId(null);
+                                setBulkNotice(null);
                             }}
                             className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
                         >
@@ -1881,7 +2034,7 @@ function QuestionsAdmin({
                                 {activeSubject.name} ({activeTrack.label})
                             </h2>
                             <p className="mt-0.5 text-xs text-slate-500">
-                                Set new {activeSubject.name} questions and update existing questions for {activeTrack.label}.
+                                Set new {activeSubject.name} questions, bulk import from templates, and update existing questions for {activeTrack.label}.
                             </p>
                         </div>
                     </div>
@@ -1893,6 +2046,164 @@ function QuestionsAdmin({
                     </div>
                 </div>
             </div>
+
+            {/* Bulk Question Templates & Instant File Upload */}
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
+                            <Upload size={12} />
+                            Bulk Import
+                        </span>
+                        <h2 className="mt-1 text-sm font-semibold text-slate-900">
+                            Bulk Question Templates &amp; File Upload
+                        </h2>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                            Download a blank template in <strong>Word (.doc)</strong>, <strong>Excel / CSV (.csv)</strong>, or <strong>JSON (.json)</strong>, fill in your {activeSubject.name} questions, and upload the file to import all questions instantly.
+                        </p>
+                    </div>
+                    {isBasicPortal && (
+                        <div className="w-full sm:w-48">
+                            <Field label="Default Class Level for Upload">
+                                <select
+                                    value={String(level)}
+                                    onChange={(e) => setLevel(parseLevel(e.target.value))}
+                                    className="input"
+                                >
+                                    {SCHOOL_LEVELS.map((l) => (
+                                        <option key={l} value={String(l)}>
+                                            {levelLabel(l)}
+                                        </option>
+                                    ))}
+                                </select>
+                            </Field>
+                        </div>
+                    )}
+                </div>
+
+                {/* Step A: Download Blank Templates */}
+                <div className="mt-4">
+                    <span className="mb-2 block text-xs font-semibold text-slate-600">
+                        1. Download a blank template ({activeSubject.name} &middot; {levelLabel(level)})
+                    </span>
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                        <button
+                            type="button"
+                            onClick={() => downloadBlankTemplate('word')}
+                            className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-left transition hover:border-[#364c83] hover:bg-indigo-50/40"
+                        >
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-[#364c83] shadow-sm ring-1 ring-slate-200">
+                                <FileText size={18} />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-1 text-xs font-bold text-slate-900">
+                                    Word Template
+                                    <Download size={12} className="text-[#364c83]" />
+                                </span>
+                                <span className="block text-[11px] text-slate-500">Download .doc (Word / Text)</span>
+                            </span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => downloadBlankTemplate('csv')}
+                            className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-left transition hover:border-[#364c83] hover:bg-indigo-50/40"
+                        >
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-[#364c83] shadow-sm ring-1 ring-slate-200">
+                                <FileSpreadsheet size={18} />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-1 text-xs font-bold text-slate-900">
+                                    Excel / CSV Template
+                                    <Download size={12} className="text-[#364c83]" />
+                                </span>
+                                <span className="block text-[11px] text-slate-500">Download .csv (Excel / Calc)</span>
+                            </span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => downloadBlankTemplate('json')}
+                            className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-left transition hover:border-[#364c83] hover:bg-indigo-50/40"
+                        >
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-[#364c83] shadow-sm ring-1 ring-slate-200">
+                                <FileCode size={18} />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-1 text-xs font-bold text-slate-900">
+                                    JSON Template
+                                    <Download size={12} className="text-[#364c83]" />
+                                </span>
+                                <span className="block text-[11px] text-slate-500">Download .json (Structured)</span>
+                            </span>
+                        </button>
+                    </div>
+                </div>
+
+                {/* Step B: Upload Completed File */}
+                <div className="mt-4">
+                    <span className="mb-2 block text-xs font-semibold text-slate-600">
+                        2. Upload filled file to import all questions instantly
+                    </span>
+                    <label
+                        onDragOver={(e) => {
+                            e.preventDefault();
+                            setDragOverBulk(true);
+                        }}
+                        onDragLeave={() => setDragOverBulk(false)}
+                        onDrop={(e) => {
+                            e.preventDefault();
+                            setDragOverBulk(false);
+                            const file = e.dataTransfer?.files?.[0];
+                            if (file) handleBulkFileUpload(file);
+                        }}
+                        className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-6 text-center transition ${
+                            dragOverBulk
+                                ? 'border-[#364c83] bg-indigo-50/60'
+                                : 'border-slate-300 bg-slate-50/50 hover:border-[#364c83] hover:bg-indigo-50/20'
+                        } ${uploadingBulk ? 'pointer-events-none opacity-60' : ''}`}
+                    >
+                        <input
+                            type="file"
+                            accept=".doc,.docx,.txt,.csv,.tsv,.xlsx,.xls,.json"
+                            disabled={uploadingBulk}
+                            onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleBulkFileUpload(file);
+                                e.target.value = '';
+                            }}
+                            className="hidden"
+                        />
+                        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-50 text-[#364c83]">
+                            {uploadingBulk ? <Loader2 className="animate-spin" size={20} /> : <Upload size={20} />}
+                        </span>
+                        <span className="mt-2 text-xs font-semibold text-slate-800">
+                            {uploadingBulk
+                                ? 'Importing questions...'
+                                : 'Click to select a file or drag & drop it here'}
+                        </span>
+                        <span className="mt-1 text-[11px] text-slate-500">
+                            Supports Word (<strong>.doc, .docx, .txt</strong>), Excel / CSV (<strong>.csv, .xlsx</strong>), and JSON (<strong>.json</strong>)
+                        </span>
+                    </label>
+
+                    {bulkNotice && (
+                        <div
+                            className={`mt-3 flex items-center gap-2 rounded-lg px-3.5 py-2.5 text-xs font-medium ${
+                                bulkNotice.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'
+                            }`}
+                            role="status"
+                        >
+                            {bulkNotice.ok ? (
+                                <CheckCircle2 size={15} className="shrink-0 text-emerald-600" />
+                            ) : (
+                                <XCircle size={15} className="shrink-0 text-red-500" />
+                            )}
+                            <span>{bulkNotice.msg}</span>
+                        </div>
+                    )}
+                </div>
+            </section>
 
             {/* Set / Add a Question Form */}
             <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

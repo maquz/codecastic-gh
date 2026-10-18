@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import { router, json, error, db } from './sdk';
 
 /* ------------------------------------------------------------------ */
@@ -67,11 +68,20 @@ type Level = number | string;
 
 function normLevel(raw: unknown): Level | null {
     const s = String(raw ?? '').trim();
+    if (!s) return null;
     if (/^\d+$/.test(s)) {
         const n = Number(s);
         return SCHOOL_LEVELS.includes(n) ? n : null;
     }
+    const basicMatch = s.match(/^(?:basic|grade|class|b)\s*(\d+)$/i);
+    if (basicMatch) {
+        const n = Number(basicMatch[1]);
+        return SCHOOL_LEVELS.includes(n) ? n : null;
+    }
     const u = s.toUpperCase();
+    if (u === 'GES PROMOTION' || u === 'GES PROMOTION EXAMS' || u === 'GES-PROMOTION') {
+        return 'GES-PROMO';
+    }
     return TRACKS.includes(u) ? u : null;
 }
 
@@ -271,8 +281,498 @@ async function isAdmin(code: unknown): Promise<boolean> {
 }
 
 async function allQuestions(): Promise<any[]> {
-    const { items } = await db.list('questions', { limit: 500 });
+    const { items } = await db.list('questions', { limit: 5000 });
     return [...items].sort((a: any, b: any) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+
+/* ------------------------------------------------------------------ */
+/* Bulk Question File Parsers (Word .doc/.docx, Excel .csv/.xlsx, JSON)*/
+/* ------------------------------------------------------------------ */
+
+interface RawBulkItem {
+    text: string;
+    options: string[];
+    correctIndex: number;
+    explanation: string;
+    level?: Level | null;
+    subjectId?: string;
+}
+
+function decodeXmlEntities(s: string): string {
+    return s
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;|&apos;/gi, "'")
+        .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)));
+}
+
+function resolveCorrectIndex(rawAns: unknown, options: string[]): number {
+    if (typeof rawAns === 'number' && Number.isInteger(rawAns)) {
+        if (rawAns >= 0 && rawAns <= 3) return rawAns;
+        if (rawAns >= 1 && rawAns <= 4) return rawAns - 1;
+    }
+    const s = String(rawAns ?? '').trim();
+    if (!s) return -1;
+
+    // Match "A", "B", "C", "D" or "Option A", "(B)", "B) 56"
+    const letterMatch = s.match(/^(?:option\s*)?\(?([A-Da-d])\)?(?:\s*[:.)-].*)?$/i);
+    if (letterMatch) {
+        return letterMatch[1].toUpperCase().charCodeAt(0) - 65;
+    }
+    if (/^[1-4]$/.test(s)) {
+        return Number(s) - 1;
+    }
+    // Or match exact option text
+    const idx = options.findIndex((o) => o.trim().toLowerCase() === s.toLowerCase());
+    return idx;
+}
+
+function readZipEntries(buf: Buffer): Map<string, Buffer> {
+    const entries = new Map<string, Buffer>();
+    // Locate End of Central Directory (0x06054b50)
+    let eocd = -1;
+    for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) {
+        if (buf.readUInt32LE(i) === 0x06054b50) {
+            eocd = i;
+            break;
+        }
+    }
+    if (eocd === -1) return entries;
+
+    const totalEntries = buf.readUInt16LE(eocd + 10);
+    let pos = buf.readUInt32LE(eocd + 16);
+
+    for (let i = 0; i < totalEntries && pos + 46 <= buf.length; i++) {
+        if (buf.readUInt32LE(pos) !== 0x02014b50) break;
+        const method = buf.readUInt16LE(pos + 10);
+        const compSize = buf.readUInt32LE(pos + 20);
+        const nameLen = buf.readUInt16LE(pos + 28);
+        const extraLen = buf.readUInt16LE(pos + 30);
+        const commentLen = buf.readUInt16LE(pos + 32);
+        const localOffset = buf.readUInt32LE(pos + 42);
+        const name = buf.subarray(pos + 46, pos + 46 + nameLen).toString('utf8');
+        pos += 46 + nameLen + extraLen + commentLen;
+
+        if (localOffset + 30 > buf.length) continue;
+        const lNameLen = buf.readUInt16LE(localOffset + 26);
+        const lExtraLen = buf.readUInt16LE(localOffset + 28);
+        const dataStart = localOffset + 30 + lNameLen + lExtraLen;
+        if (dataStart + compSize > buf.length) continue;
+        const slice = buf.subarray(dataStart, dataStart + compSize);
+        try {
+            if (method === 0) {
+                entries.set(name, slice);
+            } else if (method === 8) {
+                entries.set(name, zlib.inflateRawSync(slice));
+            }
+        } catch {
+            // ignore corrupted entry
+        }
+    }
+    return entries;
+}
+
+function parseCsvRows(rawText: string): string[][] {
+    const cleaned = rawText.replace(/^\uFEFF/, '');
+    // Detect delimiter from first line
+    const firstLine = cleaned.split(/\r?\n/)[0] || '';
+    const delimiter =
+        firstLine.includes('\t') && !firstLine.includes(',')
+            ? '\t'
+            : firstLine.split(';').length > firstLine.split(',').length
+            ? ';'
+            : ',';
+
+    const rows: string[][] = [];
+    let currentRow: string[] = [];
+    let currentField = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < cleaned.length; i++) {
+        const ch = cleaned[i];
+        const next = cleaned[i + 1];
+        if (inQuotes) {
+            if (ch === '"' && next === '"') {
+                currentField += '"';
+                i++;
+            } else if (ch === '"') {
+                inQuotes = false;
+            } else {
+                currentField += ch;
+            }
+        } else {
+            if (ch === '"') {
+                inQuotes = true;
+            } else if (ch === delimiter) {
+                currentRow.push(currentField.trim());
+                currentField = '';
+            } else if (ch === '\r' && next === '\n') {
+                currentRow.push(currentField.trim());
+                if (currentRow.some((c) => c !== '')) rows.push(currentRow);
+                currentRow = [];
+                currentField = '';
+                i++;
+            } else if (ch === '\n' || ch === '\r') {
+                currentRow.push(currentField.trim());
+                if (currentRow.some((c) => c !== '')) rows.push(currentRow);
+                currentRow = [];
+                currentField = '';
+            } else {
+                currentField += ch;
+            }
+        }
+    }
+    currentRow.push(currentField.trim());
+    if (currentRow.some((c) => c !== '')) rows.push(currentRow);
+    return rows;
+}
+
+function parseTableRowsToItems(rows: string[][]): RawBulkItem[] {
+    if (rows.length === 0) return [];
+    const first = rows[0].map((h) => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    const hasHeader =
+        first.some((h) => h.includes('question') || h === 'text' || h === 'prompt') &&
+        first.some((h) => h.includes('optiona') || h === 'a' || h.includes('answer'));
+
+    let qIdx = 0;
+    let aIdx = 1;
+    let bIdx = 2;
+    let cIdx = 3;
+    let dIdx = 4;
+    let ansIdx = 5;
+    let expIdx = 6;
+    let lvlIdx = 7;
+
+    if (hasHeader) {
+        const findCol = (preds: ((h: string) => boolean)[], fallback: number) => {
+            for (const pred of preds) {
+                const i = first.findIndex(pred);
+                if (i !== -1) return i;
+            }
+            return fallback;
+        };
+        qIdx = findCol([(h) => h.includes('question') || h === 'text'], 0);
+        aIdx = findCol([(h) => h === 'optiona' || h === 'a' || h === 'choicea'], 1);
+        bIdx = findCol([(h) => h === 'optionb' || h === 'b' || h === 'choiceb'], 2);
+        cIdx = findCol([(h) => h === 'optionc' || h === 'c' || h === 'choicec'], 3);
+        dIdx = findCol([(h) => h === 'optiond' || h === 'd' || h === 'choiced'], 4);
+        ansIdx = findCol([(h) => h.includes('correct') || h.includes('answer') || h === 'key'], 5);
+        expIdx = findCol([(h) => h.includes('explanation') || h.includes('rationale') || h.includes('note')], 6);
+        lvlIdx = findCol([(h) => h.includes('level') || h.includes('grade') || h.includes('section')], 7);
+    }
+
+    const startRow = hasHeader ? 1 : 0;
+    const out: RawBulkItem[] = [];
+    for (let r = startRow; r < rows.length; r++) {
+        const row = rows[r];
+        const text = String(row[qIdx] || '').trim();
+        if (!text) continue;
+        // Skip accidental repeated header rows
+        if (text.toLowerCase() === 'question' && String(row[aIdx] || '').toLowerCase().includes('option')) continue;
+        const options = [
+            String(row[aIdx] || '').trim(),
+            String(row[bIdx] || '').trim(),
+            String(row[cIdx] || '').trim(),
+            String(row[dIdx] || '').trim(),
+        ];
+        if (options.some((o) => !o)) continue;
+        const correctIndex = resolveCorrectIndex(row[ansIdx], options);
+        if (correctIndex < 0 || correctIndex > 3) continue;
+        const explanation = expIdx < row.length ? String(row[expIdx] || '').trim() : '';
+        const rawLvl = lvlIdx < row.length ? row[lvlIdx] : undefined;
+        out.push({
+            text,
+            options,
+            correctIndex,
+            explanation,
+            level: rawLvl ? normLevel(rawLvl) : undefined,
+        });
+    }
+    return out;
+}
+
+function parseWordOrTextBlocks(rawText: string): RawBulkItem[] {
+    // 1. If HTML table rows exist (e.g. Word .doc saved as HTML table), extract table rows first
+    if (/<tr[\s>]/i.test(rawText) && /<td[\s>]/i.test(rawText)) {
+        const trMatches = rawText.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+        const tableRows: string[][] = [];
+        for (const tr of trMatches) {
+            const cellMatches = tr.match(/<t[dh][\s\S]*?<\/t[dh]>/gi) || [];
+            if (cellMatches.length >= 6) {
+                const cells = cellMatches.map((c) =>
+                    decodeXmlEntities(c.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())
+                );
+                tableRows.push(cells);
+            }
+        }
+        const fromTable = parseTableRowsToItems(tableRows);
+        if (fromTable.length > 0) return fromTable;
+    }
+
+    // 2. Strip any HTML tags and parse structured Q&A blocks
+    const plain = decodeXmlEntities(
+        rawText
+            .replace(/<\/(p|div|tr|li|h[1-6]|br\s*\/?)>/gi, '\n')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<[^>]+>/g, ' ')
+    );
+
+    const lines = plain
+        .split(/\r?\n/)
+        .map((l) => l.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+
+    const items: RawBulkItem[] = [];
+    let curQuestion = '';
+    let curOptions: string[] = ['', '', '', ''];
+    let curAnswerRaw = '';
+    let curExplanation = '';
+    let curLevel: Level | null | undefined = undefined;
+
+    const flushCurrent = () => {
+        if (!curQuestion.trim() || curOptions.some((o) => !o.trim())) return;
+        const correctIndex = resolveCorrectIndex(curAnswerRaw, curOptions);
+        if (correctIndex >= 0 && correctIndex <= 3) {
+            items.push({
+                text: curQuestion.trim(),
+                options: curOptions.map((o) => o.trim()),
+                correctIndex,
+                explanation: curExplanation.trim(),
+                level: curLevel,
+            });
+        }
+        curQuestion = '';
+        curOptions = ['', '', '', ''];
+        curAnswerRaw = '';
+        curExplanation = '';
+        curLevel = undefined;
+    };
+
+    for (const line of lines) {
+        // Ignore template instruction / heading lines
+        if (/^(#|\/\/|===|---|examhub bulk question|instructions:|fill in your questions|format\s*[ab12]:)/i.test(line)) {
+            continue;
+        }
+
+        const optMatch = line.match(/^(\*)?(?:option\s*)?\(?([A-Da-d])\)?\s*[:.)\-]\s*(.+)$/i);
+        if (optMatch && curQuestion) {
+            const starred = !!optMatch[1];
+            const idx = optMatch[2].toUpperCase().charCodeAt(0) - 65;
+            curOptions[idx] = optMatch[3].trim();
+            if (starred && !curAnswerRaw) curAnswerRaw = optMatch[2].toUpperCase();
+            continue;
+        }
+
+        const ansMatch = line.match(/^(?:correct\s*answer|answer|correct|ans|key)\s*[:=\-]\s*(.+)$/i);
+        if (ansMatch && curQuestion) {
+            curAnswerRaw = ansMatch[1].trim();
+            continue;
+        }
+
+        const expMatch = line.match(/^(?:explanation|rationale|note)\s*[:=\-]\s*(.*)$/i);
+        if (expMatch && curQuestion) {
+            curExplanation = expMatch[1].trim();
+            continue;
+        }
+
+        const lvlMatch = line.match(/^(?:level|grade|class|section)\s*[:=\-]\s*(.+)$/i);
+        if (lvlMatch && curQuestion) {
+            curLevel = normLevel(lvlMatch[1].trim());
+            continue;
+        }
+
+        const qPrefixMatch = line.match(/^(?:question\s*\d*|q\d+|\d+)\s*[:.)\-]\s*(.+)$/i);
+        if (qPrefixMatch) {
+            flushCurrent();
+            curQuestion = qPrefixMatch[1].trim();
+            continue;
+        }
+    }
+    flushCurrent();
+    return items;
+}
+
+function parseDocxBuffer(buf: Buffer): RawBulkItem[] {
+    const entries = readZipEntries(buf);
+    const docXml = entries.get('word/document.xml')?.toString('utf8') || '';
+    if (!docXml) return [];
+
+    // 1. Check for Word tables (<w:tbl>) first
+    const trMatches = docXml.match(/<w:tr[\s>][\s\S]*?<\/w:tr>/g) || [];
+    if (trMatches.length > 0) {
+        const rows: string[][] = [];
+        for (const tr of trMatches) {
+            const tcMatches = tr.match(/<w:tc[\s>][\s\S]*?<\/w:tc>/g) || [];
+            if (tcMatches.length >= 6) {
+                const cells = tcMatches.map((tc) => {
+                    const texts = (tc.match(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g) || []).map((t) =>
+                        decodeXmlEntities(t.replace(/<[^>]+>/g, ''))
+                    );
+                    return texts.join('').trim();
+                });
+                rows.push(cells);
+            }
+        }
+        const fromTable = parseTableRowsToItems(rows);
+        if (fromTable.length > 0) return fromTable;
+    }
+
+    // 2. Extract paragraphs (<w:p>)
+    const pMatches = docXml.match(/<w:p[\s>][\s\S]*?<\/w:p>/g) || [];
+    const lines = pMatches.map((p) => {
+        const texts = (p.match(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g) || []).map((t) =>
+            decodeXmlEntities(t.replace(/<[^>]+>/g, ''))
+        );
+        return texts.join('').trim();
+    });
+    return parseWordOrTextBlocks(lines.join('\n'));
+}
+
+function parseXlsxBuffer(buf: Buffer): RawBulkItem[] {
+    const entries = readZipEntries(buf);
+    const sharedXml = entries.get('xl/sharedStrings.xml')?.toString('utf8') || '';
+    const sharedStrings: string[] = [];
+    if (sharedXml) {
+        const siMatches = sharedXml.match(/<si[\s>][\s\S]*?<\/si>/g) || [];
+        for (const si of siMatches) {
+            const tMatches = (si.match(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g) || []).map((t) =>
+                decodeXmlEntities(t.replace(/<[^>]+>/g, ''))
+            );
+            sharedStrings.push(tMatches.join(''));
+        }
+    }
+
+    const sheetXml =
+        entries.get('xl/worksheets/sheet1.xml')?.toString('utf8') ||
+        Array.from(entries.entries())
+            .find(([k]) => k.startsWith('xl/worksheets/sheet') && k.endsWith('.xml'))?.[1]
+            ?.toString('utf8') ||
+        '';
+    if (!sheetXml) return [];
+
+    const rowMatches = sheetXml.match(/<row[\s>][\s\S]*?<\/row>/g) || [];
+    const rows: string[][] = [];
+    for (const rowXml of rowMatches) {
+        const cMatches = rowXml.match(/<c[\s>][\s\S]*?<\/c>/g) || [];
+        const rowCells: string[] = [];
+        for (const cXml of cMatches) {
+            const refMatch = cXml.match(/\br="([A-Z]+)\d+"/);
+            const typeMatch = cXml.match(/\bt="([^"]+)"/);
+            let colIdx = rowCells.length;
+            if (refMatch) {
+                const letters = refMatch[1];
+                colIdx = 0;
+                for (let i = 0; i < letters.length; i++) {
+                    colIdx = colIdx * 26 + (letters.charCodeAt(i) - 64);
+                }
+                colIdx -= 1;
+            }
+            const cellType = typeMatch ? typeMatch[1] : '';
+            let val = '';
+            if (cellType === 'inlineStr') {
+                const tMatches = (cXml.match(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g) || []).map((t) =>
+                    decodeXmlEntities(t.replace(/<[^>]+>/g, ''))
+                );
+                val = tMatches.join('');
+            } else {
+                const vMatch = cXml.match(/<v>([\s\S]*?)<\/v>/);
+                if (vMatch) {
+                    const rawV = decodeXmlEntities(vMatch[1]);
+                    if (cellType === 's') {
+                        val = sharedStrings[Number(rawV)] ?? '';
+                    } else {
+                        val = rawV;
+                    }
+                }
+            }
+            while (rowCells.length <= colIdx) rowCells.push('');
+            rowCells[colIdx] = val.trim();
+        }
+        if (rowCells.some((c) => c !== '')) rows.push(rowCells);
+    }
+    return parseTableRowsToItems(rows);
+}
+
+function normalizeJsonItems(rawList: unknown[]): RawBulkItem[] {
+    const out: RawBulkItem[] = [];
+    for (const item of rawList) {
+        if (!item || typeof item !== 'object') continue;
+        const obj = item as Record<string, any>;
+        const text = String(obj.question ?? obj.text ?? '').trim();
+        if (!text) continue;
+        const options: string[] = Array.isArray(obj.options)
+            ? obj.options.slice(0, 4).map((o: unknown) => String(o ?? '').trim())
+            : [
+                  String(obj.optionA ?? obj.a ?? obj.A ?? '').trim(),
+                  String(obj.optionB ?? obj.b ?? obj.B ?? '').trim(),
+                  String(obj.optionC ?? obj.c ?? obj.C ?? '').trim(),
+                  String(obj.optionD ?? obj.d ?? obj.D ?? '').trim(),
+              ];
+        if (options.length !== 4 || options.some((o) => !o)) continue;
+        const rawAns = obj.correctIndex ?? obj.correctAnswer ?? obj.answer ?? obj.correct;
+        const correctIndex = resolveCorrectIndex(rawAns, options);
+        if (correctIndex < 0 || correctIndex > 3) continue;
+        const explanation = String(obj.explanation ?? '').trim();
+        const level = obj.level !== undefined ? normLevel(obj.level) : undefined;
+        const subjectId = obj.subjectId ? String(obj.subjectId).trim() : undefined;
+        out.push({ text, options, correctIndex, explanation, level, subjectId });
+    }
+    return out;
+}
+
+function parseBulkQuestionsPayload(body: any): RawBulkItem[] {
+    if (Array.isArray(body?.questions)) {
+        return normalizeJsonItems(body.questions);
+    }
+    const fileName = String(body?.fileName || '').toLowerCase();
+    const fileBase64 = String(body?.fileBase64 || '');
+    if (!fileBase64) return [];
+
+    const buf = Buffer.from(fileBase64, 'base64');
+    const isZip = buf.length >= 4 && buf.readUInt32LE(0) === 0x04034b50;
+
+    if (fileName.endsWith('.xlsx') || (isZip && fileName.includes('xls'))) {
+        return parseXlsxBuffer(buf);
+    }
+    if (fileName.endsWith('.docx') || isZip) {
+        const docxItems = parseDocxBuffer(buf);
+        if (docxItems.length > 0) return docxItems;
+        return parseXlsxBuffer(buf);
+    }
+
+    const text = buf.toString('utf8');
+    if (fileName.endsWith('.json')) {
+        try {
+            const parsed = JSON.parse(text.replace(/^\uFEFF/, ''));
+            const arr = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.questions) ? parsed.questions : [];
+            return normalizeJsonItems(arr);
+        } catch {
+            return [];
+        }
+    }
+    if (fileName.endsWith('.csv') || fileName.endsWith('.tsv')) {
+        return parseTableRowsToItems(parseCsvRows(text));
+    }
+    if (fileName.endsWith('.doc') || fileName.endsWith('.txt')) {
+        const wordItems = parseWordOrTextBlocks(text);
+        if (wordItems.length > 0) return wordItems;
+        return parseTableRowsToItems(parseCsvRows(text));
+    }
+
+    // Fallback auto-detect
+    try {
+        const parsed = JSON.parse(text.replace(/^\uFEFF/, ''));
+        const arr = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.questions) ? parsed.questions : [];
+        if (arr.length > 0) return normalizeJsonItems(arr);
+    } catch {
+        // not JSON
+    }
+    const wordItems = parseWordOrTextBlocks(text);
+    if (wordItems.length > 0) return wordItems;
+    return parseTableRowsToItems(parseCsvRows(text));
 }
 
 /* ------------------------------------------------------------------ */
@@ -644,6 +1144,62 @@ export const handler = router({
             const [id] = await db.add('questions', [record]);
             if (!id) return error('Failed to add question', 500);
             return json({ id, ...record }, 201);
+        },
+    ],
+
+    'POST /api/admin/questions/bulk': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+
+            const defaultSubjectId = String(b.subjectId || '').trim();
+            const defaultLevel = normLevel(b.level);
+
+            const { items: subjects } = await db.list('subjects', { limit: 100 });
+            const isValidSubjectOrRank = (id: string) =>
+                subjects.some((s: any) => s.id === id) || PROMOTION_RANK_ITEMS.some((r) => r.id === id);
+
+            const parsedItems = parseBulkQuestionsPayload(b);
+            if (parsedItems.length === 0) {
+                return error(
+                    'No valid questions found in the uploaded file. Please make sure each question has question text, 4 answer options (A–D), and a correct answer (A, B, C, or D).',
+                    400
+                );
+            }
+
+            const now = Date.now();
+            const records: any[] = [];
+            for (let i = 0; i < parsedItems.length; i++) {
+                const item = parsedItems[i];
+                const targetSubjectId = item.subjectId && isValidSubjectOrRank(item.subjectId) ? item.subjectId : defaultSubjectId;
+                const targetLevel = item.level !== undefined && item.level !== null ? item.level : defaultLevel;
+
+                if (!targetSubjectId || !isValidSubjectOrRank(targetSubjectId)) {
+                    return error('Choose a valid subject or promotion rank before uploading.', 400);
+                }
+                if (targetLevel === null) {
+                    return error('Choose a valid class level or exam section before uploading.', 400);
+                }
+
+                records.push({
+                    subjectId: targetSubjectId,
+                    level: targetLevel,
+                    text: item.text,
+                    options: item.options,
+                    correctIndex: item.correctIndex,
+                    explanation: item.explanation || '',
+                    createdAt: now + i,
+                });
+            }
+
+            const ids = await db.add('questions', records);
+            return json(
+                {
+                    imported: ids.length,
+                    questions: records.map((r, i) => ({ id: ids[i], ...r })),
+                },
+                201
+            );
         },
     ],
 
