@@ -63,6 +63,7 @@ async function isStaff(code: unknown): Promise<boolean> {
 /* ------------------------------------------------------------------ */
 
 const SCHOOL_LEVELS = [4, 5, 6, 7, 8, 9];
+const SHS_LEVELS = ['SHS 1', 'SHS 2', 'SHS 3'];
 const TRACKS = ['BECE', 'WASSCE', 'GTLE', 'GES-PROMO'];
 type Level = number | string;
 
@@ -78,10 +79,18 @@ function normLevel(raw: unknown): Level | null {
         const n = Number(basicMatch[1]);
         return SCHOOL_LEVELS.includes(n) ? n : null;
     }
+    const shsMatch = s.match(/^(?:shs|form)\s*([1-3])$/i);
+    if (shsMatch) {
+        return `SHS ${shsMatch[1]}`;
+    }
     const u = s.toUpperCase();
+    if (u === 'SHS' || u === 'SHS 1 - 3' || u === 'SHS 1-3') {
+        return 'SHS 1';
+    }
     if (u === 'GES PROMOTION' || u === 'GES PROMOTION EXAMS' || u === 'GES-PROMOTION') {
         return 'GES-PROMO';
     }
+    if (SHS_LEVELS.includes(u)) return u;
     return TRACKS.includes(u) ? u : null;
 }
 
@@ -267,6 +276,52 @@ async function ensureGesPromoRankSeed() {
     ];
 
     await db.add('questions', rankSamples);
+    await ensureShsSeed();
+}
+
+async function ensureShsSeed() {
+    const { items: settings } = await db.list('settings', { limit: 50 });
+    if (settings.some((s: any) => s.key === 'seed-shs-v1')) return;
+    await db.add('settings', [{ key: 'seed-shs-v1' }]);
+
+    const { items: subs } = await db.list('subjects', { limit: 100 });
+    const idByName: Record<string, string> = {};
+    subs.forEach((s: any) => {
+        idByName[String(s.name).toLowerCase()] = s.id as string;
+    });
+
+    const shsSamples: TrackQ[] = [
+        q('Mathematics', 'SHS 1', 'Express 0.0045 in standard form.', ['4.5 × 10⁻³', '4.5 × 10⁻²', '45 × 10⁻⁴', '4.5 × 10³'], 0, 'Moving the decimal point 3 places to the right gives 4.5 × 10⁻³.'),
+        q('English', 'SHS 1', 'Identify the part of speech of the underlined word: "She spoke very *fluently* at the debate."', ['Adjective', 'Adverb', 'Preposition', 'Conjunction'], 1, '"Fluently" modifies the verb "spoke", so it is an adverb.'),
+        q('Science', 'SHS 1', 'Which subatomic particle carries a negative electric charge?', ['Proton', 'Neutron', 'Electron', 'Nucleus'], 2, 'Electrons are negatively charged particles orbiting the nucleus.'),
+        q('Computing', 'SHS 1', 'Convert the binary number 1010₂ to base 10.', ['8', '10', '12', '14'], 1, '1×8 + 0×4 + 1×2 + 0×1 = 10.'),
+
+        q('Mathematics', 'SHS 2', 'Find the 5th term of the geometric progression 2, 6, 18, ...', ['54', '108', '162', '486'], 2, 'Here a = 2 and r = 3; T₅ = a·r⁴ = 2 × 81 = 162.'),
+        q('English', 'SHS 2', 'Choose the option that is nearest in meaning to "ephemeral".', ['Permanent', 'Short-lived', 'Ancient', 'Careful'], 1, '"Ephemeral" means lasting for a very short time.'),
+        q('Science', 'SHS 2', 'What is the SI unit of electric current?', ['Volt', 'Ohm', 'Ampere', 'Watt'], 2, 'Electric current is measured in Amperes (A).'),
+        q('Computing', 'SHS 2', 'In relational databases, a field that uniquely identifies each record in a table is called a:', ['Foreign key', 'Primary key', 'Index row', 'Secondary query'], 1, 'A primary key uniquely identifies each row in a database table.'),
+
+        q('Mathematics', 'SHS 3', 'Differentiate y = 3x² − 4x + 7 with respect to x.', ['6x − 4', '3x − 4', '6x + 7', 'x³ − 2x²'], 0, 'dy/dx = 2(3x) − 4 = 6x − 4.'),
+        q('English', 'SHS 3', 'In literature, a comparison between two unlike things using "like" or "as" is a:', ['Metaphor', 'Simile', 'Personification', 'Hyperbole'], 1, 'A simile uses "like" or "as" to make a direct comparison.'),
+        q('Science', 'SHS 3', 'Which organic compound belongs to the alkane homologous series?', ['C₂H₄', 'C₂H₂', 'CH₄', 'C₂H₅OH'], 2, 'Methane (CH₄) follows the alkane general formula CₙH₂ₙ₊₂.'),
+        q('Computing', 'SHS 3', 'Which protocol is responsible for securely transferring web pages over an encrypted connection?', ['FTP', 'HTTP', 'HTTPS', 'SMTP'], 2, 'HTTPS (Hypertext Transfer Protocol Secure) encrypts communication between browser and server.'),
+    ];
+
+    const rows: any[] = [];
+    shsSamples.forEach((t, i) => {
+        const subjectId = idByName[t.subject.toLowerCase()];
+        if (!subjectId) return;
+        rows.push({
+            subjectId,
+            level: t.level,
+            text: t.text,
+            options: t.options,
+            correctIndex: t.correctIndex,
+            explanation: t.explanation,
+            createdAt: Date.now() + 20 + i,
+        });
+    });
+    if (rows.length > 0) await db.add('questions', rows);
 }
 
 async function getAdminCode(): Promise<string | null> {

@@ -65,6 +65,7 @@ type StudentUser = {
 
 const TOKEN_KEY = 'codecastic_examhub_token';
 const SCHOOL_LEVELS: number[] = [4, 5, 6, 7, 8, 9];
+const SHS_LEVELS: string[] = ['SHS 1', 'SHS 2', 'SHS 3'];
 const EXAM_TRACKS: { id: string; label: string }[] = [
     { id: 'BECE', label: 'BECE' },
     { id: 'WASSCE', label: 'WASSCE' },
@@ -105,6 +106,8 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 
 function levelLabel(l: Level): string {
     if (typeof l === 'number') return `Basic ${l}`;
+    if (l === 'SHS') return 'SHS 1 - 3';
+    if (SHS_LEVELS.includes(String(l))) return String(l);
     return EXAM_TRACKS.find((t) => t.id === l)?.label ?? String(l);
 }
 
@@ -119,6 +122,7 @@ function errMsg(e: any, fallback: string): string {
 function slugForUser(u: StudentUser): string {
     if (u.accountType === 'ges-promo' || u.gradeLevel === 'GES-PROMO') return 'ges-promotion';
     if (u.gradeLevel === 'BECE') return 'bece';
+    if (u.gradeLevel === 'SHS' || SHS_LEVELS.includes(String(u.gradeLevel))) return 'shs';
     if (u.gradeLevel === 'WASSCE') return 'wassce';
     if (u.gradeLevel === 'GTLE') return 'gtle';
     return 'basic';
@@ -278,6 +282,8 @@ export default function ExamHubPortal({
                                         ? `${t.label} · ${user.promotionRank}`
                                         : typeof user.gradeLevel === 'number'
                                         ? `Basic ${user.gradeLevel}`
+                                        : SHS_LEVELS.includes(String(user.gradeLevel))
+                                        ? String(user.gradeLevel)
                                         : t.label
                                     : t.label;
                             return (
@@ -342,13 +348,17 @@ function StudentAuthView({
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [schoolName, setSchoolName] = useState('');
-    const [gradeLevel, setGradeLevel] = useState<Level>(initialLevel ?? 4);
+    const [gradeLevel, setGradeLevel] = useState<Level>(initialLevel === 'SHS' ? 'SHS 1' : initialLevel ?? 4);
     const [region, setRegion] = useState('');
     const [promotionRank, setPromotionRank] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [err, setErr] = useState('');
     const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        setGradeLevel(initialLevel === 'SHS' ? 'SHS 1' : initialLevel ?? 4);
+    }, [initialLevel]);
 
     const submit = async (e: FormEvent) => {
         e.preventDefault();
@@ -643,14 +653,26 @@ function StudentAuthView({
                                         required
                                         value={schoolName}
                                         onChange={(e) => setSchoolName(e.target.value)}
-                                        placeholder="e.g. Achimota Basic School"
+                                        placeholder={initialLevel === 'SHS' ? 'e.g. Achimota Senior High School' : 'e.g. Achimota Basic School'}
                                         className="input"
                                     />
                                 </Field>
                             </div>
                             <div>
                                 <Field label="Grade / Exam Level">
-                                    {initialLevel ? (
+                                    {initialLevel === 'SHS' ? (
+                                        <select
+                                            value={String(gradeLevel)}
+                                            onChange={(e) => setGradeLevel(parseLevel(e.target.value))}
+                                            className="input"
+                                        >
+                                            {SHS_LEVELS.map((lvl) => (
+                                                <option key={lvl} value={lvl}>
+                                                    {lvl}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    ) : initialLevel ? (
                                         <input
                                             readOnly
                                             value={levelLabel(initialLevel)}
@@ -1116,10 +1138,17 @@ function StudentView({
 function LevelOptions() {
     return (
         <>
-            <optgroup label="School levels">
+            <optgroup label="Basic levels (Basic 4 – 9)">
                 {SCHOOL_LEVELS.map((l) => (
                     <option key={String(l)} value={String(l)}>
                         {levelLabel(l)}
+                    </option>
+                ))}
+            </optgroup>
+            <optgroup label="Senior High levels (SHS 1 – 3)">
+                {SHS_LEVELS.map((l) => (
+                    <option key={l} value={l}>
+                        {l}
                     </option>
                 ))}
             </optgroup>
@@ -1447,6 +1476,9 @@ function belongsToCategory(qLevel: Level, trackCode: string | null): boolean {
     if (trackCode === null) {
         return typeof qLevel === 'number' && SCHOOL_LEVELS.includes(qLevel);
     }
+    if (trackCode === 'SHS') {
+        return SHS_LEVELS.includes(String(qLevel));
+    }
     return qLevel === trackCode;
 }
 
@@ -1475,7 +1507,7 @@ function QuestionsAdmin({
     const [explanation, setExplanation] = useState('');
     const [saving, setSaving] = useState(false);
 
-    // Filter state inside a subject portal (for Basic 4-9 class levels)
+    // Filter state inside a subject portal (for Basic 4-9 or SHS 1-3 class levels)
     const [fLevel, setFLevel] = useState<'all' | Level>('all');
 
     // Edit / Update existing question state
@@ -1514,6 +1546,9 @@ function QuestionsAdmin({
         if (track.code === null) {
             setLevel(4);
             setFLevel('all');
+        } else if (track.code === 'SHS') {
+            setLevel('SHS 1');
+            setFLevel('all');
         } else {
             setLevel(track.code);
             setFLevel(track.code);
@@ -1528,6 +1563,9 @@ function QuestionsAdmin({
         if (activeTrack) {
             if (activeTrack.code === null) {
                 setLevel(4);
+                setFLevel('all');
+            } else if (activeTrack.code === 'SHS') {
+                setLevel('SHS 1');
                 setFLevel('all');
             } else {
                 setLevel(activeTrack.code);
@@ -1778,7 +1816,8 @@ function QuestionsAdmin({
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {TRACKS.map((t) => {
                         const catQuestions = questions.filter((q) => belongsToCategory(q.level, t.code));
-                        const badgeText = t.code === null ? 'Basic 4 – Basic 9' : t.code;
+                        const badgeText =
+                            t.code === null ? 'Basic 4 – Basic 9' : t.code === 'SHS' ? 'SHS 1 – SHS 3' : t.code;
                         const isGesCard = t.code === 'GES-PROMO';
                         const cardCount = isGesCard ? PROMOTION_RANK_ITEMS.length : subjects.length;
                         const cardUnit = isGesCard ? 'promotion rank card' : 'subject card';
@@ -1840,11 +1879,19 @@ function QuestionsAdmin({
     }
 
     const isBasicPortal = activeTrack.code === null;
+    const isShsPortal = activeTrack.code === 'SHS';
+    const isMultiLevelPortal = isBasicPortal || isShsPortal;
+    const multiLevelList: Level[] = isBasicPortal ? SCHOOL_LEVELS : SHS_LEVELS;
     const categoryQuestions = questions.filter((q) => belongsToCategory(q.level, activeTrack.code));
 
     /* ---------------- Step 2: Subject / Promotion Rank Cards View under Selected Exam Category ---------------- */
     if (!activeSubject) {
-        const badgeText = activeTrack.code === null ? 'Basic 4 – Basic 9' : activeTrack.code;
+        const badgeText =
+            activeTrack.code === null
+                ? 'Basic 4 – Basic 9'
+                : activeTrack.code === 'SHS'
+                  ? 'SHS 1 – SHS 3'
+                  : activeTrack.code;
 
         return (
             <div className="space-y-5">
@@ -1965,7 +2012,7 @@ function QuestionsAdmin({
     /* ---------------- Step 3: Dedicated Subject / Promotion Rank + Category Portal View ---------------- */
     const subjectCategoryQuestions = categoryQuestions.filter((q) => q.subjectId === activeSubject.id);
     const shown = subjectCategoryQuestions.filter((q) =>
-        isBasicPortal ? fLevel === 'all' || q.level === fLevel : true
+        isMultiLevelPortal ? fLevel === 'all' || q.level === fLevel : true
     );
 
     return (
@@ -2062,16 +2109,16 @@ function QuestionsAdmin({
                             Download a blank template in <strong>Word (.doc)</strong>, <strong>Excel / CSV (.csv)</strong>, or <strong>JSON (.json)</strong>, fill in your {activeSubject.name} questions, and upload the file to import all questions instantly.
                         </p>
                     </div>
-                    {isBasicPortal && (
+                    {isMultiLevelPortal && (
                         <div className="w-full sm:w-48">
-                            <Field label="Default Class Level for Upload">
+                            <Field label={isShsPortal ? 'Default SHS Form for Upload' : 'Default Class Level for Upload'}>
                                 <select
                                     value={String(level)}
                                     onChange={(e) => setLevel(parseLevel(e.target.value))}
                                     className="input"
                                 >
-                                    {SCHOOL_LEVELS.map((l) => (
-                                        <option key={l} value={String(l)}>
+                                    {multiLevelList.map((l) => (
+                                        <option key={String(l)} value={String(l)}>
                                             {levelLabel(l)}
                                         </option>
                                     ))}
@@ -2220,15 +2267,15 @@ function QuestionsAdmin({
                                 className="input cursor-not-allowed bg-slate-50 font-medium text-slate-600"
                             />
                         </Field>
-                        {isBasicPortal ? (
-                            <Field label="Class Level (Basic 4 to 9)">
+                        {isMultiLevelPortal ? (
+                            <Field label={isShsPortal ? 'SHS Form (SHS 1 to 3)' : 'Class Level (Basic 4 to 9)'}>
                                 <select
                                     value={String(level)}
                                     onChange={(e) => setLevel(parseLevel(e.target.value))}
                                     className="input"
                                 >
-                                    {SCHOOL_LEVELS.map((l) => (
-                                        <option key={l} value={String(l)}>
+                                    {multiLevelList.map((l) => (
+                                        <option key={String(l)} value={String(l)}>
                                             {levelLabel(l)}
                                         </option>
                                     ))}
@@ -2307,16 +2354,18 @@ function QuestionsAdmin({
                             Click <strong>Edit</strong> on any question below to update its text, options, correct answer, or explanation.
                         </p>
                     </div>
-                    {isBasicPortal && (
+                    {isMultiLevelPortal && (
                         <div className="flex flex-wrap gap-2">
                             <select
                                 value={String(fLevel)}
                                 onChange={(e) => setFLevel(e.target.value === 'all' ? 'all' : parseLevel(e.target.value))}
                                 className="input !w-auto"
                             >
-                                <option value="all">All Basic 4–9 levels</option>
-                                {SCHOOL_LEVELS.map((l) => (
-                                    <option key={l} value={String(l)}>
+                                <option value="all">
+                                    {isShsPortal ? 'All SHS 1–3 levels' : 'All Basic 4–9 levels'}
+                                </option>
+                                {multiLevelList.map((l) => (
+                                    <option key={String(l)} value={String(l)}>
                                         {levelLabel(l)}
                                     </option>
                                 ))}

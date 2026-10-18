@@ -25,6 +25,14 @@ export const TRACKS: Track[] = [
         about: 'The BECE is the national examination taken at the end of junior high school. Practise by subject, see your score straight away and read the explanation for every answer.',
     },
     {
+        slug: 'shs',
+        code: 'SHS',
+        label: 'SHS 1 - 3',
+        title: 'SHS 1 - 3: Senior High School end-of-term and mock exams',
+        lead: 'Multiple choice exams for every Senior High School form from SHS 1 to SHS 3.',
+        about: 'Choose your SHS form (SHS 1, SHS 2, or SHS 3) and you will only see questions for that level. Answer at your own pace, then get your score and an explanation for every question.',
+    },
+    {
         slug: 'wassce',
         code: 'WASSCE',
         label: 'WASSCE',

@@ -13,7 +13,7 @@ export default function Exams({ sub }: { sub: string }) {
         <>
             <PageHead
                 title="ExamHub: practice for school and professional exams"
-                lead="Multiple choice practice from Basic 4 to Basic 9, plus sections for the BECE, WASSCE, GTLE and GES promotion exams."
+                lead="Multiple choice practice from Basic 4 to Basic 9 and SHS 1 to SHS 3, plus sections for the BECE, WASSCE, GTLE and GES promotion exams."
             />
 
             <section className="section">
