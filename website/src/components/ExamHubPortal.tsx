@@ -241,7 +241,9 @@ export default function ExamHubPortal({
                                         &middot;{' '}
                                         {user.accountType === 'ges-promo'
                                             ? `${user.region} (${user.promotionRank})`
-                                            : `${user.schoolName} (${levelLabel(user.gradeLevel)})`}
+                                            : user.schoolName
+                                            ? `${user.schoolName} (${levelLabel(user.gradeLevel)})`
+                                            : levelLabel(user.gradeLevel)}
                                     </span>
                                 </div>
                                 <button
@@ -344,21 +346,38 @@ function StudentAuthView({
     initialLevel: Level | null;
     onAuthenticated: (u: StudentUser, token: string) => void;
 }) {
-    const [mode, setMode] = useState<'login' | 'register'>(isGesPromo ? 'register' : 'login');
+    const [mode, setMode] = useState<'login' | 'register' | 'recover'>(isGesPromo ? 'register' : 'login');
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
-    const [schoolName, setSchoolName] = useState('');
     const [gradeLevel, setGradeLevel] = useState<Level>(initialLevel === 'SHS' ? 'SHS 1' : initialLevel ?? 4);
     const [region, setRegion] = useState('');
     const [promotionRank, setPromotionRank] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
+    const [newPassword, setNewPassword] = useState('');
+    const [showNewPassword, setShowNewPassword] = useState(false);
+    const [recoveredInfo, setRecoveredInfo] = useState<{
+        accountName: string;
+        email: string;
+        gradeLabel: string;
+        recoveredPassword: string;
+        isTemporary?: boolean;
+    } | null>(null);
+    const [copiedRecovery, setCopiedRecovery] = useState(false);
     const [err, setErr] = useState('');
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
         setGradeLevel(initialLevel === 'SHS' ? 'SHS 1' : initialLevel ?? 4);
     }, [initialLevel]);
+
+    const switchMode = (nextMode: 'login' | 'register' | 'recover') => {
+        setMode(nextMode);
+        setErr('');
+        setRecoveredInfo(null);
+        setNewPassword('');
+        setCopiedRecovery(false);
+    };
 
     const submit = async (e: FormEvent) => {
         e.preventDefault();
@@ -379,25 +398,198 @@ function StudentAuthView({
                           accountType: 'student',
                           name: name.trim(),
                           email: email.trim(),
-                          schoolName: schoolName.trim(),
                           gradeLevel,
                           password,
                       };
                 const res = await api.post('/api/auth/register', payload);
                 onAuthenticated(res.data.user, res.data.token);
-            } else {
+            } else if (mode === 'login') {
                 const res = await api.post('/api/auth/login', {
                     email: email.trim(),
                     password,
                 });
                 onAuthenticated(res.data.user, res.data.token);
+            } else {
+                const res = await api.post('/api/auth/recover', {
+                    email: email.trim(),
+                });
+                setRecoveredInfo(res.data);
             }
         } catch (e2) {
-            setErr(errMsg(e2, mode === 'register' ? 'Could not create account.' : 'Could not sign in.'));
+            setErr(
+                errMsg(
+                    e2,
+                    mode === 'register'
+                        ? 'Could not create account.'
+                        : mode === 'recover'
+                        ? 'Could not recover password.'
+                        : 'Could not sign in.'
+                )
+            );
         } finally {
             setBusy(false);
         }
     };
+
+    const handleResetPasswordAndLogin = async (e: FormEvent) => {
+        e.preventDefault();
+        setErr('');
+        setBusy(true);
+        try {
+            const res = await api.post('/api/auth/recover', {
+                email: email.trim(),
+                newPassword,
+            });
+            onAuthenticated(res.data.user, res.data.token);
+        } catch (e2) {
+            setErr(errMsg(e2, 'Could not update password.'));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleUseRecoveredPassword = async () => {
+        if (!recoveredInfo) return;
+        setErr('');
+        setBusy(true);
+        try {
+            const res = await api.post('/api/auth/login', {
+                email: recoveredInfo.email,
+                password: recoveredInfo.recoveredPassword,
+            });
+            onAuthenticated(res.data.user, res.data.token);
+        } catch (e2) {
+            setErr(errMsg(e2, 'Could not sign in with recovered password.'));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const renderBrowserRecoveryPanel = () => (
+        <div className="mt-5 space-y-4">
+            <form onSubmit={submit} className="space-y-4">
+                <Field label="Registered Email Address">
+                    <input
+                        required
+                        type="email"
+                        value={email}
+                        onChange={(e) => {
+                            setEmail(e.target.value);
+                            setRecoveredInfo(null);
+                        }}
+                        placeholder={isGesPromo ? 'admin@ges.gov.gh' : 'e.g. kofi@example.com'}
+                        autoComplete="email"
+                        className="input"
+                    />
+                </Field>
+                <button
+                    type="submit"
+                    disabled={busy}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#364c83] py-2.5 text-sm font-semibold text-white transition hover:bg-[#1f2d57] disabled:opacity-50"
+                >
+                    {busy && !recoveredInfo && <Loader2 className="animate-spin" size={16} />}
+                    Show Recovered Password in Browser
+                </button>
+            </form>
+
+            {recoveredInfo && (
+                <div
+                    className="rounded-xl border-2 border-[#364c83]/30 bg-indigo-50/50 p-4 space-y-3.5"
+                    role="region"
+                    aria-label="Recovered password details"
+                >
+                    <div className="flex items-start justify-between gap-2">
+                        <div>
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-emerald-700">
+                                <CheckCircle2 size={13} />
+                                Account Verified in Browser
+                            </span>
+                            <p className="mt-0.5 text-sm font-bold text-slate-900">{recoveredInfo.accountName}</p>
+                            <p className="text-xs text-slate-500">
+                                {recoveredInfo.email} &middot; {recoveredInfo.gradeLabel}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="rounded-lg border border-indigo-200 bg-white p-3">
+                        <span className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                            {recoveredInfo.isTemporary ? 'Your Temporary Recovery Password' : 'Your Recovered Password'}
+                        </span>
+                        <div className="mt-1.5 flex items-center justify-between gap-2">
+                            <code className="rounded bg-slate-100 px-2.5 py-1 font-mono text-base font-bold tracking-wide text-[#364c83]">
+                                {recoveredInfo.recoveredPassword}
+                            </code>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    navigator.clipboard?.writeText(recoveredInfo.recoveredPassword);
+                                    setCopiedRecovery(true);
+                                    setTimeout(() => setCopiedRecovery(false), 2000);
+                                }}
+                                className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                            >
+                                {copiedRecovery ? 'Copied!' : 'Copy'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        disabled={busy}
+                        onClick={handleUseRecoveredPassword}
+                        className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#364c83] py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#1f2d57] disabled:opacity-50"
+                    >
+                        {busy && <Loader2 className="animate-spin" size={14} />}
+                        Sign In Now with Recovered Password →
+                    </button>
+
+                    <form onSubmit={handleResetPasswordAndLogin} className="border-t border-indigo-200/70 pt-3 space-y-2.5">
+                        <span className="block text-xs font-semibold text-slate-700">
+                            Or set a new password (min. 6 characters)
+                        </span>
+                        <div className="relative">
+                            <input
+                                required
+                                type={showNewPassword ? 'text' : 'password'}
+                                value={newPassword}
+                                onChange={(e) => setNewPassword(e.target.value)}
+                                placeholder="Enter new password"
+                                autoComplete="new-password"
+                                className="input pr-20 bg-white"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowNewPassword((s) => !s)}
+                                aria-label={showNewPassword ? 'Hide password' : 'Show password'}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-200 hover:text-slate-900"
+                            >
+                                {showNewPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                                {showNewPassword ? 'Hide' : 'Show'}
+                            </button>
+                        </div>
+                        <button
+                            type="submit"
+                            disabled={busy || newPassword.length < 6}
+                            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#364c83] bg-white py-2 text-xs font-semibold text-[#364c83] transition hover:bg-indigo-50 disabled:opacity-50"
+                        >
+                            Update Password &amp; Sign In
+                        </button>
+                    </form>
+                </div>
+            )}
+
+            <div className="border-t border-slate-100 pt-4 text-center text-xs text-slate-500">
+                Remembered your password?{' '}
+                <button
+                    type="button"
+                    onClick={() => switchMode('login')}
+                    className="font-semibold text-[#364c83] hover:underline"
+                >
+                    Back to Sign In
+                </button>
+            </div>
+        </div>
+    );
 
     if (isGesPromo) {
         return (
@@ -405,11 +597,17 @@ function StudentAuthView({
                 <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
                     <div className="text-center">
                         <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">
-                            {mode === 'register' ? 'Create Account' : 'Candidate Sign In'}
+                            {mode === 'register'
+                                ? 'Create Account'
+                                : mode === 'recover'
+                                ? 'Password Recovery'
+                                : 'Candidate Sign In'}
                         </h2>
                         <p className="mt-2 text-xs font-bold uppercase tracking-wider text-[#364c83]">
                             {mode === 'register'
                                 ? 'REGISTER TO ACCESS YOUR GES PROMOTION TRIAL EXAM PORTAL'
+                                : mode === 'recover'
+                                ? 'RECOVER YOUR GES PROMOTION PASSWORD IN THE BROWSER'
                                 : 'SIGN IN TO ACCESS YOUR GES PROMOTION TRIAL EXAM PORTAL'}
                         </p>
                     </div>
@@ -420,150 +618,162 @@ function StudentAuthView({
                         </div>
                     )}
 
-                    <form onSubmit={submit} className="mt-6 space-y-4">
-                        {mode === 'register' && (
-                            <label className="block">
-                                <span className="mb-1.5 block text-sm font-semibold text-slate-800">
-                                    Full Name (Candidate) <span className="text-red-500">*</span>
-                                </span>
-                                <input
-                                    required
-                                    value={name}
-                                    onChange={(e) => setName(e.target.value)}
-                                    placeholder="e.g. Kwaku Mensah Addo"
-                                    autoComplete="name"
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
-                                />
-                            </label>
-                        )}
+                    {mode === 'recover' ? (
+                        renderBrowserRecoveryPanel()
+                    ) : (
+                        <>
+                            <form onSubmit={submit} className="mt-6 space-y-4">
+                                {mode === 'register' && (
+                                    <label className="block">
+                                        <span className="mb-1.5 block text-sm font-semibold text-slate-800">
+                                            Full Name (Candidate) <span className="text-red-500">*</span>
+                                        </span>
+                                        <input
+                                            required
+                                            value={name}
+                                            onChange={(e) => setName(e.target.value)}
+                                            placeholder="e.g. Kwaku Mensah Addo"
+                                            autoComplete="name"
+                                            className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
+                                        />
+                                    </label>
+                                )}
 
-                        <label className="block">
-                            <span className="mb-1.5 block text-sm font-semibold text-slate-800">
-                                Candidate Email Address <span className="text-red-500">*</span>
-                            </span>
-                            <input
-                                required
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                placeholder="admin@ges.gov.gh"
-                                autoComplete="email"
-                                className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
-                            />
-                        </label>
+                                <label className="block">
+                                    <span className="mb-1.5 block text-sm font-semibold text-slate-800">
+                                        Candidate Email Address <span className="text-red-500">*</span>
+                                    </span>
+                                    <input
+                                        required
+                                        type="email"
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        placeholder="admin@ges.gov.gh"
+                                        autoComplete="email"
+                                        className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
+                                    />
+                                </label>
 
-                        {mode === 'register' && (
-                            <label className="block">
-                                <span className="mb-1.5 block text-sm font-semibold text-slate-800">
-                                    Ghana Region <span className="text-red-500">*</span>
-                                </span>
-                                <select
-                                    required
-                                    value={region}
-                                    onChange={(e) => setRegion(e.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
-                                >
-                                    <option value="" disabled>
-                                        Select Your Region in Ghana...
-                                    </option>
-                                    {GHANA_REGIONS.map((reg) => (
-                                        <option key={reg} value={reg}>
-                                            {reg}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                        )}
+                                {mode === 'register' && (
+                                    <label className="block">
+                                        <span className="mb-1.5 block text-sm font-semibold text-slate-800">
+                                            Ghana Region <span className="text-red-500">*</span>
+                                        </span>
+                                        <select
+                                            required
+                                            value={region}
+                                            onChange={(e) => setRegion(e.target.value)}
+                                            className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
+                                        >
+                                            <option value="" disabled>
+                                                Select Your Region in Ghana...
+                                            </option>
+                                            {GHANA_REGIONS.map((reg) => (
+                                                <option key={reg} value={reg}>
+                                                    {reg}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                )}
 
-                        <label className="block">
-                            <span className="mb-1.5 block text-sm font-semibold text-slate-800">
-                                Candidate Password <span className="text-red-500">*</span>
-                            </span>
-                            <div className="relative">
-                                <input
-                                    required
-                                    type={showPassword ? 'text' : 'password'}
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    placeholder="••••••••"
-                                    autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-3 pl-4 pr-11 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
-                                />
+                                <div className="block">
+                                    <div className="mb-1.5 flex items-center justify-between">
+                                        <span className="text-sm font-semibold text-slate-800">
+                                            Candidate Password <span className="text-red-500">*</span>
+                                        </span>
+                                        {mode === 'login' && (
+                                            <button
+                                                type="button"
+                                                onClick={() => switchMode('recover')}
+                                                className="text-xs font-semibold text-[#364c83] hover:underline"
+                                            >
+                                                Forgot password?
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="relative">
+                                        <input
+                                            required
+                                            type={showPassword ? 'text' : 'password'}
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                            placeholder="••••••••"
+                                            autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                                            className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-3 pl-4 pr-20 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword((s) => !s)}
+                                            aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-lg bg-slate-200/70 px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-300/70"
+                                        >
+                                            {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                                            {showPassword ? 'Hide' : 'Show'}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {mode === 'register' && (
+                                    <label className="block">
+                                        <span className="mb-1.5 block text-sm font-semibold text-slate-800">
+                                            Eligible Promotion Rank <span className="text-red-500">*</span>
+                                        </span>
+                                        <select
+                                            required
+                                            value={promotionRank}
+                                            onChange={(e) => setPromotionRank(e.target.value)}
+                                            className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
+                                        >
+                                            <option value="" disabled>
+                                                Select Your Promotion Trial Examination Rank...
+                                            </option>
+                                            {PROMOTION_RANKS.map((rk) => (
+                                                <option key={rk} value={rk}>
+                                                    {rk}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                )}
+
                                 <button
-                                    type="button"
-                                    onClick={() => setShowPassword((s) => !s)}
-                                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg bg-slate-200/70 p-1.5 text-slate-600 transition hover:bg-slate-300/70"
+                                    type="submit"
+                                    disabled={busy}
+                                    className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#364c83] py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#1f2d57] disabled:opacity-50"
                                 >
-                                    {showPassword ? <Eye size={16} /> : <EyeOff size={16} />}
+                                    {busy && <Loader2 className="animate-spin" size={16} />}
+                                    {mode === 'register' ? 'Register Account & Launch Portal →' : 'Sign In & Launch Portal →'}
                                 </button>
+                            </form>
+
+                            <div className="mt-5 border-t border-slate-100 pt-4 text-center text-xs text-slate-500">
+                                {mode === 'register' ? (
+                                    <>
+                                        Already registered for GES Promotion?{' '}
+                                        <button
+                                            type="button"
+                                            onClick={() => switchMode('login')}
+                                            className="font-semibold text-[#364c83] hover:underline"
+                                        >
+                                            Sign in here
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        Need to create a candidate account?{' '}
+                                        <button
+                                            type="button"
+                                            onClick={() => switchMode('register')}
+                                            className="font-semibold text-[#364c83] hover:underline"
+                                        >
+                                            Register Account
+                                        </button>
+                                    </>
+                                )}
                             </div>
-                        </label>
-
-                        {mode === 'register' && (
-                            <label className="block">
-                                <span className="mb-1.5 block text-sm font-semibold text-slate-800">
-                                    Eligible Promotion Rank <span className="text-red-500">*</span>
-                                </span>
-                                <select
-                                    required
-                                    value={promotionRank}
-                                    onChange={(e) => setPromotionRank(e.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#364c83] focus:bg-white focus:ring-2 focus:ring-[#364c83]/15"
-                                >
-                                    <option value="" disabled>
-                                        Select Your Promotion Trial Examination Rank...
-                                    </option>
-                                    {PROMOTION_RANKS.map((rk) => (
-                                        <option key={rk} value={rk}>
-                                            {rk}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                        )}
-
-                        <button
-                            type="submit"
-                            disabled={busy}
-                            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#364c83] py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#1f2d57] disabled:opacity-50"
-                        >
-                            {busy && <Loader2 className="animate-spin" size={16} />}
-                            {mode === 'register' ? 'Register Account & Launch Portal →' : 'Sign In & Launch Portal →'}
-                        </button>
-                    </form>
-
-                    <div className="mt-5 border-t border-slate-100 pt-4 text-center text-xs text-slate-500">
-                        {mode === 'register' ? (
-                            <>
-                                Already registered for GES Promotion?{' '}
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setMode('login');
-                                        setErr('');
-                                    }}
-                                    className="font-semibold text-[#364c83] hover:underline"
-                                >
-                                    Sign in here
-                                </button>
-                            </>
-                        ) : (
-                            <>
-                                Need to create a candidate account?{' '}
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setMode('register');
-                                        setErr('');
-                                    }}
-                                    className="font-semibold text-[#364c83] hover:underline"
-                                >
-                                    Register Account
-                                </button>
-                            </>
-                        )}
-                    </div>
+                        </>
+                    )}
                 </div>
             </div>
         );
@@ -579,10 +789,7 @@ function StudentAuthView({
                     <div className="flex rounded-lg bg-slate-100 p-1">
                         <button
                             type="button"
-                            onClick={() => {
-                                setMode('login');
-                                setErr('');
-                            }}
+                            onClick={() => switchMode('login')}
                             className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
                                 mode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                             }`}
@@ -591,25 +798,37 @@ function StudentAuthView({
                         </button>
                         <button
                             type="button"
-                            onClick={() => {
-                                setMode('register');
-                                setErr('');
-                            }}
+                            onClick={() => switchMode('register')}
                             className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
                                 mode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                             }`}
                         >
                             Register
                         </button>
+                        <button
+                            type="button"
+                            onClick={() => switchMode('recover')}
+                            className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                                mode === 'recover' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                        >
+                            Recover
+                        </button>
                     </div>
                 </div>
 
                 <h2 className="mt-4 text-xl font-bold text-slate-900">
-                    {mode === 'login' ? 'Sign in to ExamHub' : 'Create your ExamHub account'}
+                    {mode === 'login'
+                        ? 'Sign in to ExamHub'
+                        : mode === 'recover'
+                        ? 'Password Recovery'
+                        : 'Create your ExamHub account'}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
                     {mode === 'login'
                         ? 'Enter your registered email and password to access exams and track your scores.'
+                        : mode === 'recover'
+                        ? 'Enter your registered email address below to view your recovered password or set a new one directly in the browser.'
                         : 'Register with your details below to start practising exams on ExamHub.'}
                 </p>
 
@@ -619,46 +838,37 @@ function StudentAuthView({
                     </div>
                 )}
 
-                <form onSubmit={submit} className="mt-5 space-y-4">
-                    {mode === 'register' && (
-                        <Field label="Full Name">
-                            <input
-                                required
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                placeholder="e.g. Kofi Mensah"
-                                autoComplete="name"
-                                className="input"
-                            />
-                        </Field>
-                    )}
-
-                    <Field label="Email Address">
-                        <input
-                            required
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="e.g. kofi@example.com"
-                            autoComplete="email"
-                            className="input"
-                        />
-                    </Field>
-
-                    {mode === 'register' && (
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                            <div className="sm:col-span-2">
-                                <Field label="School Name">
+                {mode === 'recover' ? (
+                    renderBrowserRecoveryPanel()
+                ) : (
+                    <>
+                        <form onSubmit={submit} className="mt-5 space-y-4">
+                            {mode === 'register' && (
+                                <Field label="Full Name">
                                     <input
                                         required
-                                        value={schoolName}
-                                        onChange={(e) => setSchoolName(e.target.value)}
-                                        placeholder={initialLevel === 'SHS' ? 'e.g. Achimota Senior High School' : 'e.g. Achimota Basic School'}
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        placeholder="e.g. Kofi Mensah"
+                                        autoComplete="name"
                                         className="input"
                                     />
                                 </Field>
-                            </div>
-                            <div>
+                            )}
+
+                            <Field label="Email Address">
+                                <input
+                                    required
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="e.g. kofi@example.com"
+                                    autoComplete="email"
+                                    className="input"
+                                />
+                            </Field>
+
+                            {mode === 'register' && (
                                 <Field label="Grade / Exam Level">
                                     {initialLevel === 'SHS' ? (
                                         <select
@@ -692,63 +902,82 @@ function StudentAuthView({
                                         </select>
                                     )}
                                 </Field>
+                            )}
+
+                            <div>
+                                <div className="mb-1.5 flex items-center justify-between">
+                                    <span className="text-xs font-medium text-slate-600">
+                                        {mode === 'register' ? 'Password (min. 6 characters)' : 'Password'}
+                                    </span>
+                                    {mode === 'login' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => switchMode('recover')}
+                                            className="text-xs font-semibold text-[#364c83] hover:underline"
+                                        >
+                                            Forgot password?
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="relative">
+                                    <input
+                                        required
+                                        type={showPassword ? 'text' : 'password'}
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        placeholder="••••••••"
+                                        autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                                        className="input pr-20"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword((s) => !s)}
+                                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-200 hover:text-slate-900"
+                                    >
+                                        {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                                        {showPassword ? 'Hide' : 'Show'}
+                                    </button>
+                                </div>
                             </div>
+
+                            <button
+                                type="submit"
+                                disabled={busy}
+                                className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#364c83] py-2.5 text-sm font-semibold text-white transition hover:bg-[#1f2d57] disabled:opacity-50"
+                            >
+                                {busy && <Loader2 className="animate-spin" size={16} />}
+                                {mode === 'login' ? 'Sign in to ExamHub' : 'Create account & continue'}
+                            </button>
+                        </form>
+
+                        <div className="mt-5 border-t border-slate-100 pt-4 text-center text-xs text-slate-500">
+                            {mode === 'login' ? (
+                                <>
+                                    Don&apos;t have an account yet?{' '}
+                                    <button
+                                        type="button"
+                                        onClick={() => switchMode('register')}
+                                        className="font-semibold text-[#364c83] hover:underline"
+                                    >
+                                        Register now
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    Already have an account?{' '}
+                                    <button
+                                        type="button"
+                                        onClick={() => switchMode('login')}
+                                        className="font-semibold text-[#364c83] hover:underline"
+                                    >
+                                        Sign in
+                                    </button>
+                                </>
+                            )}
                         </div>
-                    )}
-
-                    <Field label={mode === 'register' ? 'Password (min. 6 characters)' : 'Password'}>
-                        <input
-                            required
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            placeholder="••••••••"
-                            autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-                            className="input"
-                        />
-                    </Field>
-
-                    <button
-                        type="submit"
-                        disabled={busy}
-                        className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#364c83] py-2.5 text-sm font-semibold text-white transition hover:bg-[#1f2d57] disabled:opacity-50"
-                    >
-                        {busy && <Loader2 className="animate-spin" size={16} />}
-                        {mode === 'login' ? 'Sign in to ExamHub' : 'Create account & continue'}
-                    </button>
-                </form>
-
-                <div className="mt-5 border-t border-slate-100 pt-4 text-center text-xs text-slate-500">
-                    {mode === 'login' ? (
-                        <>
-                            Don&apos;t have an account yet?{' '}
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setMode('register');
-                                    setErr('');
-                                }}
-                                className="font-semibold text-[#364c83] hover:underline"
-                            >
-                                Register now
-                            </button>
-                        </>
-                    ) : (
-                        <>
-                            Already have an account?{' '}
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setMode('login');
-                                    setErr('');
-                                }}
-                                className="font-semibold text-[#364c83] hover:underline"
-                            >
-                                Sign in
-                            </button>
-                        </>
-                    )}
-                </div>
+                    </>
+                )}
             </div>
         </div>
     );
@@ -992,7 +1221,8 @@ function StudentView({
                         <Trophy size={22} />
                     </div>
                     <p className="mt-3 text-sm text-slate-500">
-                        {user.name} ({user.schoolName}) &middot; {subject.name} &middot; {levelLabel(level)}
+                        {user.name}
+                        {user.schoolName ? ` (${user.schoolName})` : ''} &middot; {subject.name} &middot; {levelLabel(level)}
                     </p>
                     <p className="mt-1 text-4xl font-bold text-slate-900">
                         {result.score}/{result.total}
@@ -1080,8 +1310,9 @@ function StudentView({
                                 : `${levelLabel(level)} Exams`}
                         </h2>
                         <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
-                            <School size={14} className="text-slate-400" />
-                            Signed in as <strong className="text-slate-700">{user.name}</strong> &middot; {user.schoolName}
+                            <UserCheck size={14} className="text-slate-400" />
+                            Signed in as <strong className="text-slate-700">{user.name}</strong> &middot;{' '}
+                            {user.schoolName || levelLabel(level)}
                         </p>
                     </div>
                 </div>

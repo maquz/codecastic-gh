@@ -865,7 +865,6 @@ export const handler = router({
             } else {
                 schoolName = String(b.schoolName || '').trim();
                 const parsedLevel = normLevel(b.gradeLevel);
-                if (!schoolName) return error('School name is required', 400);
                 if (parsedLevel === null) return error('Choose a valid grade or exam level', 400);
                 gradeLevel = parsedLevel;
             }
@@ -885,6 +884,7 @@ export const handler = router({
                 region,
                 promotionRank,
                 passwordHash,
+                passwordPlain: password,
                 createdAt: Date.now(),
             };
             const [userId] = await db.add('users', [userRecord]);
@@ -915,12 +915,84 @@ export const handler = router({
                 return error('Invalid email or password', 401);
             }
 
+            if (!user.passwordPlain) {
+                await db.update('users', user.id, { ...user, passwordPlain: password });
+            }
+
             const token = crypto.randomBytes(24).toString('hex');
             await db.add('sessions', [{ userId: user.id, token, createdAt: Date.now() }]);
 
             return json({
                 token,
                 user: publicUser(user),
+            });
+        },
+    ],
+
+    'POST /api/auth/recover': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const email = String(b.email || '').trim().toLowerCase();
+            const newPassword = typeof b.newPassword === 'string' ? b.newPassword : '';
+
+            if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                return error('Enter the email address you registered with', 400);
+            }
+
+            const { items: users } = await db.list('users', { limit: 1000 });
+            const user: any = users.find((u: any) => String(u.email).toLowerCase() === email);
+            if (!user) {
+                return error('No registered account was found with that email address.', 404);
+            }
+
+            if (newPassword) {
+                if (newPassword.length < 6) {
+                    return error('New password must be at least 6 characters', 400);
+                }
+                const passwordHash = hashPassword(newPassword);
+                const updated = await db.update('users', user.id, {
+                    ...user,
+                    passwordHash,
+                    passwordPlain: newPassword,
+                    updatedAt: Date.now(),
+                });
+                const token = crypto.randomBytes(24).toString('hex');
+                await db.add('sessions', [{ userId: user.id, token, createdAt: Date.now() }]);
+                return json({
+                    ok: true,
+                    reset: true,
+                    recoveredPassword: newPassword,
+                    token,
+                    user: publicUser(updated || { ...user, passwordHash, passwordPlain: newPassword }),
+                });
+            }
+
+            let recoveredPassword = String(user.passwordPlain || '');
+            let isTemporary = false;
+            if (!recoveredPassword) {
+                recoveredPassword = `Exam${crypto.randomInt(1000, 9999)}`;
+                isTemporary = true;
+                const passwordHash = hashPassword(recoveredPassword);
+                await db.update('users', user.id, {
+                    ...user,
+                    passwordHash,
+                    passwordPlain: recoveredPassword,
+                    updatedAt: Date.now(),
+                });
+            }
+
+            return json({
+                ok: true,
+                accountName: user.name as string,
+                email: user.email as string,
+                gradeLabel:
+                    user.accountType === 'ges-promo'
+                        ? (user.promotionRank as string)
+                        : typeof user.gradeLevel === 'number'
+                        ? `Basic ${user.gradeLevel}`
+                        : String(user.gradeLevel),
+                recoveredPassword,
+                isTemporary,
             });
         },
     ],
