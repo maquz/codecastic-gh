@@ -569,6 +569,42 @@ export const handler = router({
         },
     ],
 
+    'POST /api/admin/questions/:id/update': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+
+            const id = ctx.params.id;
+            const subjectId = String(b.subjectId || '');
+            const level = normLevel(b.level);
+            const text = String(b.text || '').trim();
+            const options: string[] = Array.isArray(b.options) ? b.options.map((o: unknown) => String(o || '').trim()) : [];
+            const correctIndex = Number(b.correctIndex);
+            const explanation = String(b.explanation || '').trim();
+
+            if (level === null) return error('Choose Basic 4 to Basic 9, or an exam section', 400);
+            if (!text) return error('Question text is required', 400);
+            if (options.length !== 4 || options.some((o) => !o)) return error('Provide all four answer options', 400);
+            if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex > 3) {
+                return error('Choose the correct answer', 400);
+            }
+            const { items: subjects } = await db.list('subjects', { limit: 100 });
+            if (!subjects.some((s: any) => s.id === subjectId)) return error('Choose a valid subject', 400);
+
+            const updated = await db.update('questions', id, {
+                subjectId,
+                level,
+                text,
+                options,
+                correctIndex,
+                explanation,
+                updatedAt: Date.now(),
+            });
+            if (!updated) return error('Question not found', 404);
+            return json({ question: updated });
+        },
+    ],
+
     'POST /api/admin/questions/:id/delete': [
         async (ctx) => {
             const b = (ctx.body || {}) as any;

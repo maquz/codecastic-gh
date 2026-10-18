@@ -53,6 +53,16 @@ export const db = {
         return ids;
     },
 
+    async update(collection: string, id: string, patch: Record<string, any>): Promise<any | null> {
+        const store = getStore();
+        if (!store[collection]) return null;
+        const idx = store[collection].findIndex((item: any) => item.id === id);
+        if (idx === -1) return null;
+        store[collection][idx] = { ...store[collection][idx], ...patch, id };
+        saveStore(store);
+        return store[collection][idx];
+    },
+
     async delete(collection: string, ids: string[]): Promise<void> {
         const store = getStore();
         if (!store[collection]) return;

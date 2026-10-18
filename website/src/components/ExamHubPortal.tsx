@@ -26,6 +26,7 @@ import {
     School,
     Eye,
     EyeOff,
+    Pencil,
 } from 'lucide-react';
 
 export type Level = number | string;
@@ -1416,6 +1417,13 @@ function SubjectsAdmin({
     );
 }
 
+function belongsToCategory(qLevel: Level, trackCode: string | null): boolean {
+    if (trackCode === null) {
+        return typeof qLevel === 'number' && SCHOOL_LEVELS.includes(qLevel);
+    }
+    return qLevel === trackCode;
+}
+
 function QuestionsAdmin({
     code,
     subjects,
@@ -1429,6 +1437,9 @@ function QuestionsAdmin({
     reload: () => Promise<void>;
     flash: Flash;
 }) {
+    const [selectedTrackSlug, setSelectedTrackSlug] = useState<string | null>(null);
+
+    // Add question form state
     const [subjectId, setSubjectId] = useState('');
     const [level, setLevel] = useState<Level>(4);
     const [text, setText] = useState('');
@@ -1437,12 +1448,54 @@ function QuestionsAdmin({
     const [explanation, setExplanation] = useState('');
     const [saving, setSaving] = useState(false);
 
+    // Filter state inside a category portal
     const [fLevel, setFLevel] = useState<'all' | Level>('all');
     const [fSubject, setFSubject] = useState<'all' | string>('all');
+
+    // Edit / Update existing question state
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [editSubjectId, setEditSubjectId] = useState('');
+    const [editLevel, setEditLevel] = useState<Level>(4);
+    const [editText, setEditText] = useState('');
+    const [editOptions, setEditOptions] = useState(['', '', '', '']);
+    const [editCorrect, setEditCorrect] = useState(0);
+    const [editExplanation, setEditExplanation] = useState('');
+    const [updating, setUpdating] = useState(false);
 
     useEffect(() => {
         if (!subjectId && subjects.length > 0) setSubjectId(subjects[0].id);
     }, [subjects, subjectId]);
+
+    const activeTrack = TRACKS.find((t) => t.slug === selectedTrackSlug) || null;
+
+    const openTrackPortal = (slug: string) => {
+        const track = TRACKS.find((t) => t.slug === slug);
+        if (!track) return;
+        setSelectedTrackSlug(slug);
+        setEditingId(null);
+        setFSubject('all');
+        if (track.code === null) {
+            setLevel(4);
+            setFLevel('all');
+        } else {
+            setLevel(track.code);
+            setFLevel(track.code);
+        }
+    };
+
+    const startEditing = (q: AdminQ) => {
+        setEditingId(q.id);
+        setEditSubjectId(q.subjectId);
+        setEditLevel(q.level);
+        setEditText(q.text);
+        setEditOptions([...q.options]);
+        setEditCorrect(q.correctIndex);
+        setEditExplanation(q.explanation || '');
+    };
+
+    const cancelEditing = () => {
+        setEditingId(null);
+    };
 
     const save = async (e: FormEvent) => {
         e.preventDefault();
@@ -1474,10 +1527,38 @@ function QuestionsAdmin({
         }
     };
 
+    const handleUpdateQuestion = async (e: FormEvent, qId: string) => {
+        e.preventDefault();
+        if (!editSubjectId || !editText.trim() || editOptions.some((o) => !o.trim())) {
+            flash(false, 'Fill in the question and all four answer options.');
+            return;
+        }
+        setUpdating(true);
+        try {
+            await api.post(`/api/admin/questions/${qId}/update`, {
+                passcode: code,
+                subjectId: editSubjectId,
+                level: editLevel,
+                text: editText.trim(),
+                options: editOptions.map((o) => o.trim()),
+                correctIndex: editCorrect,
+                explanation: editExplanation.trim(),
+            });
+            setEditingId(null);
+            await reload();
+            flash(true, 'Question updated.');
+        } catch (e2) {
+            flash(false, errMsg(e2, 'Could not update question.'));
+        } finally {
+            setUpdating(false);
+        }
+    };
+
     const remove = async (q: AdminQ) => {
         if (!window.confirm('Delete this question?')) return;
         try {
             await api.post(`/api/admin/questions/${q.id}/delete`, { passcode: code });
+            if (editingId === q.id) setEditingId(null);
             await reload();
             flash(true, 'Question deleted.');
         } catch (e2) {
@@ -1486,16 +1567,151 @@ function QuestionsAdmin({
     };
 
     const subjectName = (id: string) => subjects.find((s) => s.id === id)?.name || 'Unknown';
-    const shown = questions.filter(
-        (q) => (fLevel === 'all' || q.level === fLevel) && (fSubject === 'all' || q.subjectId === fSubject)
+
+    /* ---------------- Card Selection View ---------------- */
+    if (!activeTrack) {
+        return (
+            <div className="space-y-5">
+                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <h2 className="text-base font-bold text-slate-900">Select an Exam Category Portal</h2>
+                    <p className="mt-1 text-xs text-slate-500">
+                        Choose an examination category card below to open its portal, set new questions, and update existing questions.
+                    </p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {TRACKS.map((t) => {
+                        const catQuestions = questions.filter((q) => belongsToCategory(q.level, t.code));
+                        const uniqueSubjects = new Set(catQuestions.map((q) => q.subjectId)).size;
+                        const badgeText = t.code === null ? 'Basic 4 – Basic 9' : t.code;
+
+                        return (
+                            <button
+                                key={t.slug}
+                                type="button"
+                                onClick={() => openTrackPortal(t.slug)}
+                                className="group flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#364c83] hover:shadow-md"
+                            >
+                                <div>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83] transition-colors group-hover:bg-[#364c83] group-hover:text-white">
+                                            {t.slug === 'basic' ? (
+                                                <School size={20} />
+                                            ) : t.slug === 'gtle' || t.slug === 'ges-promotion' ? (
+                                                <ClipboardCheck size={20} />
+                                            ) : (
+                                                <GraduationCap size={20} />
+                                            )}
+                                        </span>
+                                        <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
+                                            {badgeText}
+                                        </span>
+                                    </div>
+
+                                    <h3 className="mt-4 text-base font-bold text-slate-900 group-hover:text-[#364c83]">
+                                        {t.label}
+                                    </h3>
+                                    <p className="mt-1 text-xs leading-relaxed text-slate-500">{t.lead}</p>
+                                </div>
+
+                                <div className="mt-5 border-t border-slate-100 pt-3.5">
+                                    <div className="flex items-center justify-between text-xs text-slate-500">
+                                        <span>
+                                            <strong className="font-semibold text-slate-800">{catQuestions.length}</strong>{' '}
+                                            question{catQuestions.length === 1 ? '' : 's'}
+                                        </span>
+                                        <span>
+                                            <strong className="font-semibold text-slate-800">{uniqueSubjects}</strong>{' '}
+                                            subject{uniqueSubjects === 1 ? '' : 's'} active
+                                        </span>
+                                    </div>
+                                    <div className="mt-3 flex items-center justify-between text-xs font-semibold text-[#364c83]">
+                                        <span>Open portal to set &amp; update questions</span>
+                                        <ChevronRight
+                                            size={15}
+                                            className="transition-transform group-hover:translate-x-1"
+                                        />
+                                    </div>
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    }
+
+    /* ---------------- Selected Category Portal View ---------------- */
+    const isBasicPortal = activeTrack.code === null;
+    const categoryQuestions = questions.filter((q) => belongsToCategory(q.level, activeTrack.code));
+    const shown = categoryQuestions.filter(
+        (q) =>
+            (isBasicPortal ? fLevel === 'all' || q.level === fLevel : true) &&
+            (fSubject === 'all' || q.subjectId === fSubject)
     );
 
     return (
         <div className="space-y-6">
-            <section className="rounded-xl border border-slate-200 bg-white p-5">
-                <h2 className="text-sm font-semibold text-slate-900">Add a question</h2>
+            {/* Portal Header & Category Switcher */}
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setSelectedTrackSlug(null);
+                            setEditingId(null);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-[#364c83] hover:bg-white hover:text-[#364c83]"
+                    >
+                        <ArrowLeft size={14} />
+                        All Exam Category Cards
+                    </button>
+
+                    <div className="flex flex-wrap gap-1.5">
+                        {TRACKS.map((t) => {
+                            const active = t.slug === activeTrack.slug;
+                            return (
+                                <button
+                                    key={t.slug}
+                                    type="button"
+                                    onClick={() => openTrackPortal(t.slug)}
+                                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                                        active
+                                            ? 'bg-[#364c83] text-white'
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                    }`}
+                                >
+                                    {t.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
+                            Active Question Portal
+                        </span>
+                        <h2 className="mt-0.5 text-lg font-bold text-slate-900">{activeTrack.label}</h2>
+                        <p className="mt-0.5 text-xs text-slate-500">{activeTrack.lead}</p>
+                    </div>
+                    <div className="rounded-lg bg-indigo-50 px-3.5 py-2 text-right">
+                        <span className="block text-lg font-bold text-[#364c83]">{categoryQuestions.length}</span>
+                        <span className="block text-[11px] font-medium text-slate-600">
+                            Total {activeTrack.label} Questions
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Set / Add a Question Form */}
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h2 className="text-sm font-semibold text-slate-900">
+                    Set a new question for {activeTrack.label}
+                </h2>
                 <form onSubmit={save} className="mt-4 space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <Field label="Subject">
                             <select value={subjectId} onChange={(e) => setSubjectId(e.target.value)} className="input">
                                 {subjects.map((s) => (
@@ -1505,18 +1721,37 @@ function QuestionsAdmin({
                                 ))}
                             </select>
                         </Field>
-                        <Field label="Level or exam section">
-                            <select value={String(level)} onChange={(e) => setLevel(parseLevel(e.target.value))} className="input">
-                                <LevelOptions />
-                            </select>
-                        </Field>
+                        {isBasicPortal ? (
+                            <Field label="Class Level (Basic 4 to 9)">
+                                <select
+                                    value={String(level)}
+                                    onChange={(e) => setLevel(parseLevel(e.target.value))}
+                                    className="input"
+                                >
+                                    {SCHOOL_LEVELS.map((l) => (
+                                        <option key={l} value={String(l)}>
+                                            {levelLabel(l)}
+                                        </option>
+                                    ))}
+                                </select>
+                            </Field>
+                        ) : (
+                            <Field label="Exam Section">
+                                <input
+                                    type="text"
+                                    value={activeTrack.label}
+                                    disabled
+                                    className="input cursor-not-allowed bg-slate-50 font-medium text-slate-600"
+                                />
+                            </Field>
+                        )}
                     </div>
                     <Field label="Question">
                         <textarea
                             value={text}
                             onChange={(e) => setText(e.target.value)}
                             rows={2}
-                            placeholder="Type the question here"
+                            placeholder={`Type the ${activeTrack.label} question here`}
                             className="input"
                         />
                     </Field>
@@ -1562,18 +1797,32 @@ function QuestionsAdmin({
                 </form>
             </section>
 
-            <section className="rounded-xl border border-slate-200 bg-white p-5">
+            {/* Question Bank with Edit / Update & Delete */}
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h2 className="text-sm font-semibold text-slate-900">Question bank ({shown.length})</h2>
-                    <div className="flex gap-2">
-                        <select
-                            value={String(fLevel)}
-                            onChange={(e) => setFLevel(e.target.value === 'all' ? 'all' : parseLevel(e.target.value))}
-                            className="input !w-auto"
-                        >
-                            <option value="all">All levels and sections</option>
-                            <LevelOptions />
-                        </select>
+                    <div>
+                        <h2 className="text-sm font-semibold text-slate-900">
+                            {activeTrack.label} Question Bank ({shown.length})
+                        </h2>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                            Click <strong>Edit</strong> on any question below to update its text, options, correct answer, or explanation.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {isBasicPortal && (
+                            <select
+                                value={String(fLevel)}
+                                onChange={(e) => setFLevel(e.target.value === 'all' ? 'all' : parseLevel(e.target.value))}
+                                className="input !w-auto"
+                            >
+                                <option value="all">All Basic 4–9 levels</option>
+                                {SCHOOL_LEVELS.map((l) => (
+                                    <option key={l} value={String(l)}>
+                                        {levelLabel(l)}
+                                    </option>
+                                ))}
+                            </select>
+                        )}
                         <select value={fSubject} onChange={(e) => setFSubject(e.target.value)} className="input !w-auto">
                             <option value="all">All subjects</option>
                             {subjects.map((s) => (
@@ -1584,40 +1833,180 @@ function QuestionsAdmin({
                         </select>
                     </div>
                 </div>
+
                 <div className="mt-4 space-y-3">
-                    {shown.map((q) => (
-                        <div key={q.id} className="rounded-lg border border-slate-200 p-3.5">
-                            <div className="flex items-start justify-between gap-3">
-                                <div>
-                                    <p className="text-xs font-medium text-[#364c83]">
-                                        {subjectName(q.subjectId)} &middot; {levelLabel(q.level)}
-                                    </p>
-                                    <p className="mt-1 text-sm font-medium text-slate-900">{q.text}</p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => remove(q)}
-                                    className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                                    aria-label="Delete question"
+                    {shown.map((q) => {
+                        const isEditing = editingId === q.id;
+
+                        if (isEditing) {
+                            return (
+                                <form
+                                    key={q.id}
+                                    onSubmit={(e) => handleUpdateQuestion(e, q.id)}
+                                    className="rounded-xl border-2 border-[#364c83] bg-indigo-50/30 p-4 space-y-4"
                                 >
-                                    <Trash2 size={15} />
-                                </button>
-                            </div>
-                            <div className="mt-2 grid gap-1 sm:grid-cols-2">
-                                {q.options.map((o, i) => (
-                                    <p
-                                        key={i}
-                                        className={`rounded px-2 py-1 text-xs ${
-                                            i === q.correctIndex ? 'bg-emerald-50 font-medium text-emerald-800' : 'text-slate-500'
-                                        }`}
-                                    >
-                                        {LETTERS[i]}. {o}
+                                    <div className="flex items-center justify-between">
+                                        <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#364c83]">
+                                            <Pencil size={13} />
+                                            Updating Question
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={cancelEditing}
+                                            className="text-xs font-medium text-slate-500 hover:text-slate-800"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                        <Field label="Subject">
+                                            <select
+                                                value={editSubjectId}
+                                                onChange={(e) => setEditSubjectId(e.target.value)}
+                                                className="input bg-white"
+                                            >
+                                                {subjects.map((s) => (
+                                                    <option key={s.id} value={s.id}>
+                                                        {s.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </Field>
+                                        <Field label="Level or exam section">
+                                            <select
+                                                value={String(editLevel)}
+                                                onChange={(e) => setEditLevel(parseLevel(e.target.value))}
+                                                className="input bg-white"
+                                            >
+                                                <LevelOptions />
+                                            </select>
+                                        </Field>
+                                    </div>
+
+                                    <Field label="Question">
+                                        <textarea
+                                            value={editText}
+                                            onChange={(e) => setEditText(e.target.value)}
+                                            rows={2}
+                                            className="input bg-white"
+                                        />
+                                    </Field>
+
+                                    <div>
+                                        <span className="mb-1.5 block text-xs font-medium text-slate-600">
+                                            Answer options (select the correct one)
+                                        </span>
+                                        <div className="space-y-2">
+                                            {editOptions.map((o, i) => (
+                                                <div key={i} className="flex items-center gap-2">
+                                                    <input
+                                                        type="radio"
+                                                        name={`edit-correct-${q.id}`}
+                                                        checked={editCorrect === i}
+                                                        onChange={() => setEditCorrect(i)}
+                                                        className="h-4 w-4 accent-[#364c83]"
+                                                    />
+                                                    <span className="w-4 text-xs font-semibold text-slate-500">
+                                                        {LETTERS[i]}
+                                                    </span>
+                                                    <input
+                                                        value={o}
+                                                        onChange={(e) =>
+                                                            setEditOptions((prev) =>
+                                                                prev.map((p, pi) => (pi === i ? e.target.value : p))
+                                                            )
+                                                        }
+                                                        className="input bg-white"
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <Field label="Explanation (optional, shown after the exam)">
+                                        <input
+                                            value={editExplanation}
+                                            onChange={(e) => setEditExplanation(e.target.value)}
+                                            className="input bg-white"
+                                        />
+                                    </Field>
+
+                                    <div className="flex items-center gap-2 pt-1">
+                                        <button
+                                            type="submit"
+                                            disabled={updating}
+                                            className="flex items-center gap-1.5 rounded-lg bg-[#364c83] px-4 py-2 text-xs font-semibold text-white hover:bg-[#1f2d57] disabled:opacity-50"
+                                        >
+                                            {updating ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle2 size={14} />}
+                                            Update question
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={cancelEditing}
+                                            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </form>
+                            );
+                        }
+
+                        return (
+                            <div key={q.id} className="rounded-lg border border-slate-200 p-3.5 transition hover:border-slate-300">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <p className="text-xs font-medium text-[#364c83]">
+                                            {subjectName(q.subjectId)} &middot; {levelLabel(q.level)}
+                                        </p>
+                                        <p className="mt-1 text-sm font-medium text-slate-900">{q.text}</p>
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => startEditing(q)}
+                                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:border-[#364c83] hover:bg-indigo-50 hover:text-[#364c83]"
+                                            aria-label="Edit question"
+                                        >
+                                            <Pencil size={13} />
+                                            Edit
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => remove(q)}
+                                            className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                                            aria-label="Delete question"
+                                        >
+                                            <Trash2 size={15} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                                    {q.options.map((o, i) => (
+                                        <p
+                                            key={i}
+                                            className={`rounded px-2 py-1 text-xs ${
+                                                i === q.correctIndex
+                                                    ? 'bg-emerald-50 font-medium text-emerald-800'
+                                                    : 'text-slate-500'
+                                            }`}
+                                        >
+                                            {LETTERS[i]}. {o}
+                                        </p>
+                                    ))}
+                                </div>
+                                {q.explanation && (
+                                    <p className="mt-2 text-xs text-slate-500">
+                                        <strong className="font-medium text-slate-600">Explanation:</strong> {q.explanation}
                                     </p>
-                                ))}
+                                )}
                             </div>
-                        </div>
-                    ))}
-                    {shown.length === 0 && <p className="text-sm text-slate-400">No questions match these filters.</p>}
+                        );
+                    })}
+                    {shown.length === 0 && (
+                        <p className="text-sm text-slate-400">No questions in {activeTrack.label} match these filters yet.</p>
+                    )}
                 </div>
             </section>
         </div>
