@@ -1438,6 +1438,7 @@ function QuestionsAdmin({
     flash: Flash;
 }) {
     const [selectedTrackSlug, setSelectedTrackSlug] = useState<string | null>(null);
+    const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
 
     // Add question form state
     const [subjectId, setSubjectId] = useState('');
@@ -1448,9 +1449,8 @@ function QuestionsAdmin({
     const [explanation, setExplanation] = useState('');
     const [saving, setSaving] = useState(false);
 
-    // Filter state inside a category portal
+    // Filter state inside a subject portal (for Basic 4-9 class levels)
     const [fLevel, setFLevel] = useState<'all' | Level>('all');
-    const [fSubject, setFSubject] = useState<'all' | string>('all');
 
     // Edit / Update existing question state
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -1467,19 +1467,35 @@ function QuestionsAdmin({
     }, [subjects, subjectId]);
 
     const activeTrack = TRACKS.find((t) => t.slug === selectedTrackSlug) || null;
+    const activeSubject = subjects.find((s) => s.id === selectedSubjectId) || null;
 
-    const openTrackPortal = (slug: string) => {
+    const openTrackSubjects = (slug: string) => {
         const track = TRACKS.find((t) => t.slug === slug);
         if (!track) return;
         setSelectedTrackSlug(slug);
+        setSelectedSubjectId(null);
         setEditingId(null);
-        setFSubject('all');
         if (track.code === null) {
             setLevel(4);
             setFLevel('all');
         } else {
             setLevel(track.code);
             setFLevel(track.code);
+        }
+    };
+
+    const openSubjectPortal = (subjId: string) => {
+        setSelectedSubjectId(subjId);
+        setSubjectId(subjId);
+        setEditingId(null);
+        if (activeTrack) {
+            if (activeTrack.code === null) {
+                setLevel(4);
+                setFLevel('all');
+            } else {
+                setLevel(activeTrack.code);
+                setFLevel(activeTrack.code);
+            }
         }
     };
 
@@ -1499,7 +1515,8 @@ function QuestionsAdmin({
 
     const save = async (e: FormEvent) => {
         e.preventDefault();
-        if (!subjectId || !text.trim() || options.some((o) => !o.trim())) {
+        const targetSubjectId = activeSubject ? activeSubject.id : subjectId;
+        if (!targetSubjectId || !text.trim() || options.some((o) => !o.trim())) {
             flash(false, 'Fill in the question and all four answer options.');
             return;
         }
@@ -1507,7 +1524,7 @@ function QuestionsAdmin({
         try {
             await api.post('/api/admin/questions', {
                 passcode: code,
-                subjectId,
+                subjectId: targetSubjectId,
                 level,
                 text: text.trim(),
                 options: options.map((o) => o.trim()),
@@ -1568,28 +1585,27 @@ function QuestionsAdmin({
 
     const subjectName = (id: string) => subjects.find((s) => s.id === id)?.name || 'Unknown';
 
-    /* ---------------- Card Selection View ---------------- */
+    /* ---------------- Step 1: Exam Category Cards View ---------------- */
     if (!activeTrack) {
         return (
             <div className="space-y-5">
                 <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <h2 className="text-base font-bold text-slate-900">Select an Exam Category Portal</h2>
+                    <h2 className="text-base font-bold text-slate-900">Select an Exam Category</h2>
                     <p className="mt-1 text-xs text-slate-500">
-                        Choose an examination category card below to open its portal, set new questions, and update existing questions.
+                        Choose an examination category card below to view its subject cards, then open any subject portal to set and update questions.
                     </p>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {TRACKS.map((t) => {
                         const catQuestions = questions.filter((q) => belongsToCategory(q.level, t.code));
-                        const uniqueSubjects = new Set(catQuestions.map((q) => q.subjectId)).size;
                         const badgeText = t.code === null ? 'Basic 4 – Basic 9' : t.code;
 
                         return (
                             <button
                                 key={t.slug}
                                 type="button"
-                                onClick={() => openTrackPortal(t.slug)}
+                                onClick={() => openTrackSubjects(t.slug)}
                                 className="group flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#364c83] hover:shadow-md"
                             >
                                 <div>
@@ -1617,16 +1633,16 @@ function QuestionsAdmin({
                                 <div className="mt-5 border-t border-slate-100 pt-3.5">
                                     <div className="flex items-center justify-between text-xs text-slate-500">
                                         <span>
+                                            <strong className="font-semibold text-slate-800">{subjects.length}</strong>{' '}
+                                            subject card{subjects.length === 1 ? '' : 's'}
+                                        </span>
+                                        <span>
                                             <strong className="font-semibold text-slate-800">{catQuestions.length}</strong>{' '}
                                             question{catQuestions.length === 1 ? '' : 's'}
                                         </span>
-                                        <span>
-                                            <strong className="font-semibold text-slate-800">{uniqueSubjects}</strong>{' '}
-                                            subject{uniqueSubjects === 1 ? '' : 's'} active
-                                        </span>
                                     </div>
                                     <div className="mt-3 flex items-center justify-between text-xs font-semibold text-[#364c83]">
-                                        <span>Open portal to set &amp; update questions</span>
+                                        <span>View {t.label} subjects</span>
                                         <ChevronRight
                                             size={15}
                                             className="transition-transform group-hover:translate-x-1"
@@ -1641,47 +1657,180 @@ function QuestionsAdmin({
         );
     }
 
-    /* ---------------- Selected Category Portal View ---------------- */
     const isBasicPortal = activeTrack.code === null;
     const categoryQuestions = questions.filter((q) => belongsToCategory(q.level, activeTrack.code));
-    const shown = categoryQuestions.filter(
-        (q) =>
-            (isBasicPortal ? fLevel === 'all' || q.level === fLevel : true) &&
-            (fSubject === 'all' || q.subjectId === fSubject)
+
+    /* ---------------- Step 2: Subject Cards View under Selected Exam Category ---------------- */
+    if (!activeSubject) {
+        const badgeText = activeTrack.code === null ? 'Basic 4 – Basic 9' : activeTrack.code;
+
+        return (
+            <div className="space-y-5">
+                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSelectedTrackSlug(null);
+                                setSelectedSubjectId(null);
+                                setEditingId(null);
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-[#364c83] hover:bg-white hover:text-[#364c83]"
+                        >
+                            <ArrowLeft size={14} />
+                            All Exam Categories
+                        </button>
+
+                        <div className="flex flex-wrap gap-1.5">
+                            {TRACKS.map((t) => {
+                                const active = t.slug === activeTrack.slug;
+                                return (
+                                    <button
+                                        key={t.slug}
+                                        type="button"
+                                        onClick={() => openTrackSubjects(t.slug)}
+                                        className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                                            active
+                                                ? 'bg-[#364c83] text-white'
+                                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                        }`}
+                                    >
+                                        {t.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
+                                {activeTrack.label} &middot; Select a Subject
+                            </span>
+                            <h2 className="mt-0.5 text-lg font-bold text-slate-900">
+                                {activeTrack.label} Subject Cards
+                            </h2>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                                Click any subject card below to open its dedicated {activeTrack.label} portal to set new questions and update existing questions.
+                            </p>
+                        </div>
+                        <div className="rounded-lg bg-indigo-50 px-3.5 py-2 text-right">
+                            <span className="block text-lg font-bold text-[#364c83]">{categoryQuestions.length}</span>
+                            <span className="block text-[11px] font-medium text-slate-600">
+                                Total {activeTrack.label} Questions
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                {subjects.length === 0 ? (
+                    <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+                        No subjects available yet. Add a subject in the <strong>Subjects</strong> tab first.
+                    </div>
+                ) : (
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {subjects.map((s) => {
+                            const subjQuestions = categoryQuestions.filter((q) => q.subjectId === s.id);
+                            return (
+                                <button
+                                    key={s.id}
+                                    type="button"
+                                    onClick={() => openSubjectPortal(s.id)}
+                                    className="group flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#364c83] hover:shadow-md"
+                                >
+                                    <div>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83] transition-colors group-hover:bg-[#364c83] group-hover:text-white">
+                                                <SubjectIcon name={s.name} size={20} />
+                                            </span>
+                                            <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
+                                                {badgeText}
+                                            </span>
+                                        </div>
+
+                                        <h3 className="mt-4 text-base font-bold text-slate-900 group-hover:text-[#364c83]">
+                                            {s.name}
+                                        </h3>
+                                        <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                                            Manage {activeTrack.label} questions, answer options, and explanations for {s.name}.
+                                        </p>
+                                    </div>
+
+                                    <div className="mt-5 border-t border-slate-100 pt-3.5">
+                                        <div className="flex items-center justify-between text-xs text-slate-500">
+                                            <span>
+                                                <strong className="font-semibold text-slate-800">{subjQuestions.length}</strong>{' '}
+                                                question{subjQuestions.length === 1 ? '' : 's'} in {activeTrack.label}
+                                            </span>
+                                        </div>
+                                        <div className="mt-3 flex items-center justify-between text-xs font-semibold text-[#364c83]">
+                                            <span>Open portal to set &amp; update questions</span>
+                                            <ChevronRight
+                                                size={15}
+                                                className="transition-transform group-hover:translate-x-1"
+                                            />
+                                        </div>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    /* ---------------- Step 3: Dedicated Subject + Category Portal View ---------------- */
+    const subjectCategoryQuestions = categoryQuestions.filter((q) => q.subjectId === activeSubject.id);
+    const shown = subjectCategoryQuestions.filter((q) =>
+        isBasicPortal ? fLevel === 'all' || q.level === fLevel : true
     );
 
     return (
         <div className="space-y-6">
-            {/* Portal Header & Category Switcher */}
+            {/* Portal Header & Subject Switcher */}
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setSelectedTrackSlug(null);
-                            setEditingId(null);
-                        }}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-[#364c83] hover:bg-white hover:text-[#364c83]"
-                    >
-                        <ArrowLeft size={14} />
-                        All Exam Category Cards
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSelectedSubjectId(null);
+                                setEditingId(null);
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-[#364c83] hover:bg-white hover:text-[#364c83]"
+                        >
+                            <ArrowLeft size={14} />
+                            {activeTrack.label} Subject Cards
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSelectedTrackSlug(null);
+                                setSelectedSubjectId(null);
+                                setEditingId(null);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
+                        >
+                            All Exam Categories
+                        </button>
+                    </div>
 
                     <div className="flex flex-wrap gap-1.5">
-                        {TRACKS.map((t) => {
-                            const active = t.slug === activeTrack.slug;
+                        {subjects.map((s) => {
+                            const active = s.id === activeSubject.id;
                             return (
                                 <button
-                                    key={t.slug}
+                                    key={s.id}
                                     type="button"
-                                    onClick={() => openTrackPortal(t.slug)}
+                                    onClick={() => openSubjectPortal(s.id)}
                                     className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
                                         active
                                             ? 'bg-[#364c83] text-white'
                                             : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                     }`}
                                 >
-                                    {t.label}
+                                    {s.name}
                                 </button>
                             );
                         })}
@@ -1689,17 +1838,26 @@ function QuestionsAdmin({
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
-                            Active Question Portal
+                    <div className="flex items-center gap-3">
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-[#364c83]">
+                            <SubjectIcon name={activeSubject.name} size={22} />
                         </span>
-                        <h2 className="mt-0.5 text-lg font-bold text-slate-900">{activeTrack.label}</h2>
-                        <p className="mt-0.5 text-xs text-slate-500">{activeTrack.lead}</p>
+                        <div>
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
+                                {activeTrack.label} &middot; Dedicated Subject Portal
+                            </span>
+                            <h2 className="mt-0.5 text-lg font-bold text-slate-900">
+                                {activeSubject.name} ({activeTrack.label})
+                            </h2>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                                Set new {activeSubject.name} questions and update existing questions for {activeTrack.label}.
+                            </p>
+                        </div>
                     </div>
                     <div className="rounded-lg bg-indigo-50 px-3.5 py-2 text-right">
-                        <span className="block text-lg font-bold text-[#364c83]">{categoryQuestions.length}</span>
+                        <span className="block text-lg font-bold text-[#364c83]">{subjectCategoryQuestions.length}</span>
                         <span className="block text-[11px] font-medium text-slate-600">
-                            Total {activeTrack.label} Questions
+                            {activeSubject.name} Questions
                         </span>
                     </div>
                 </div>
@@ -1708,18 +1866,17 @@ function QuestionsAdmin({
             {/* Set / Add a Question Form */}
             <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h2 className="text-sm font-semibold text-slate-900">
-                    Set a new question for {activeTrack.label}
+                    Set a new {activeSubject.name} question ({activeTrack.label})
                 </h2>
                 <form onSubmit={save} className="mt-4 space-y-4">
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <Field label="Subject">
-                            <select value={subjectId} onChange={(e) => setSubjectId(e.target.value)} className="input">
-                                {subjects.map((s) => (
-                                    <option key={s.id} value={s.id}>
-                                        {s.name}
-                                    </option>
-                                ))}
-                            </select>
+                            <input
+                                type="text"
+                                value={activeSubject.name}
+                                disabled
+                                className="input cursor-not-allowed bg-slate-50 font-medium text-slate-600"
+                            />
                         </Field>
                         {isBasicPortal ? (
                             <Field label="Class Level (Basic 4 to 9)">
@@ -1751,7 +1908,7 @@ function QuestionsAdmin({
                             value={text}
                             onChange={(e) => setText(e.target.value)}
                             rows={2}
-                            placeholder={`Type the ${activeTrack.label} question here`}
+                            placeholder={`Type the ${activeSubject.name} (${activeTrack.label}) question here`}
                             className="input"
                         />
                     </Field>
@@ -1788,7 +1945,7 @@ function QuestionsAdmin({
                     </Field>
                     <button
                         type="submit"
-                        disabled={saving || subjects.length === 0}
+                        disabled={saving}
                         className="flex items-center gap-2 rounded-lg bg-[#364c83] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2d57] disabled:opacity-50"
                     >
                         {saving ? <Loader2 className="animate-spin" size={15} /> : <Plus size={15} />}
@@ -1802,14 +1959,14 @@ function QuestionsAdmin({
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h2 className="text-sm font-semibold text-slate-900">
-                            {activeTrack.label} Question Bank ({shown.length})
+                            {activeSubject.name} &middot; {activeTrack.label} Question Bank ({shown.length})
                         </h2>
                         <p className="mt-0.5 text-xs text-slate-500">
                             Click <strong>Edit</strong> on any question below to update its text, options, correct answer, or explanation.
                         </p>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                        {isBasicPortal && (
+                    {isBasicPortal && (
+                        <div className="flex flex-wrap gap-2">
                             <select
                                 value={String(fLevel)}
                                 onChange={(e) => setFLevel(e.target.value === 'all' ? 'all' : parseLevel(e.target.value))}
@@ -1822,16 +1979,8 @@ function QuestionsAdmin({
                                     </option>
                                 ))}
                             </select>
-                        )}
-                        <select value={fSubject} onChange={(e) => setFSubject(e.target.value)} className="input !w-auto">
-                            <option value="all">All subjects</option>
-                            {subjects.map((s) => (
-                                <option key={s.id} value={s.id}>
-                                    {s.name}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
+                        </div>
+                    )}
                 </div>
 
                 <div className="mt-4 space-y-3">
@@ -2005,7 +2154,9 @@ function QuestionsAdmin({
                         );
                     })}
                     {shown.length === 0 && (
-                        <p className="text-sm text-slate-400">No questions in {activeTrack.label} match these filters yet.</p>
+                        <p className="text-sm text-slate-400">
+                            No {activeSubject.name} questions in {activeTrack.label} yet. Use the form above to add one.
+                        </p>
                     )}
                 </div>
             </section>
