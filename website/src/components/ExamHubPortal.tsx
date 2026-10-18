@@ -90,6 +90,12 @@ const PROMOTION_RANKS: string[] = [
     'Deputy Director (DD)',
     'Director II (Dir II)',
 ];
+const PROMOTION_RANK_ITEMS: Subject[] = [
+    { id: 'rank-ad-ii', name: 'Assistant Director II (AD II)' },
+    { id: 'rank-ad-i', name: 'Assistant Director I (AD I)' },
+    { id: 'rank-dd', name: 'Deputy Director (DD)' },
+    { id: 'rank-dir-ii', name: 'Director II (Dir II)' },
+];
 const LETTERS = ['A', 'B', 'C', 'D'];
 
 function levelLabel(l: Level): string {
@@ -111,7 +117,7 @@ function SubjectIcon({ name, size = 20 }: { name: string; size?: number }) {
     if (n.includes('comput') || n.includes('ict')) return <Monitor size={size} />;
     if (n.includes('sci')) return <FlaskConical size={size} />;
     if (n.includes('eng') || n.includes('lang')) return <Languages size={size} />;
-    if (n.includes('prof') || n.includes('teach')) return <ClipboardCheck size={size} />;
+    if (n.includes('prof') || n.includes('teach') || n.includes('director')) return <ClipboardCheck size={size} />;
     return <BookOpen size={size} />;
 }
 
@@ -1039,24 +1045,38 @@ function StudentView({
 
             {level !== null && (
                 <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-slate-900">Choose a {levelLabel(level)} subject to start</h3>
+                    <h3 className="text-sm font-semibold text-slate-900">
+                        {level === 'GES-PROMO'
+                            ? 'Choose your GES Promotion Rank to start'
+                            : `Choose a ${levelLabel(level)} subject to start`}
+                    </h3>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                        {subjects.map((s) => {
+                        {(level === 'GES-PROMO' ? PROMOTION_RANK_ITEMS : subjects).map((s) => {
                             const count = counts[`${s.id}|${level}`] || 0;
                             const disabled = count === 0 || starting !== null;
+                            const isUserRank = level === 'GES-PROMO' && user.promotionRank === s.name;
                             return (
                                 <button
                                     key={s.id}
                                     type="button"
                                     onClick={() => startExam(s)}
                                     disabled={disabled}
-                                    className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-[#364c83] hover:shadow disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-none"
+                                    className={`flex items-center gap-3 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:border-[#364c83] hover:shadow disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-none ${
+                                        isUserRank ? 'border-[#364c83] ring-1 ring-[#364c83]/30' : 'border-slate-200'
+                                    }`}
                                 >
-                                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
                                         {starting === s.id ? <Loader2 className="animate-spin" size={18} /> : <SubjectIcon name={s.name} />}
                                     </span>
-                                    <span>
-                                        <span className="block text-sm font-semibold text-slate-900">{s.name}</span>
+                                    <span className="min-w-0 flex-1">
+                                        <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-slate-900">
+                                            <span>{s.name}</span>
+                                            {isUserRank && (
+                                                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#364c83]">
+                                                    Your Rank
+                                                </span>
+                                            )}
+                                        </span>
                                         <span className="block text-xs text-slate-500">
                                             {count === 0 ? 'No questions yet' : `${count} question${count === 1 ? '' : 's'}`}
                                         </span>
@@ -1467,7 +1487,11 @@ function QuestionsAdmin({
     }, [subjects, subjectId]);
 
     const activeTrack = TRACKS.find((t) => t.slug === selectedTrackSlug) || null;
-    const activeSubject = subjects.find((s) => s.id === selectedSubjectId) || null;
+    const isGesPromoPortal = activeTrack?.code === 'GES-PROMO';
+    const portalItems = isGesPromoPortal ? PROMOTION_RANK_ITEMS : subjects;
+    const itemSingularLabel = isGesPromoPortal ? 'Promotion Rank' : 'Subject';
+    const itemPluralLabel = isGesPromoPortal ? 'Promotion Ranks' : 'Subjects';
+    const activeSubject = portalItems.find((s) => s.id === selectedSubjectId) || null;
 
     const openTrackSubjects = (slug: string) => {
         const track = TRACKS.find((t) => t.slug === slug);
@@ -1583,7 +1607,10 @@ function QuestionsAdmin({
         }
     };
 
-    const subjectName = (id: string) => subjects.find((s) => s.id === id)?.name || 'Unknown';
+    const subjectName = (id: string) =>
+        subjects.find((s) => s.id === id)?.name ||
+        PROMOTION_RANK_ITEMS.find((r) => r.id === id)?.name ||
+        'Unknown';
 
     /* ---------------- Step 1: Exam Category Cards View ---------------- */
     if (!activeTrack) {
@@ -1592,7 +1619,7 @@ function QuestionsAdmin({
                 <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                     <h2 className="text-base font-bold text-slate-900">Select an Exam Category</h2>
                     <p className="mt-1 text-xs text-slate-500">
-                        Choose an examination category card below to view its subject cards, then open any subject portal to set and update questions.
+                        Choose an examination category card below to view its subject or promotion rank cards, then open any portal to set and update questions.
                     </p>
                 </div>
 
@@ -1600,6 +1627,9 @@ function QuestionsAdmin({
                     {TRACKS.map((t) => {
                         const catQuestions = questions.filter((q) => belongsToCategory(q.level, t.code));
                         const badgeText = t.code === null ? 'Basic 4 – Basic 9' : t.code;
+                        const isGesCard = t.code === 'GES-PROMO';
+                        const cardCount = isGesCard ? PROMOTION_RANK_ITEMS.length : subjects.length;
+                        const cardUnit = isGesCard ? 'promotion rank card' : 'subject card';
 
                         return (
                             <button
@@ -1633,8 +1663,8 @@ function QuestionsAdmin({
                                 <div className="mt-5 border-t border-slate-100 pt-3.5">
                                     <div className="flex items-center justify-between text-xs text-slate-500">
                                         <span>
-                                            <strong className="font-semibold text-slate-800">{subjects.length}</strong>{' '}
-                                            subject card{subjects.length === 1 ? '' : 's'}
+                                            <strong className="font-semibold text-slate-800">{cardCount}</strong>{' '}
+                                            {cardUnit}{cardCount === 1 ? '' : 's'}
                                         </span>
                                         <span>
                                             <strong className="font-semibold text-slate-800">{catQuestions.length}</strong>{' '}
@@ -1642,7 +1672,7 @@ function QuestionsAdmin({
                                         </span>
                                     </div>
                                     <div className="mt-3 flex items-center justify-between text-xs font-semibold text-[#364c83]">
-                                        <span>View {t.label} subjects</span>
+                                        <span>{isGesCard ? 'View GES Promotion ranks' : `View ${t.label} subjects`}</span>
                                         <ChevronRight
                                             size={15}
                                             className="transition-transform group-hover:translate-x-1"
@@ -1660,7 +1690,7 @@ function QuestionsAdmin({
     const isBasicPortal = activeTrack.code === null;
     const categoryQuestions = questions.filter((q) => belongsToCategory(q.level, activeTrack.code));
 
-    /* ---------------- Step 2: Subject Cards View under Selected Exam Category ---------------- */
+    /* ---------------- Step 2: Subject / Promotion Rank Cards View under Selected Exam Category ---------------- */
     if (!activeSubject) {
         const badgeText = activeTrack.code === null ? 'Basic 4 – Basic 9' : activeTrack.code;
 
@@ -1705,13 +1735,13 @@ function QuestionsAdmin({
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                         <div>
                             <span className="text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
-                                {activeTrack.label} &middot; Select a Subject
+                                {activeTrack.label} &middot; Select a {itemSingularLabel}
                             </span>
                             <h2 className="mt-0.5 text-lg font-bold text-slate-900">
-                                {activeTrack.label} Subject Cards
+                                {activeTrack.label} {itemPluralLabel} Cards
                             </h2>
                             <p className="mt-0.5 text-xs text-slate-500">
-                                Click any subject card below to open its dedicated {activeTrack.label} portal to set new questions and update existing questions.
+                                Click any {itemSingularLabel.toLowerCase()} card below to open its dedicated {activeTrack.label} portal to set new questions and update existing questions.
                             </p>
                         </div>
                         <div className="rounded-lg bg-indigo-50 px-3.5 py-2 text-right">
@@ -1723,13 +1753,13 @@ function QuestionsAdmin({
                     </div>
                 </div>
 
-                {subjects.length === 0 ? (
+                {portalItems.length === 0 ? (
                     <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
                         No subjects available yet. Add a subject in the <strong>Subjects</strong> tab first.
                     </div>
                 ) : (
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        {subjects.map((s) => {
+                        {portalItems.map((s) => {
                             const subjQuestions = categoryQuestions.filter((q) => q.subjectId === s.id);
                             return (
                                 <button
@@ -1780,7 +1810,7 @@ function QuestionsAdmin({
         );
     }
 
-    /* ---------------- Step 3: Dedicated Subject + Category Portal View ---------------- */
+    /* ---------------- Step 3: Dedicated Subject / Promotion Rank + Category Portal View ---------------- */
     const subjectCategoryQuestions = categoryQuestions.filter((q) => q.subjectId === activeSubject.id);
     const shown = subjectCategoryQuestions.filter((q) =>
         isBasicPortal ? fLevel === 'all' || q.level === fLevel : true
@@ -1788,7 +1818,7 @@ function QuestionsAdmin({
 
     return (
         <div className="space-y-6">
-            {/* Portal Header & Subject Switcher */}
+            {/* Portal Header & Subject / Rank Switcher */}
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
                     <div className="flex flex-wrap items-center gap-2">
@@ -1801,7 +1831,7 @@ function QuestionsAdmin({
                             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-[#364c83] hover:bg-white hover:text-[#364c83]"
                         >
                             <ArrowLeft size={14} />
-                            {activeTrack.label} Subject Cards
+                            {activeTrack.label} {itemPluralLabel} Cards
                         </button>
                         <button
                             type="button"
@@ -1817,7 +1847,7 @@ function QuestionsAdmin({
                     </div>
 
                     <div className="flex flex-wrap gap-1.5">
-                        {subjects.map((s) => {
+                        {portalItems.map((s) => {
                             const active = s.id === activeSubject.id;
                             return (
                                 <button
@@ -1844,7 +1874,7 @@ function QuestionsAdmin({
                         </span>
                         <div>
                             <span className="text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
-                                {activeTrack.label} &middot; Dedicated Subject Portal
+                                {activeTrack.label} &middot; Dedicated {itemSingularLabel} Portal
                             </span>
                             <h2 className="mt-0.5 text-lg font-bold text-slate-900">
                                 {activeSubject.name} ({activeTrack.label})
@@ -1870,7 +1900,7 @@ function QuestionsAdmin({
                 </h2>
                 <form onSubmit={save} className="mt-4 space-y-4">
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <Field label="Subject">
+                        <Field label={itemSingularLabel}>
                             <input
                                 type="text"
                                 value={activeSubject.name}
@@ -1986,6 +2016,7 @@ function QuestionsAdmin({
                 <div className="mt-4 space-y-3">
                     {shown.map((q) => {
                         const isEditing = editingId === q.id;
+                        const editItems = editLevel === 'GES-PROMO' ? PROMOTION_RANK_ITEMS : subjects;
 
                         if (isEditing) {
                             return (
@@ -2009,13 +2040,13 @@ function QuestionsAdmin({
                                     </div>
 
                                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                        <Field label="Subject">
+                                        <Field label={editLevel === 'GES-PROMO' ? 'Promotion Rank' : 'Subject'}>
                                             <select
                                                 value={editSubjectId}
                                                 onChange={(e) => setEditSubjectId(e.target.value)}
                                                 className="input bg-white"
                                             >
-                                                {subjects.map((s) => (
+                                                {editItems.map((s) => (
                                                     <option key={s.id} value={s.id}>
                                                         {s.name}
                                                     </option>
@@ -2025,7 +2056,17 @@ function QuestionsAdmin({
                                         <Field label="Level or exam section">
                                             <select
                                                 value={String(editLevel)}
-                                                onChange={(e) => setEditLevel(parseLevel(e.target.value))}
+                                                onChange={(e) => {
+                                                    const nextLevel = parseLevel(e.target.value);
+                                                    setEditLevel(nextLevel);
+                                                    if (nextLevel === 'GES-PROMO') {
+                                                        if (!PROMOTION_RANK_ITEMS.some((r) => r.id === editSubjectId)) {
+                                                            setEditSubjectId(PROMOTION_RANK_ITEMS[0].id);
+                                                        }
+                                                    } else if (subjects.length > 0 && !subjects.some((s) => s.id === editSubjectId)) {
+                                                        setEditSubjectId(subjects[0].id);
+                                                    }
+                                                }}
                                                 className="input bg-white"
                                             >
                                                 <LevelOptions />

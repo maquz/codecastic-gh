@@ -159,6 +159,13 @@ const TRACK_SAMPLES: TrackQ[] = [
     q('Professional Studies', 'GES-PROMO', 'A lesson plan should be prepared:', ['After teaching the lesson', 'Before teaching the lesson', 'Only when inspectors visit', 'Only at the end of term'], 1, 'Planning ahead keeps the lesson focused on its objectives.'),
 ];
 
+const PROMOTION_RANK_ITEMS = [
+    { id: 'rank-ad-ii', name: 'Assistant Director II (AD II)' },
+    { id: 'rank-ad-i', name: 'Assistant Director I (AD I)' },
+    { id: 'rank-dd', name: 'Deputy Director (DD)' },
+    { id: 'rank-dir-ii', name: 'Director II (Dir II)' },
+];
+
 async function ensureTrackSeed() {
     const { items: settings } = await db.list('settings', { limit: 50 });
     if (settings.some((s: any) => s.key === 'seed-tracks-v1')) return;
@@ -176,7 +183,7 @@ async function ensureTrackSeed() {
 
     const rows: any[] = [];
     TRACK_SAMPLES.forEach((t, i) => {
-        const subjectId = idByName[t.subject.toLowerCase()];
+        const subjectId = t.level === 'GES-PROMO' ? 'rank-ad-ii' : idByName[t.subject.toLowerCase()];
         if (!subjectId) return;
         rows.push({
             subjectId,
@@ -189,6 +196,67 @@ async function ensureTrackSeed() {
         });
     });
     if (rows.length > 0) await db.add('questions', rows);
+}
+
+async function ensureGesPromoRankSeed() {
+    const { items: settings } = await db.list('settings', { limit: 50 });
+    if (settings.some((s: any) => s.key === 'seed-ges-ranks-v1')) return;
+    await db.add('settings', [{ key: 'seed-ges-ranks-v1' }]);
+
+    const validRankIds = new Set(PROMOTION_RANK_ITEMS.map((r) => r.id));
+    const existingQs = await allQuestions();
+    for (const eq of existingQs) {
+        if (eq.level === 'GES-PROMO' && !validRankIds.has(eq.subjectId)) {
+            await db.update('questions', eq.id, { subjectId: 'rank-ad-ii' });
+        }
+    }
+
+    const rankSamples = [
+        {
+            subjectId: 'rank-ad-i',
+            level: 'GES-PROMO',
+            text: 'In school supervision, clinical supervision primarily focuses on:',
+            options: [
+                'Fault-finding during classroom visits',
+                'Collaborative improvement of classroom instruction between supervisor and teacher',
+                'Transferring teachers to other districts',
+                'Writing annual financial audit reports',
+            ],
+            correctIndex: 1,
+            explanation: 'Clinical supervision is a developmental, collaborative process aimed at improving teaching practice.',
+            createdAt: Date.now() + 10,
+        },
+        {
+            subjectId: 'rank-dd',
+            level: 'GES-PROMO',
+            text: 'Which body in Ghana is responsible for formulating and implementing pre-tertiary education policies under the Ministry of Education?',
+            options: [
+                'National Teaching Council (NTC)',
+                'Ghana Education Service (GES)',
+                'West African Examinations Council (WAEC)',
+                'National Council for Tertiary Education',
+            ],
+            correctIndex: 1,
+            explanation: 'The Ghana Education Service (GES) implements approved national pre-tertiary educational policies and programmes.',
+            createdAt: Date.now() + 11,
+        },
+        {
+            subjectId: 'rank-dir-ii',
+            level: 'GES-PROMO',
+            text: 'Strategic educational planning at the directorate level begins with:',
+            options: [
+                'Disbursing capitation grants without a budget',
+                'Conducting a comprehensive situational analysis and needs assessment',
+                'Closing down low-performing schools immediately',
+                'Suspending all in-service training programmes',
+            ],
+            correctIndex: 1,
+            explanation: 'A situational analysis and needs assessment establish baseline data and priorities before setting strategic goals.',
+            createdAt: Date.now() + 12,
+        },
+    ];
+
+    await db.add('questions', rankSamples);
 }
 
 async function getAdminCode(): Promise<string | null> {
@@ -387,6 +455,7 @@ export const handler = router({
         async () => {
             await ensureSeed();
             await ensureTrackSeed();
+            await ensureGesPromoRankSeed();
             const { items } = await db.list('subjects', { limit: 100 });
             const subjects = items
                 .map((s: any) => ({ id: s.id as string, name: s.name as string }))
@@ -397,6 +466,7 @@ export const handler = router({
 
     'GET /api/counts': [
         async () => {
+            await ensureGesPromoRankSeed();
             const qs = await allQuestions();
             const counts: Record<string, number> = {};
             qs.forEach((q: any) => {
@@ -453,7 +523,9 @@ export const handler = router({
             });
 
             const { items: subjects } = await db.list('subjects', { limit: 100 });
-            const subj: any = subjects.find((s: any) => s.id === subjectId);
+            const subj: any =
+                subjects.find((s: any) => s.id === subjectId) ||
+                PROMOTION_RANK_ITEMS.find((r) => r.id === subjectId);
             const total = qs.length;
             const percent = Math.round((score / total) * 100);
 
@@ -536,6 +608,7 @@ export const handler = router({
         async (ctx) => {
             const b = (ctx.body || {}) as any;
             if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+            await ensureGesPromoRankSeed();
             const qs = await allQuestions();
             return json({ questions: qs });
         },
@@ -560,7 +633,10 @@ export const handler = router({
                 return error('Choose the correct answer', 400);
             }
             const { items: subjects } = await db.list('subjects', { limit: 100 });
-            if (!subjects.some((s: any) => s.id === subjectId)) return error('Choose a valid subject', 400);
+            const validTarget =
+                subjects.some((s: any) => s.id === subjectId) ||
+                PROMOTION_RANK_ITEMS.some((r) => r.id === subjectId);
+            if (!validTarget) return error('Choose a valid subject or promotion rank', 400);
 
             const record = { subjectId, level, text, options, correctIndex, explanation, createdAt: Date.now() };
             const [id] = await db.add('questions', [record]);
@@ -589,7 +665,10 @@ export const handler = router({
                 return error('Choose the correct answer', 400);
             }
             const { items: subjects } = await db.list('subjects', { limit: 100 });
-            if (!subjects.some((s: any) => s.id === subjectId)) return error('Choose a valid subject', 400);
+            const validTarget =
+                subjects.some((s: any) => s.id === subjectId) ||
+                PROMOTION_RANK_ITEMS.some((r) => r.id === subjectId);
+            if (!validTarget) return error('Choose a valid subject or promotion rank', 400);
 
             const updated = await db.update('questions', id, {
                 subjectId,
