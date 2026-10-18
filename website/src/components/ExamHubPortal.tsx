@@ -53,7 +53,7 @@ type StudentUser = {
     email: string;
     accountType?: 'student' | 'ges-promo';
     schoolName: string;
-    gradeLevel: number;
+    gradeLevel: Level;
     region?: string;
     promotionRank?: string;
 };
@@ -111,6 +111,18 @@ function errMsg(e: any, fallback: string): string {
     return e?.response?.data?.error || fallback;
 }
 
+function slugForUser(u: StudentUser): string {
+    if (u.accountType === 'ges-promo' || u.gradeLevel === 'GES-PROMO') return 'ges-promotion';
+    if (u.gradeLevel === 'BECE') return 'bece';
+    if (u.gradeLevel === 'WASSCE') return 'wassce';
+    if (u.gradeLevel === 'GTLE') return 'gtle';
+    return 'basic';
+}
+
+function userMatchesSection(u: StudentUser, activeSlug: string): boolean {
+    return slugForUser(u) === activeSlug;
+}
+
 function SubjectIcon({ name, size = 20 }: { name: string; size?: number }) {
     const n = name.toLowerCase();
     if (n.includes('math')) return <Calculator size={size} />;
@@ -161,6 +173,10 @@ export default function ExamHubPortal({
         localStorage.setItem(TOKEN_KEY, newToken);
         setUser(newUser);
         setToken(newToken);
+        const targetSlug = slugForUser(newUser);
+        if (targetSlug !== activeSlug) {
+            window.location.hash = `#/exams/${targetSlug}`;
+        }
     };
 
     const handleStudentLogout = async () => {
@@ -174,7 +190,11 @@ export default function ExamHubPortal({
         setToken('');
     };
 
-    const requiresAuth = !user || (isGesPromoSection && user.accountType !== 'ges-promo');
+    const requiresAuth = !user || !userMatchesSection(user, activeSlug);
+    const visibleTracks =
+        tab === 'student' && user && !requiresAuth
+            ? TRACKS.filter((t) => t.slug === slugForUser(user))
+            : TRACKS;
 
     return (
         <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
@@ -212,7 +232,7 @@ export default function ExamHubPortal({
                                         &middot;{' '}
                                         {user.accountType === 'ges-promo'
                                             ? `${user.region} (${user.promotionRank})`
-                                            : `${user.schoolName} (Basic ${user.gradeLevel})`}
+                                            : `${user.schoolName} (${levelLabel(user.gradeLevel)})`}
                                     </span>
                                 </div>
                                 <button
@@ -242,17 +262,19 @@ export default function ExamHubPortal({
                     </div>
                 </div>
 
-                {/* Section Sub-Tabs inside Full-Screen Portal */}
+                {/* Section Sub-Tabs inside Full-Screen Portal (All Sections removed; locked to user's section once signed in) */}
                 <div className="border-t border-slate-100 bg-slate-50/70">
                     <div className="mx-auto flex max-w-6xl items-center gap-1.5 overflow-x-auto px-4 py-2 sm:px-6">
-                        <a
-                            href="#/exams"
-                            className="rounded-full px-3.5 py-1 text-xs font-semibold text-slate-600 transition hover:bg-white hover:text-slate-900 whitespace-nowrap"
-                        >
-                            All Sections
-                        </a>
-                        {TRACKS.map((t) => {
+                        {visibleTracks.map((t) => {
                             const isCurrent = t.slug === activeSlug;
+                            const labelText =
+                                tab === 'student' && user && !requiresAuth
+                                    ? user.accountType === 'ges-promo'
+                                        ? `${t.label} · ${user.promotionRank}`
+                                        : typeof user.gradeLevel === 'number'
+                                        ? `Basic ${user.gradeLevel}`
+                                        : t.label
+                                    : t.label;
                             return (
                                 <a
                                     key={t.slug}
@@ -263,7 +285,7 @@ export default function ExamHubPortal({
                                             : 'text-slate-600 hover:bg-white hover:text-slate-900'
                                     }`}
                                 >
-                                    {t.label}
+                                    {labelText}
                                 </a>
                             );
                         })}
@@ -281,8 +303,9 @@ export default function ExamHubPortal({
                     </div>
                 ) : requiresAuth ? (
                     <StudentAuthView
-                        key={isGesPromoSection ? 'ges-promo-auth' : 'student-auth'}
+                        key={`${activeSlug}-auth`}
                         isGesPromo={isGesPromoSection}
+                        initialLevel={initialLevel}
                         onAuthenticated={handleAuthenticated}
                     />
                 ) : (
@@ -290,7 +313,6 @@ export default function ExamHubPortal({
                         key={`${activeSlug}-${user.id}`}
                         user={user}
                         token={token}
-                        initialLevel={initialLevel}
                     />
                 )}
             </main>
@@ -304,16 +326,18 @@ export default function ExamHubPortal({
 
 function StudentAuthView({
     isGesPromo,
+    initialLevel,
     onAuthenticated,
 }: {
     isGesPromo: boolean;
+    initialLevel: Level | null;
     onAuthenticated: (u: StudentUser, token: string) => void;
 }) {
     const [mode, setMode] = useState<'login' | 'register'>(isGesPromo ? 'register' : 'login');
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [schoolName, setSchoolName] = useState('');
-    const [gradeLevel, setGradeLevel] = useState<number>(4);
+    const [gradeLevel, setGradeLevel] = useState<Level>(initialLevel ?? 4);
     const [region, setRegion] = useState('');
     const [promotionRank, setPromotionRank] = useState('');
     const [password, setPassword] = useState('');
@@ -620,18 +644,26 @@ function StudentAuthView({
                                 </Field>
                             </div>
                             <div>
-                                <Field label="Grade Level">
-                                    <select
-                                        value={gradeLevel}
-                                        onChange={(e) => setGradeLevel(Number(e.target.value))}
-                                        className="input"
-                                    >
-                                        {SCHOOL_LEVELS.map((lvl) => (
-                                            <option key={lvl} value={lvl}>
-                                                Basic {lvl}
-                                            </option>
-                                        ))}
-                                    </select>
+                                <Field label="Grade / Exam Level">
+                                    {initialLevel ? (
+                                        <input
+                                            readOnly
+                                            value={levelLabel(initialLevel)}
+                                            className="input bg-slate-50 font-semibold text-[#364c83]"
+                                        />
+                                    ) : (
+                                        <select
+                                            value={String(gradeLevel)}
+                                            onChange={(e) => setGradeLevel(parseLevel(e.target.value))}
+                                            className="input"
+                                        >
+                                            {SCHOOL_LEVELS.map((lvl) => (
+                                                <option key={lvl} value={String(lvl)}>
+                                                    Basic {lvl}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    )}
                                 </Field>
                             </div>
                         </div>
@@ -702,14 +734,12 @@ function StudentAuthView({
 function StudentView({
     user,
     token,
-    initialLevel,
 }: {
     user: StudentUser;
     token: string;
-    initialLevel: Level | null;
 }) {
     const [stage, setStage] = useState<'select' | 'exam' | 'result'>('select');
-    const [level, setLevel] = useState<Level>(initialLevel ?? user.gradeLevel);
+    const level: Level = user.accountType === 'ges-promo' ? 'GES-PROMO' : user.gradeLevel;
     const [subjects, setSubjects] = useState<Subject[]>([]);
     const [counts, setCounts] = useState<Record<string, number>>({});
     const [loading, setLoading] = useState(true);
@@ -1002,15 +1032,25 @@ function StudentView({
     }
 
     /* ---------------- Select ---------------- */
-    const isTrackSection = typeof level === 'string' && EXAM_TRACKS.some((t) => t.id === level);
+    const availableItems =
+        level === 'GES-PROMO'
+            ? PROMOTION_RANK_ITEMS.filter((r) => !user.promotionRank || r.name === user.promotionRank)
+            : subjects;
 
     return (
         <div className="mx-auto max-w-2xl">
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h2 className="text-xl font-bold text-slate-900">
-                            {isTrackSection ? `${levelLabel(level)} Practice` : 'Basic 4 to 9 Exams'}
+                        <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
+                            {level === 'GES-PROMO'
+                                ? user.promotionRank || 'GES Promotion Exams'
+                                : `Registered Grade: ${levelLabel(level)}`}
+                        </span>
+                        <h2 className="mt-1.5 text-xl font-bold text-slate-900">
+                            {level === 'GES-PROMO'
+                                ? `${user.promotionRank || 'GES Promotion'} Portal`
+                                : `${levelLabel(level)} Exams`}
                         </h2>
                         <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
                             <School size={14} className="text-slate-400" />
@@ -1018,92 +1058,53 @@ function StudentView({
                         </p>
                     </div>
                 </div>
-
-                {!isTrackSection && (
-                    <div className="mt-5 border-t border-slate-100 pt-4">
-                        <span className="mb-2 block text-xs font-medium text-slate-600">
-                            School level (your registered grade is Basic {user.gradeLevel})
-                        </span>
-                        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-                            {SCHOOL_LEVELS.map((l) => (
-                                <LevelButton
-                                    key={String(l)}
-                                    l={l}
-                                    active={level === l}
-                                    onPick={() => {
-                                        setLevel(l);
-                                        setNotice('');
-                                    }}
-                                />
-                            ))}
-                        </div>
-                    </div>
-                )}
             </div>
 
             {notice && <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
 
-            {level !== null && (
-                <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-slate-900">
-                        {level === 'GES-PROMO'
-                            ? 'Choose your GES Promotion Rank to start'
-                            : `Choose a ${levelLabel(level)} subject to start`}
-                    </h3>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                        {(level === 'GES-PROMO' ? PROMOTION_RANK_ITEMS : subjects).map((s) => {
-                            const count = counts[`${s.id}|${level}`] || 0;
-                            const disabled = count === 0 || starting !== null;
-                            const isUserRank = level === 'GES-PROMO' && user.promotionRank === s.name;
-                            return (
-                                <button
-                                    key={s.id}
-                                    type="button"
-                                    onClick={() => startExam(s)}
-                                    disabled={disabled}
-                                    className={`flex items-center gap-3 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:border-[#364c83] hover:shadow disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-none ${
-                                        isUserRank ? 'border-[#364c83] ring-1 ring-[#364c83]/30' : 'border-slate-200'
-                                    }`}
-                                >
-                                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
-                                        {starting === s.id ? <Loader2 className="animate-spin" size={18} /> : <SubjectIcon name={s.name} />}
+            <div className="mt-6">
+                <h3 className="text-sm font-semibold text-slate-900">
+                    {level === 'GES-PROMO'
+                        ? 'Your Registered Promotion Rank Assessment'
+                        : `Choose a ${levelLabel(level)} subject to start`}
+                </h3>
+                <div className={`mt-3 grid gap-3 ${level === 'GES-PROMO' ? 'sm:grid-cols-1' : 'sm:grid-cols-2'}`}>
+                    {availableItems.map((s) => {
+                        const count = counts[`${s.id}|${level}`] || 0;
+                        const disabled = count === 0 || starting !== null;
+                        const isUserRank = level === 'GES-PROMO' && user.promotionRank === s.name;
+                        return (
+                            <button
+                                key={s.id}
+                                type="button"
+                                onClick={() => startExam(s)}
+                                disabled={disabled}
+                                className={`flex items-center gap-3 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:border-[#364c83] hover:shadow disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-none ${
+                                    isUserRank ? 'border-[#364c83] ring-1 ring-[#364c83]/30' : 'border-slate-200'
+                                }`}
+                            >
+                                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                                    {starting === s.id ? <Loader2 className="animate-spin" size={18} /> : <SubjectIcon name={s.name} />}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                    <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-slate-900">
+                                        <span>{s.name}</span>
+                                        {isUserRank && (
+                                            <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#364c83]">
+                                                Registered Rank
+                                            </span>
+                                        )}
                                     </span>
-                                    <span className="min-w-0 flex-1">
-                                        <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-slate-900">
-                                            <span>{s.name}</span>
-                                            {isUserRank && (
-                                                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#364c83]">
-                                                    Your Rank
-                                                </span>
-                                            )}
-                                        </span>
-                                        <span className="block text-xs text-slate-500">
-                                            {count === 0 ? 'No questions yet' : `${count} question${count === 1 ? '' : 's'}`}
-                                        </span>
+                                    <span className="block text-xs text-slate-500">
+                                        {count === 0 ? 'No questions yet' : `${count} question${count === 1 ? '' : 's'} · Click to start`}
                                     </span>
-                                </button>
-                            );
-                        })}
-                    </div>
+                                </span>
+                            </button>
+                        );
+                    })}
                 </div>
-            )}
+            </div>
         </div>
-    );
-}
-
-function LevelButton({ l, active, onPick }: { l: Level; active: boolean; onPick: () => void }) {
-    return (
-        <button
-            type="button"
-            onClick={onPick}
-            className={`rounded-lg border px-2 py-2.5 text-sm font-medium transition ${
-                active
-                    ? 'border-[#364c83] bg-[#364c83] text-white'
-                    : 'border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
-            }`}
-        >
-            {levelLabel(l)}
-        </button>
     );
 }
 

@@ -27,7 +27,7 @@ function publicUser(u: any) {
         email: u.email as string,
         accountType: (u.accountType || 'student') as 'student' | 'ges-promo',
         schoolName: (u.schoolName || '') as string,
-        gradeLevel: (u.gradeLevel ?? 4) as number,
+        gradeLevel: (u.gradeLevel ?? 4) as Level,
         region: (u.region || '') as string,
         promotionRank: (u.promotionRank || '') as string,
     };
@@ -296,7 +296,7 @@ export const handler = router({
             if (password.length < 6) return error('Password must be at least 6 characters', 400);
 
             let schoolName = '';
-            let gradeLevel = 4;
+            let gradeLevel: Level = 4;
             let region = '';
             let promotionRank = '';
 
@@ -306,11 +306,13 @@ export const handler = router({
                 if (!region) return error('Select your Ghana Region', 400);
                 if (!promotionRank) return error('Select your Eligible Promotion Rank', 400);
                 schoolName = `${region} (${promotionRank})`;
+                gradeLevel = 'GES-PROMO';
             } else {
                 schoolName = String(b.schoolName || '').trim();
-                gradeLevel = Number(b.gradeLevel);
+                const parsedLevel = normLevel(b.gradeLevel);
                 if (!schoolName) return error('School name is required', 400);
-                if (!SCHOOL_LEVELS.includes(gradeLevel)) return error('Choose a grade level from Basic 4 to Basic 9', 400);
+                if (parsedLevel === null) return error('Choose a valid grade or exam level', 400);
+                gradeLevel = parsedLevel;
             }
 
             const { items: users } = await db.list('users', { limit: 1000 });
