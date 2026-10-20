@@ -268,9 +268,9 @@ export default function ExamHubPortal({
             : TRACKS;
 
     return (
-        <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+        <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col w-full max-w-full overflow-x-hidden">
             {/* Full-screen Portal Top Bar */}
-            <header className="sticky top-0 z-30 border-b border-slate-200 bg-white shadow-sm">
+            <header className="sticky top-0 z-30 border-b border-slate-200 bg-white shadow-sm w-full max-w-full">
                 <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
                     <div className="flex items-center gap-3">
                         <a
@@ -336,7 +336,7 @@ export default function ExamHubPortal({
                 </div>
 
                 {/* Section Sub-Tabs inside Full-Screen Portal (All Sections removed; locked to user's section once signed in) */}
-                <div className="border-t border-slate-100 bg-slate-50/70">
+                <div className="border-t border-slate-100 bg-slate-50/70 w-full overflow-x-auto">
                     <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-2 px-4 py-2.5 sm:px-6">
                         {visibleTracks.map((t) => {
                             const isCurrent = t.slug === activeSlug;
@@ -368,7 +368,7 @@ export default function ExamHubPortal({
                 </div>
             </header>
 
-            <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:px-6">
+            <main className={`mx-auto w-full min-w-0 flex-1 px-4 py-8 sm:px-6 max-w-full ${tab === 'admin' ? 'max-w-6xl' : 'max-w-4xl'}`}>
                 {tab === 'admin' ? (
                     <AdminView />
                 ) : checkingAuth ? (
@@ -1788,7 +1788,7 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
     ];
 
     return (
-        <div>
+        <div className="w-full max-w-full min-w-0">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">
                     {tabs.map((t) => {
@@ -1831,7 +1831,7 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
                 </p>
             )}
 
-            <div className="mt-6">
+            <div className="mt-6 w-full max-w-full min-w-0">
                 {tab === 'candidates' && (
                     <CandidatesAdmin
                         code={code}
@@ -3302,8 +3302,8 @@ function ResultsAdmin({
             {results.length === 0 ? (
                 <p className="mt-4 text-sm text-slate-400">No exams have been taken yet.</p>
             ) : (
-                <div className="mt-4 overflow-x-auto">
-                    <table className="w-full text-left text-sm">
+                <div className="mt-4 w-full overflow-x-auto">
+                    <table className="w-full min-w-[640px] text-left text-sm">
                         <thead>
                             <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
                                 <th className="py-2 pr-3 font-medium">Student</th>
@@ -3461,7 +3461,7 @@ function CandidatesAdmin({
     };
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 w-full max-w-full min-w-0">
             {/* Header & Refresh */}
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -3488,7 +3488,7 @@ function CandidatesAdmin({
             </div>
 
             {/* Responsive, Clickable KPI Metric Overview Cards */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 w-full">
                 {/* 1. Total Candidates Card */}
                 <button
                     type="button"
@@ -3517,7 +3517,7 @@ function CandidatesAdmin({
                     <p className="mt-2 text-2xl font-bold text-slate-900">
                         {stats?.totalCandidates ?? candidates.length}
                     </p>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-500">
                         <span>{gesCount} GES &middot; {studentCount} School</span>
                         <span className="flex items-center gap-0.5 font-bold text-[#364c83]">
                             {activeCard === 'candidates' ? (
@@ -3561,7 +3561,7 @@ function CandidatesAdmin({
                         </span>
                     </div>
                     <p className="mt-2 text-2xl font-bold text-slate-900">{stats?.totalExams ?? 0}</p>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-500">
                         <span>Total attempts</span>
                         <span className="flex items-center gap-0.5 font-bold text-[#364c83]">
                             {activeCard === 'exams' ? (
@@ -3611,7 +3611,7 @@ function CandidatesAdmin({
                             style={{ width: `${Math.min(100, stats?.overallAverage ?? 0)}%` }}
                         />
                     </div>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-500">
                         <span>Score analysis</span>
                         <span className="flex items-center gap-0.5 font-bold text-[#364c83]">
                             {activeCard === 'average' ? (
@@ -3655,7 +3655,7 @@ function CandidatesAdmin({
                         </span>
                     </div>
                     <p className="mt-2 text-2xl font-bold text-emerald-700">{stats?.passRate ?? 0}%</p>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-500">
                         <span>&ge; 50% score</span>
                         <span className="flex items-center gap-0.5 font-bold text-emerald-700">
                             {activeCard === 'pass' ? (
@@ -3699,7 +3699,7 @@ function CandidatesAdmin({
                         </span>
                     </div>
                     <p className="mt-2 text-2xl font-bold text-amber-700">{stats?.distinctionRate ?? 0}%</p>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-500">
                         <span>&ge; 75% honors</span>
                         <span className="flex items-center gap-0.5 font-bold text-amber-700">
                             {activeCard === 'distinction' ? (
@@ -3720,7 +3720,7 @@ function CandidatesAdmin({
 
             {/* Revealed Card Details & Interactive Insights Panel */}
             {activeCard && (
-                <div className="rounded-2xl border-2 border-[#364c83] bg-gradient-to-b from-indigo-50/50 to-white p-5 shadow-lg transition-all">
+                <div className="rounded-2xl border-2 border-[#364c83] bg-gradient-to-b from-indigo-50/50 to-white p-4 sm:p-5 shadow-lg transition-all w-full max-w-full min-w-0 overflow-hidden">
                     {/* Header of Revealed Panel */}
                     <div className="flex items-start justify-between gap-3 border-b border-indigo-100 pb-3">
                         <div className="flex items-center gap-2.5">
@@ -4156,14 +4156,14 @@ function CandidatesAdmin({
             </div>
 
             {/* Candidates Monitoring Table */}
-            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden w-full max-w-full">
                 {filtered.length === 0 ? (
                     <div className="p-8 text-center text-sm text-slate-500">
                         No registered candidates found matching your search or filters.
                     </div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm">
+                    <div className="w-full overflow-x-auto">
+                        <table className="w-full min-w-[760px] text-left text-sm">
                             <thead>
                                 <tr className="border-b border-slate-200 bg-slate-50/70 text-xs uppercase tracking-wide text-slate-500">
                                     <th className="py-3 px-4 font-semibold">Candidate</th>

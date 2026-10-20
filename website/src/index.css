@@ -20,7 +20,11 @@
     --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
-html { scroll-behavior: smooth; }
+html {
+    scroll-behavior: smooth;
+    max-width: 100%;
+    overflow-x: hidden;
+}
 
 body {
     margin: 0;
@@ -29,6 +33,15 @@ body {
     background: var(--paper);
     line-height: 1.65;
     font-size: 16px;
+    max-width: 100%;
+    overflow-x: hidden;
+    position: relative;
+}
+
+#root {
+    max-width: 100%;
+    overflow-x: hidden;
+    min-height: 100vh;
 }
 
 h1, h2, h3, h4 {
