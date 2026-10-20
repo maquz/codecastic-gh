@@ -351,6 +351,54 @@ interface RawBulkItem {
     explanation: string;
     level?: Level | null;
     subjectId?: string;
+    year?: string;
+    category?: string;
+    rank?: string;
+}
+
+function resolvePromotionRankId(rawRank: unknown): string | undefined {
+    const s = String(rawRank ?? '').trim();
+    if (!s) return undefined;
+    const norm = s
+        .toUpperCase()
+        .replace(/[\s\-()]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    if (
+        norm === 'AD_II' ||
+        norm === 'AD2' ||
+        norm === 'RANK_AD_II' ||
+        norm.includes('ASSISTANT_DIRECTOR_II') ||
+        norm.endsWith('_AD_II')
+    ) {
+        return 'rank-ad-ii';
+    }
+    if (
+        norm === 'AD_I' ||
+        norm === 'AD1' ||
+        norm === 'RANK_AD_I' ||
+        norm.includes('ASSISTANT_DIRECTOR_I') ||
+        norm.endsWith('_AD_I')
+    ) {
+        return 'rank-ad-i';
+    }
+    if (
+        norm === 'DD' ||
+        norm === 'RANK_DD' ||
+        norm.includes('DEPUTY_DIRECTOR') ||
+        norm.endsWith('_DD')
+    ) {
+        return 'rank-dd';
+    }
+    if (
+        norm === 'DIR_II' ||
+        norm === 'DIR2' ||
+        norm === 'RANK_DIR_II' ||
+        norm.includes('DIRECTOR_II') ||
+        norm.endsWith('_DIR_II')
+    ) {
+        return 'rank-dir-ii';
+    }
+    return undefined;
 }
 
 function decodeXmlEntities(s: string): string {
@@ -490,7 +538,7 @@ function parseTableRowsToItems(rows: string[][]): RawBulkItem[] {
     const first = rows[0].map((h) => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
     const hasHeader =
         first.some((h) => h.includes('question') || h === 'text' || h === 'prompt') &&
-        first.some((h) => h.includes('optiona') || h === 'a' || h.includes('answer'));
+        first.some((h) => h.includes('optiona') || h === 'a' || h.includes('answer') || h.includes('correct'));
 
     let qIdx = 0;
     let aIdx = 1;
@@ -500,6 +548,9 @@ function parseTableRowsToItems(rows: string[][]): RawBulkItem[] {
     let ansIdx = 5;
     let expIdx = 6;
     let lvlIdx = 7;
+    let yearIdx = -1;
+    let rankIdx = -1;
+    let catIdx = -1;
 
     if (hasHeader) {
         const findCol = (preds: ((h: string) => boolean)[], fallback: number) => {
@@ -509,14 +560,17 @@ function parseTableRowsToItems(rows: string[][]): RawBulkItem[] {
             }
             return fallback;
         };
-        qIdx = findCol([(h) => h.includes('question') || h === 'text'], 0);
+        yearIdx = findCol([(h) => h === 'year' || h.includes('examyear')], -1);
+        rankIdx = findCol([(h) => h === 'rank' || h.includes('promotionrank')], -1);
+        catIdx = findCol([(h) => h === 'category' || h === 'topic' || h === 'domain'], -1);
+        qIdx = findCol([(h) => h.includes('question') || h === 'text' || h === 'prompt'], 0);
         aIdx = findCol([(h) => h === 'optiona' || h === 'a' || h === 'choicea'], 1);
         bIdx = findCol([(h) => h === 'optionb' || h === 'b' || h === 'choiceb'], 2);
         cIdx = findCol([(h) => h === 'optionc' || h === 'c' || h === 'choicec'], 3);
         dIdx = findCol([(h) => h === 'optiond' || h === 'd' || h === 'choiced'], 4);
         ansIdx = findCol([(h) => h.includes('correct') || h.includes('answer') || h === 'key'], 5);
         expIdx = findCol([(h) => h.includes('explanation') || h.includes('rationale') || h.includes('note')], 6);
-        lvlIdx = findCol([(h) => h.includes('level') || h.includes('grade') || h.includes('section')], 7);
+        lvlIdx = findCol([(h) => h.includes('level') || h.includes('grade') || h.includes('section')], -1);
     }
 
     const startRow = hasHeader ? 1 : 0;
@@ -536,14 +590,23 @@ function parseTableRowsToItems(rows: string[][]): RawBulkItem[] {
         if (options.some((o) => !o)) continue;
         const correctIndex = resolveCorrectIndex(row[ansIdx], options);
         if (correctIndex < 0 || correctIndex > 3) continue;
-        const explanation = expIdx < row.length ? String(row[expIdx] || '').trim() : '';
-        const rawLvl = lvlIdx < row.length ? row[lvlIdx] : undefined;
+        const explanation = expIdx >= 0 && expIdx < row.length ? String(row[expIdx] || '').trim() : '';
+        const rawLvl = lvlIdx >= 0 && lvlIdx < row.length ? row[lvlIdx] : undefined;
+        const year = yearIdx >= 0 && yearIdx < row.length ? String(row[yearIdx] || '').trim() : undefined;
+        const category = catIdx >= 0 && catIdx < row.length ? String(row[catIdx] || '').trim() : undefined;
+        const rawRank = rankIdx >= 0 && rankIdx < row.length ? String(row[rankIdx] || '').trim() : undefined;
+        const resolvedRankId = resolvePromotionRankId(rawRank);
+
         out.push({
             text,
             options,
             correctIndex,
             explanation,
-            level: rawLvl ? normLevel(rawLvl) : undefined,
+            level: resolvedRankId ? 'GES-PROMO' : rawLvl ? normLevel(rawLvl) : undefined,
+            subjectId: resolvedRankId,
+            year: year || undefined,
+            category: category || undefined,
+            rank: rawRank || undefined,
         });
     }
     return out;
@@ -567,7 +630,7 @@ function parseWordOrTextBlocks(rawText: string): RawBulkItem[] {
         if (fromTable.length > 0) return fromTable;
     }
 
-    // 2. Strip any HTML tags and parse structured Q&A blocks
+    // 2. Strip any HTML tags and parse structured Q&A blocks (supports --- separator blocks)
     const plain = decodeXmlEntities(
         rawText
             .replace(/<\/(p|div|tr|li|h[1-6]|br\s*\/?)>/gi, '\n')
@@ -586,29 +649,95 @@ function parseWordOrTextBlocks(rawText: string): RawBulkItem[] {
     let curAnswerRaw = '';
     let curExplanation = '';
     let curLevel: Level | null | undefined = undefined;
+    let curSubjectId: string | undefined = undefined;
+    let curYear = '';
+    let curCategory = '';
+    let curRank = '';
 
-    const flushCurrent = () => {
-        if (!curQuestion.trim() || curOptions.some((o) => !o.trim())) return;
-        const correctIndex = resolveCorrectIndex(curAnswerRaw, curOptions);
-        if (correctIndex >= 0 && correctIndex <= 3) {
-            items.push({
-                text: curQuestion.trim(),
-                options: curOptions.map((o) => o.trim()),
-                correctIndex,
-                explanation: curExplanation.trim(),
-                level: curLevel,
-            });
-        }
+    const resetCurrent = () => {
         curQuestion = '';
         curOptions = ['', '', '', ''];
         curAnswerRaw = '';
         curExplanation = '';
         curLevel = undefined;
+        curSubjectId = undefined;
+        curYear = '';
+        curCategory = '';
+        curRank = '';
+    };
+
+    const flushCurrent = () => {
+        if (curQuestion.trim() && curOptions.every((o) => o.trim())) {
+            const correctIndex = resolveCorrectIndex(curAnswerRaw, curOptions);
+            if (correctIndex >= 0 && correctIndex <= 3) {
+                items.push({
+                    text: curQuestion.trim(),
+                    options: curOptions.map((o) => o.trim()),
+                    correctIndex,
+                    explanation: curExplanation.trim(),
+                    level: curLevel,
+                    subjectId: curSubjectId,
+                    year: curYear.trim() || undefined,
+                    category: curCategory.trim() || undefined,
+                    rank: curRank.trim() || undefined,
+                });
+            }
+        }
+        resetCurrent();
     };
 
     for (const line of lines) {
+        // Block separator: three or more dashes (---) or equals (===) flushes the current question block
+        if (/^(?:-{3,}|={3,})\s*$/.test(line)) {
+            flushCurrent();
+            continue;
+        }
+
         // Ignore template instruction / heading lines
-        if (/^(#|\/\/|===|---|examhub bulk question|instructions:|fill in your questions|format\s*[ab12]:)/i.test(line)) {
+        if (
+            /^(#|\/\/|examhub bulk question|instructions\s*(for administrators)?\s*:|fill in your questions|format\s*[ab12]:)/i.test(
+                line
+            ) ||
+            /^[1-9]\.\s*(fill in your questions|separate each question|valid ranks\s*:|correct choices\s*:)/i.test(line)
+        ) {
+            continue;
+        }
+
+        const yearMatch = line.match(/^(?:exam\s*)?year\s*[:=\-]\s*(.+)$/i);
+        if (yearMatch) {
+            if (curQuestion && curOptions.every((o) => o.trim())) flushCurrent();
+            curYear = yearMatch[1].trim();
+            continue;
+        }
+
+        const rankMatch = line.match(/^(?:promotion\s*)?rank\s*[:=\-]\s*(.+)$/i);
+        if (rankMatch) {
+            if (curQuestion && curOptions.every((o) => o.trim())) flushCurrent();
+            curRank = rankMatch[1].trim();
+            const resolvedRankId = resolvePromotionRankId(curRank);
+            if (resolvedRankId) {
+                curSubjectId = resolvedRankId;
+                curLevel = 'GES-PROMO';
+            }
+            continue;
+        }
+
+        const catMatch = line.match(/^(?:category|topic|domain|subject\s*area)\s*[:=\-]\s*(.+)$/i);
+        if (catMatch) {
+            if (curQuestion && curOptions.every((o) => o.trim())) flushCurrent();
+            curCategory = catMatch[1].trim();
+            continue;
+        }
+
+        const lvlMatch = line.match(/^(?:level|grade|class|section)\s*[:=\-]\s*(.+)$/i);
+        if (lvlMatch) {
+            if (curQuestion && curOptions.every((o) => o.trim()) && !curLevel) {
+                // Level is at the end of a block
+                curLevel = normLevel(lvlMatch[1].trim());
+            } else {
+                if (curQuestion && curOptions.every((o) => o.trim())) flushCurrent();
+                curLevel = normLevel(lvlMatch[1].trim());
+            }
             continue;
         }
 
@@ -621,7 +750,7 @@ function parseWordOrTextBlocks(rawText: string): RawBulkItem[] {
             continue;
         }
 
-        const ansMatch = line.match(/^(?:correct\s*answer|answer|correct|ans|key)\s*[:=\-]\s*(.+)$/i);
+        const ansMatch = line.match(/^(?:correct\s*answer|correct\s*choice|answer|correct|ans|key)\s*[:=\-]\s*(.+)$/i);
         if (ansMatch && curQuestion) {
             curAnswerRaw = ansMatch[1].trim();
             continue;
@@ -633,15 +762,9 @@ function parseWordOrTextBlocks(rawText: string): RawBulkItem[] {
             continue;
         }
 
-        const lvlMatch = line.match(/^(?:level|grade|class|section)\s*[:=\-]\s*(.+)$/i);
-        if (lvlMatch && curQuestion) {
-            curLevel = normLevel(lvlMatch[1].trim());
-            continue;
-        }
-
         const qPrefixMatch = line.match(/^(?:question\s*\d*|q\d+|\d+)\s*[:.)\-]\s*(.+)$/i);
         if (qPrefixMatch) {
-            flushCurrent();
+            if (curQuestion) flushCurrent();
             curQuestion = qPrefixMatch[1].trim();
             continue;
         }
@@ -756,10 +879,10 @@ function normalizeJsonItems(rawList: unknown[]): RawBulkItem[] {
     for (const item of rawList) {
         if (!item || typeof item !== 'object') continue;
         const obj = item as Record<string, any>;
-        const text = String(obj.question ?? obj.text ?? '').trim();
+        const text = String(obj.question ?? obj.Question ?? obj.text ?? '').trim();
         if (!text) continue;
-        const options: string[] = Array.isArray(obj.options)
-            ? obj.options.slice(0, 4).map((o: unknown) => String(o ?? '').trim())
+        const options: string[] = Array.isArray(obj.options ?? obj.Options)
+            ? (obj.options ?? obj.Options).slice(0, 4).map((o: unknown) => String(o ?? '').trim())
             : [
                   String(obj.optionA ?? obj.a ?? obj.A ?? '').trim(),
                   String(obj.optionB ?? obj.b ?? obj.B ?? '').trim(),
@@ -767,13 +890,37 @@ function normalizeJsonItems(rawList: unknown[]): RawBulkItem[] {
                   String(obj.optionD ?? obj.d ?? obj.D ?? '').trim(),
               ];
         if (options.length !== 4 || options.some((o) => !o)) continue;
-        const rawAns = obj.correctIndex ?? obj.correctAnswer ?? obj.answer ?? obj.correct;
+        const rawAns = obj.correctIndex ?? obj.correctAnswer ?? obj.answer ?? obj.correct ?? obj.Correct;
         const correctIndex = resolveCorrectIndex(rawAns, options);
         if (correctIndex < 0 || correctIndex > 3) continue;
-        const explanation = String(obj.explanation ?? '').trim();
-        const level = obj.level !== undefined ? normLevel(obj.level) : undefined;
-        const subjectId = obj.subjectId ? String(obj.subjectId).trim() : undefined;
-        out.push({ text, options, correctIndex, explanation, level, subjectId });
+        const explanation = String(obj.explanation ?? obj.Explanation ?? '').trim();
+        const year = String(obj.year ?? obj.Year ?? '').trim();
+        const category = String(obj.category ?? obj.Category ?? '').trim();
+        const rawRank = obj.rank ?? obj.Rank ?? obj.promotionRank;
+        const resolvedRankId = resolvePromotionRankId(rawRank);
+        const level = resolvedRankId
+            ? 'GES-PROMO'
+            : obj.level !== undefined
+            ? normLevel(obj.level)
+            : obj.Level !== undefined
+            ? normLevel(obj.Level)
+            : undefined;
+        const subjectId = resolvedRankId
+            ? resolvedRankId
+            : obj.subjectId
+            ? String(obj.subjectId).trim()
+            : undefined;
+        out.push({
+            text,
+            options,
+            correctIndex,
+            explanation,
+            level,
+            subjectId,
+            year: year || undefined,
+            category: category || undefined,
+            rank: rawRank ? String(rawRank).trim() : undefined,
+        });
     }
     return out;
 }
@@ -1114,7 +1261,13 @@ export const handler = router({
                 (q: any) => q.subjectId === ctx.params.subjectId && q.level === level
             );
             return json({
-                questions: qs.map((q: any) => ({ id: q.id, text: q.text, options: q.options })),
+                questions: qs.map((q: any) => ({
+                    id: q.id,
+                    text: q.text,
+                    options: q.options,
+                    year: q.year || undefined,
+                    category: q.category || undefined,
+                })),
             });
         },
     ],
@@ -1254,6 +1407,8 @@ export const handler = router({
             const options: string[] = Array.isArray(b.options) ? b.options.map((o: unknown) => String(o || '').trim()) : [];
             const correctIndex = Number(b.correctIndex);
             const explanation = String(b.explanation || '').trim();
+            const year = String(b.year || '').trim();
+            const category = String(b.category || '').trim();
 
             if (level === null) return error('Choose Basic 4 to Basic 9, or an exam section', 400);
             if (!text) return error('Question text is required', 400);
@@ -1267,7 +1422,17 @@ export const handler = router({
                 PROMOTION_RANK_ITEMS.some((r) => r.id === subjectId);
             if (!validTarget) return error('Choose a valid subject or promotion rank', 400);
 
-            const record = { subjectId, level, text, options, correctIndex, explanation, createdAt: Date.now() };
+            const record = {
+                subjectId,
+                level,
+                text,
+                options,
+                correctIndex,
+                explanation,
+                ...(year ? { year } : {}),
+                ...(category ? { category } : {}),
+                createdAt: Date.now(),
+            };
             const [id] = await db.add('questions', [record]);
             if (!id) return error('Failed to add question', 500);
             return json({ id, ...record }, 201);
@@ -1315,6 +1480,9 @@ export const handler = router({
                     options: item.options,
                     correctIndex: item.correctIndex,
                     explanation: item.explanation || '',
+                    ...(item.year ? { year: item.year } : {}),
+                    ...(item.category ? { category: item.category } : {}),
+                    ...(item.rank ? { rank: item.rank } : {}),
                     createdAt: now + i,
                 });
             }
@@ -1342,6 +1510,8 @@ export const handler = router({
             const options: string[] = Array.isArray(b.options) ? b.options.map((o: unknown) => String(o || '').trim()) : [];
             const correctIndex = Number(b.correctIndex);
             const explanation = String(b.explanation || '').trim();
+            const year = String(b.year || '').trim();
+            const category = String(b.category || '').trim();
 
             if (level === null) return error('Choose Basic 4 to Basic 9, or an exam section', 400);
             if (!text) return error('Question text is required', 400);
@@ -1362,6 +1532,8 @@ export const handler = router({
                 options,
                 correctIndex,
                 explanation,
+                year,
+                category,
                 updatedAt: Date.now(),
             });
             if (!updated) return error('Question not found', 404);

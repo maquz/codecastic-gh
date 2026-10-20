@@ -36,7 +36,7 @@ import {
 
 export type Level = number | string;
 type Subject = { id: string; name: string };
-type ExamQ = { id: string; text: string; options: string[] };
+type ExamQ = { id: string; text: string; options: string[]; year?: string; category?: string; rank?: string };
 type AdminQ = ExamQ & { subjectId: string; level: Level; correctIndex: number; explanation: string };
 type ReviewItem = { id: string; correctIndex: number; chosen: number | null; correct: boolean; explanation: string };
 type ResultRow = {
@@ -102,6 +102,12 @@ const PROMOTION_RANK_ITEMS: Subject[] = [
     { id: 'rank-dd', name: 'Deputy Director (DD)' },
     { id: 'rank-dir-ii', name: 'Director II (Dir II)' },
 ];
+const PROMOTION_RANK_CODE_BY_ID: Record<string, string> = {
+    'rank-ad-ii': 'AD_II',
+    'rank-ad-i': 'AD_I',
+    'rank-dd': 'DD',
+    'rank-dir-ii': 'DIR_II',
+};
 const LETTERS = ['A', 'B', 'C', 'D'];
 
 function levelLabel(l: Level): string {
@@ -1122,9 +1128,25 @@ function StudentView({
                 {notice && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
 
                 <div className="mt-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                        Question {index + 1} of {questions.length}
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Question {index + 1} of {questions.length}
+                        </p>
+                        {(q.year || q.category) && (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                {q.year && (
+                                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                                        {q.year}
+                                    </span>
+                                )}
+                                {q.category && (
+                                    <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-[#364c83]">
+                                        {q.category}
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                    </div>
                     <h2 className="mt-2 text-lg font-semibold leading-snug text-slate-900">{q.text}</h2>
                     <div className="mt-4 space-y-2.5">
                         {q.options.map((opt, i) => {
@@ -1732,6 +1754,8 @@ function QuestionsAdmin({
     // Add question form state
     const [subjectId, setSubjectId] = useState('');
     const [level, setLevel] = useState<Level>(4);
+    const [year, setYear] = useState('');
+    const [category, setCategory] = useState('');
     const [text, setText] = useState('');
     const [options, setOptions] = useState(['', '', '', '']);
     const [correct, setCorrect] = useState(0);
@@ -1745,6 +1769,8 @@ function QuestionsAdmin({
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editSubjectId, setEditSubjectId] = useState('');
     const [editLevel, setEditLevel] = useState<Level>(4);
+    const [editYear, setEditYear] = useState('');
+    const [editCategory, setEditCategory] = useState('');
     const [editText, setEditText] = useState('');
     const [editOptions, setEditOptions] = useState(['', '', '', '']);
     const [editCorrect, setEditCorrect] = useState(0);
@@ -1823,6 +1849,114 @@ function QuestionsAdmin({
             URL.revokeObjectURL(url);
         };
 
+        if (isGesPromoPortal) {
+            const rankCode = PROMOTION_RANK_CODE_BY_ID[activeSubject.id] || 'AD_II';
+
+            if (format === 'json') {
+                const sample = [
+                    {
+                        year: '2021 December',
+                        rank: rankCode,
+                        category: 'Educational Law & Policy',
+                        question: 'Under Act 1023, which body is legally empowered to license professional teachers in Ghana?',
+                        options: [
+                            'National Council for Curriculum and Assessment (NaCCA)',
+                            'National Teaching Council (NTC)',
+                            'National Inspectorate Authority (NaSIA)',
+                            'Ghana Education Service Council (GESC)',
+                        ],
+                        correctAnswer: 'B',
+                        explanation: 'Act 1023 established the NTC to regulate and issue teaching licenses in Ghana.',
+                    },
+                    {
+                        year: '2022 February',
+                        rank: rankCode,
+                        category: 'School Management & Administration',
+                        question: `Sample second question for ${activeSubject.name}?`,
+                        options: ['First choice', 'Second choice', 'Third choice', 'Fourth choice'],
+                        correctAnswer: 'A',
+                        explanation: 'Optional explanation for question 2.',
+                    },
+                ];
+                triggerDownload(JSON.stringify(sample, null, 2), 'application/json;charset=utf-8', 'json');
+                return;
+            }
+
+            if (format === 'csv') {
+                const rows = [
+                    ['Year', 'Rank', 'Category', 'Question', 'Option A', 'Option B', 'Option C', 'Option D', 'Correct Answer', 'Explanation'],
+                    [
+                        '2021 December',
+                        rankCode,
+                        'Educational Law & Policy',
+                        'Under Act 1023, which body is legally empowered to license professional teachers in Ghana?',
+                        'National Council for Curriculum and Assessment (NaCCA)',
+                        'National Teaching Council (NTC)',
+                        'National Inspectorate Authority (NaSIA)',
+                        'Ghana Education Service Council (GESC)',
+                        'B',
+                        'Act 1023 established the NTC to regulate and issue teaching licenses in Ghana.',
+                    ],
+                    [
+                        '2022 February',
+                        rankCode,
+                        'School Management & Administration',
+                        `Sample second question for ${activeSubject.name}?`,
+                        'First choice',
+                        'Second choice',
+                        'Third choice',
+                        'Fourth choice',
+                        'A',
+                        'Optional explanation for question 2.',
+                    ],
+                ];
+                const csvText =
+                    '\uFEFF' +
+                    rows
+                        .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+                        .join('\r\n');
+                triggerDownload(csvText, 'text/csv;charset=utf-8', 'csv');
+                return;
+            }
+
+            // Word (.doc / .txt) template exactly matching user specification
+            const wordContent = [
+                'Instructions for Administrators:',
+                '1. Fill in your questions following the structured blocks below.',
+                '2. Separate each question with three dashes: ---',
+                '3. Valid Ranks: AD_II (Assistant Director II), AD_I (Assistant Director I), DD (Deputy Director), DIR_II (Director II).',
+                '4. Correct choices: A, B, C, or D.',
+                '',
+                '---',
+                'Year: 2021 December',
+                `Rank: ${rankCode}`,
+                'Category: Educational Law & Policy',
+                'Question: Under Act 1023, which body is legally empowered to license professional teachers in Ghana?',
+                'A) National Council for Curriculum and Assessment (NaCCA)',
+                'B) National Teaching Council (NTC)',
+                'C) National Inspectorate Authority (NaSIA)',
+                'D) Ghana Education Service Council (GESC)',
+                'Correct: B',
+                'Explanation: Act 1023 established the NTC to regulate and issue teaching licenses in Ghana.',
+                '',
+                '---',
+                'Year: 2022 February',
+                `Rank: ${rankCode}`,
+                'Category: School Management & Administration',
+                `Question: Sample second question for ${activeSubject.name}?`,
+                'A) First choice',
+                'B) Second choice',
+                'C) Third choice',
+                'D) Fourth choice',
+                'Correct: A',
+                'Explanation: Optional explanation for question 2.',
+                '',
+            ].join('\r\n');
+
+            triggerDownload(wordContent, 'application/msword;charset=utf-8', 'doc');
+            return;
+        }
+
         if (format === 'json') {
             const sample = [
                 {
@@ -1877,28 +2011,30 @@ function QuestionsAdmin({
             return;
         }
 
-        // Word (.doc) template — plain structured Q&A format that opens in MS Word and can be saved as .doc, .docx, or .txt
+        // Word (.doc) template with clean --- separators
         const wordContent = [
-            `EXAMHUB BULK QUESTION TEMPLATE — ${activeSubject.name.toUpperCase()} (${activeTrack.label.toUpperCase()})`,
-            `================================================================================`,
-            `Instructions: Fill in your questions below using this pattern (Question, A-D options, Answer: A/B/C/D, and optional Explanation).`,
-            `Save this file in Word (.doc / .docx) or Text (.txt) and upload it in the Admin Portal to import all questions instantly.`,
+            `Instructions for Administrators:`,
+            `1. Fill in your questions following the structured blocks below.`,
+            `2. Separate each question with three dashes: ---`,
+            `3. Correct choices: A, B, C, or D.`,
             ``,
-            `Question 1: Sample ${activeSubject.name} (${lvlDisplay}) question — replace this line with your first question?`,
+            `---`,
+            `Question: Sample ${activeSubject.name} (${lvlDisplay}) question — replace this line with your first question?`,
             `A) Option A text`,
             `B) Option B text`,
             `C) Option C text`,
             `D) Option D text`,
-            `Answer: B`,
+            `Correct: B`,
             `Explanation: Optional explanation shown after the exam.`,
             `Level: ${lvlDisplay}`,
             ``,
-            `Question 2: Sample ${activeSubject.name} (${lvlDisplay}) question — replace this line with your second question?`,
+            `---`,
+            `Question: Sample ${activeSubject.name} (${lvlDisplay}) question — replace this line with your second question?`,
             `A) First choice`,
             `B) Second choice`,
             `C) Third choice`,
             `D) Fourth choice`,
-            `Answer: A`,
+            `Correct: A`,
             `Explanation: Optional explanation for question 2.`,
             `Level: ${lvlDisplay}`,
             ``,
@@ -1948,6 +2084,8 @@ function QuestionsAdmin({
         setEditingId(q.id);
         setEditSubjectId(q.subjectId);
         setEditLevel(q.level);
+        setEditYear(q.year || '');
+        setEditCategory(q.category || '');
         setEditText(q.text);
         setEditOptions([...q.options]);
         setEditCorrect(q.correctIndex);
@@ -1975,11 +2113,16 @@ function QuestionsAdmin({
                 options: options.map((o) => o.trim()),
                 correctIndex: correct,
                 explanation: explanation.trim(),
+                year: year.trim() || undefined,
+                category: category.trim() || undefined,
+                rank: isGesPromoPortal ? (PROMOTION_RANK_CODE_BY_ID[targetSubjectId] || undefined) : undefined,
             });
             setText('');
             setOptions(['', '', '', '']);
             setCorrect(0);
             setExplanation('');
+            setYear('');
+            setCategory('');
             await reload();
             flash(true, 'Question added.');
         } catch (e2) {
@@ -2005,6 +2148,9 @@ function QuestionsAdmin({
                 options: editOptions.map((o) => o.trim()),
                 correctIndex: editCorrect,
                 explanation: editExplanation.trim(),
+                year: editYear.trim() || undefined,
+                category: editCategory.trim() || undefined,
+                rank: editLevel === 'GES-PROMO' ? (PROMOTION_RANK_CODE_BY_ID[editSubjectId] || undefined) : undefined,
             });
             setEditingId(null);
             await reload();
@@ -2481,6 +2627,48 @@ function QuestionsAdmin({
                         </div>
                     )}
                 </div>
+
+                {/* Step C: Format Reference / Sample Preview */}
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/70 p-3.5">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                        <span>Structured Format Guidelines (Text / Word &amp; Uploads)</span>
+                        <span className="text-[11px] font-normal text-slate-500">Separate each question with <code>---</code></span>
+                    </div>
+                    <pre className="mt-2 overflow-x-auto rounded border border-slate-200 bg-white p-3 font-mono text-[11px] leading-relaxed text-slate-700">
+{isGesPromoPortal
+    ? `Instructions for Administrators:
+1. Fill in your questions following the structured blocks below.
+2. Separate each question with three dashes: ---
+3. Valid Ranks: AD_II (Assistant Director II), AD_I (Assistant Director I), DD (Deputy Director), DIR_II (Director II).
+4. Correct choices: A, B, C, or D.
+
+---
+Year: 2021 December
+Rank: ${PROMOTION_RANK_CODE_BY_ID[activeSubject.id] || 'AD_II'}
+Category: Educational Law & Policy
+Question: Under Act 1023, which body is legally empowered to license professional teachers in Ghana?
+A) National Council for Curriculum and Assessment (NaCCA)
+B) National Teaching Council (NTC)
+C) National Inspectorate Authority (NaSIA)
+D) Ghana Education Service Council (GESC)
+Correct: B
+Explanation: Act 1023 established the NTC to regulate and issue teaching licenses in Ghana.`
+    : `Instructions for Administrators:
+1. Fill in your questions following the structured blocks below.
+2. Separate each question with three dashes: ---
+3. Correct choices: A, B, C, or D.
+
+---
+Question: Sample ${activeSubject.name} (${levelLabel(level)}) question?
+A) Option A text
+B) Option B text
+C) Option C text
+D) Option D text
+Correct: B
+Explanation: Optional explanation shown after the exam.
+Level: ${levelLabel(level)}`}
+                    </pre>
+                </div>
             </section>
 
             {/* Set / Add a Question Form */}
@@ -2523,6 +2711,26 @@ function QuestionsAdmin({
                             </Field>
                         )}
                     </div>
+                    {isGesPromoPortal && (
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <Field label="Year / Exam Sitting (e.g. 2021 December)">
+                                <input
+                                    value={year}
+                                    onChange={(e) => setYear(e.target.value)}
+                                    placeholder="e.g. 2021 December"
+                                    className="input"
+                                />
+                            </Field>
+                            <Field label="Category / Topic (e.g. Educational Law & Policy)">
+                                <input
+                                    value={category}
+                                    onChange={(e) => setCategory(e.target.value)}
+                                    placeholder="e.g. Educational Law & Policy"
+                                    className="input"
+                                />
+                            </Field>
+                        </div>
+                    )}
                     <Field label="Question">
                         <textarea
                             value={text}
@@ -2666,6 +2874,27 @@ function QuestionsAdmin({
                                         </Field>
                                     </div>
 
+                                    {editLevel === 'GES-PROMO' && (
+                                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                            <Field label="Year / Exam Sitting (e.g. 2021 December)">
+                                                <input
+                                                    value={editYear}
+                                                    onChange={(e) => setEditYear(e.target.value)}
+                                                    placeholder="e.g. 2021 December"
+                                                    className="input bg-white"
+                                                />
+                                            </Field>
+                                            <Field label="Category / Topic (e.g. Educational Law & Policy)">
+                                                <input
+                                                    value={editCategory}
+                                                    onChange={(e) => setEditCategory(e.target.value)}
+                                                    placeholder="e.g. Educational Law & Policy"
+                                                    className="input bg-white"
+                                                />
+                                            </Field>
+                                        </div>
+                                    )}
+
                                     <Field label="Question">
                                         <textarea
                                             value={editText}
@@ -2739,9 +2968,21 @@ function QuestionsAdmin({
                             <div key={q.id} className="rounded-lg border border-slate-200 p-3.5 transition hover:border-slate-300">
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
-                                        <p className="text-xs font-medium text-[#364c83]">
-                                            {subjectName(q.subjectId)} &middot; {levelLabel(q.level)}
-                                        </p>
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                            <span className="text-xs font-medium text-[#364c83]">
+                                                {subjectName(q.subjectId)} &middot; {levelLabel(q.level)}
+                                            </span>
+                                            {q.year && (
+                                                <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-[#364c83]">
+                                                    {q.year}
+                                                </span>
+                                            )}
+                                            {q.category && (
+                                                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
+                                                    {q.category}
+                                                </span>
+                                            )}
+                                        </div>
                                         <p className="mt-1 text-sm font-medium text-slate-900">{q.text}</p>
                                     </div>
                                     <div className="flex shrink-0 items-center gap-1">
