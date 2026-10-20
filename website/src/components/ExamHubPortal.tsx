@@ -41,6 +41,9 @@ import {
     Clock,
     BarChart3,
     Sparkles,
+    ChevronDown,
+    ChevronUp,
+    X,
 } from 'lucide-react';
 
 export type Level = number | string;
@@ -3338,6 +3341,8 @@ function ResultsAdmin({
 /* Candidates & Performance Monitoring Dashboard                      */
 /* ------------------------------------------------------------------ */
 
+type CardKey = 'candidates' | 'exams' | 'average' | 'pass' | 'distinction';
+
 function CandidatesAdmin({
     code: _code,
     candidates,
@@ -3356,6 +3361,7 @@ function CandidatesAdmin({
     const [statusFilter, setStatusFilter] = useState<'all' | 'Distinction' | 'Pass' | 'Remedial' | 'Pending'>('all');
     const [selectedCandidate, setSelectedCandidate] = useState<CandidateRow | null>(null);
     const [refreshing, setRefreshing] = useState(false);
+    const [activeCard, setActiveCard] = useState<CardKey | null>(null);
 
     const handleRefresh = async () => {
         setRefreshing(true);
@@ -3371,6 +3377,47 @@ function CandidatesAdmin({
 
     const gesCount = candidates.filter((c) => c.accountType === 'ges-promo').length;
     const studentCount = candidates.filter((c) => c.accountType !== 'ges-promo').length;
+
+    // Detailed analytics for revealed card panels
+    const trackCounts = {
+        gesPromo: candidates.filter((c) => c.accountType === 'ges-promo').length,
+        basic: candidates.filter((c) => typeof c.gradeLevel === 'number' && c.gradeLevel >= 4 && c.gradeLevel <= 9).length,
+        shs: candidates.filter((c) => SHS_LEVELS.includes(String(c.gradeLevel))).length,
+        bece: candidates.filter((c) => c.gradeLevel === 'BECE').length,
+        wassce: candidates.filter((c) => c.gradeLevel === 'WASSCE').length,
+        gtle: candidates.filter((c) => c.gradeLevel === 'GTLE').length,
+    };
+
+    const regionsMap: Record<string, number> = {};
+    candidates.forEach((c) => {
+        if (c.region) regionsMap[c.region] = (regionsMap[c.region] || 0) + 1;
+    });
+
+    const distinctionCandidates = candidates.filter((c) => c.performanceStatus === 'Distinction');
+    const passCandidates = candidates.filter((c) => c.performanceStatus === 'Pass');
+    const remedialCandidates = candidates.filter((c) => c.performanceStatus === 'Remedial');
+    const pendingCandidates = candidates.filter((c) => c.performanceStatus === 'Pending');
+
+    const allRecentExams = candidates
+        .flatMap((c) => c.recentResults.map((r) => ({ ...r, candidateName: c.name, candidateEmail: c.email })))
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    const subjectAttemptMap: Record<string, number> = {};
+    allRecentExams.forEach((e) => {
+        const key = e.subjectName || 'General';
+        subjectAttemptMap[key] = (subjectAttemptMap[key] || 0) + 1;
+    });
+
+    const scoreBrackets = {
+        mastery: allRecentExams.filter((e) => e.percent >= 90).length,
+        distinction: allRecentExams.filter((e) => e.percent >= 75 && e.percent < 90).length,
+        pass: allRecentExams.filter((e) => e.percent >= 50 && e.percent < 75).length,
+        remedial: allRecentExams.filter((e) => e.percent < 50).length,
+    };
+
+    const toggleCard = (key: CardKey) => {
+        setActiveCard((curr) => (curr === key ? null : key));
+    };
 
     const filtered = candidates.filter((c) => {
         if (search.trim()) {
@@ -3426,7 +3473,7 @@ function CandidatesAdmin({
                         Registered Candidates &amp; Performance Dashboard
                     </h2>
                     <p className="mt-0.5 text-xs text-slate-500">
-                        Monitor candidate registrations, examination schedules, real-time scores, and performance status.
+                        Click on any metric card below to reveal detailed candidate breakdowns, score distributions, and performance logs.
                     </p>
                 </div>
                 <button
@@ -3440,36 +3487,120 @@ function CandidatesAdmin({
                 </button>
             </div>
 
-            {/* KPI Metric Overview Cards */}
+            {/* Responsive, Clickable KPI Metric Overview Cards */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                {/* 1. Total Candidates Card */}
+                <button
+                    type="button"
+                    onClick={() => toggleCard('candidates')}
+                    aria-expanded={activeCard === 'candidates'}
+                    className={`group rounded-xl border p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md cursor-pointer ${
+                        activeCard === 'candidates'
+                            ? 'border-[#364c83] bg-indigo-50/50 ring-2 ring-[#364c83]/20 shadow-md'
+                            : 'border-slate-200 bg-white hover:border-[#364c83]'
+                    }`}
+                >
                     <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-500">Total Candidates</span>
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                        <span className="text-xs font-semibold text-slate-500 group-hover:text-slate-800">
+                            Total Candidates
+                        </span>
+                        <span
+                            className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                                activeCard === 'candidates'
+                                    ? 'bg-[#364c83] text-white'
+                                    : 'bg-indigo-50 text-[#364c83] group-hover:bg-[#364c83] group-hover:text-white'
+                            }`}
+                        >
                             <Users size={14} />
                         </span>
                     </div>
-                    <p className="mt-2 text-2xl font-bold text-slate-900">{stats?.totalCandidates ?? candidates.length}</p>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                        {gesCount} GES Promo &middot; {studentCount} School/Track
+                    <p className="mt-2 text-2xl font-bold text-slate-900">
+                        {stats?.totalCandidates ?? candidates.length}
                     </p>
-                </div>
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                        <span>{gesCount} GES &middot; {studentCount} School</span>
+                        <span className="flex items-center gap-0.5 font-bold text-[#364c83]">
+                            {activeCard === 'candidates' ? (
+                                <>
+                                    <span>Hide</span>
+                                    <ChevronUp size={12} />
+                                </>
+                            ) : (
+                                <>
+                                    <span>Reveal</span>
+                                    <ChevronDown size={12} />
+                                </>
+                            )}
+                        </span>
+                    </div>
+                </button>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                {/* 2. Exams Taken Card */}
+                <button
+                    type="button"
+                    onClick={() => toggleCard('exams')}
+                    aria-expanded={activeCard === 'exams'}
+                    className={`group rounded-xl border p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md cursor-pointer ${
+                        activeCard === 'exams'
+                            ? 'border-[#364c83] bg-indigo-50/50 ring-2 ring-[#364c83]/20 shadow-md'
+                            : 'border-slate-200 bg-white hover:border-[#364c83]'
+                    }`}
+                >
                     <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-500">Exams Taken</span>
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                        <span className="text-xs font-semibold text-slate-500 group-hover:text-slate-800">
+                            Exams Taken
+                        </span>
+                        <span
+                            className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                                activeCard === 'exams'
+                                    ? 'bg-[#364c83] text-white'
+                                    : 'bg-indigo-50 text-[#364c83] group-hover:bg-[#364c83] group-hover:text-white'
+                            }`}
+                        >
                             <BarChart3 size={14} />
                         </span>
                     </div>
                     <p className="mt-2 text-2xl font-bold text-slate-900">{stats?.totalExams ?? 0}</p>
-                    <p className="mt-1 text-[11px] text-slate-500">Total completed attempts</p>
-                </div>
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                        <span>Total attempts</span>
+                        <span className="flex items-center gap-0.5 font-bold text-[#364c83]">
+                            {activeCard === 'exams' ? (
+                                <>
+                                    <span>Hide</span>
+                                    <ChevronUp size={12} />
+                                </>
+                            ) : (
+                                <>
+                                    <span>Reveal</span>
+                                    <ChevronDown size={12} />
+                                </>
+                            )}
+                        </span>
+                    </div>
+                </button>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                {/* 3. Overall Average Card */}
+                <button
+                    type="button"
+                    onClick={() => toggleCard('average')}
+                    aria-expanded={activeCard === 'average'}
+                    className={`group rounded-xl border p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md cursor-pointer ${
+                        activeCard === 'average'
+                            ? 'border-[#364c83] bg-indigo-50/50 ring-2 ring-[#364c83]/20 shadow-md'
+                            : 'border-slate-200 bg-white hover:border-[#364c83]'
+                    }`}
+                >
                     <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-500">Overall Average</span>
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                        <span className="text-xs font-semibold text-slate-500 group-hover:text-slate-800">
+                            Overall Average
+                        </span>
+                        <span
+                            className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                                activeCard === 'average'
+                                    ? 'bg-[#364c83] text-white'
+                                    : 'bg-indigo-50 text-[#364c83] group-hover:bg-[#364c83] group-hover:text-white'
+                            }`}
+                        >
                             <TrendingUp size={14} />
                         </span>
                     </div>
@@ -3480,30 +3611,484 @@ function CandidatesAdmin({
                             style={{ width: `${Math.min(100, stats?.overallAverage ?? 0)}%` }}
                         />
                     </div>
-                </div>
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                        <span>Score analysis</span>
+                        <span className="flex items-center gap-0.5 font-bold text-[#364c83]">
+                            {activeCard === 'average' ? (
+                                <>
+                                    <span>Hide</span>
+                                    <ChevronUp size={12} />
+                                </>
+                            ) : (
+                                <>
+                                    <span>Reveal</span>
+                                    <ChevronDown size={12} />
+                                </>
+                            )}
+                        </span>
+                    </div>
+                </button>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                {/* 4. Pass Rate Card */}
+                <button
+                    type="button"
+                    onClick={() => toggleCard('pass')}
+                    aria-expanded={activeCard === 'pass'}
+                    className={`group rounded-xl border p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md cursor-pointer ${
+                        activeCard === 'pass'
+                            ? 'border-emerald-500 bg-emerald-50/40 ring-2 ring-emerald-500/20 shadow-md'
+                            : 'border-slate-200 bg-white hover:border-emerald-500'
+                    }`}
+                >
                     <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-500">Pass Rate</span>
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                        <span className="text-xs font-semibold text-slate-500 group-hover:text-slate-800">
+                            Pass Rate
+                        </span>
+                        <span
+                            className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                                activeCard === 'pass'
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white'
+                            }`}
+                        >
                             <CheckCircle2 size={14} />
                         </span>
                     </div>
                     <p className="mt-2 text-2xl font-bold text-emerald-700">{stats?.passRate ?? 0}%</p>
-                    <p className="mt-1 text-[11px] text-slate-500">Score &ge; 50% threshold</p>
-                </div>
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                        <span>&ge; 50% score</span>
+                        <span className="flex items-center gap-0.5 font-bold text-emerald-700">
+                            {activeCard === 'pass' ? (
+                                <>
+                                    <span>Hide</span>
+                                    <ChevronUp size={12} />
+                                </>
+                            ) : (
+                                <>
+                                    <span>Reveal</span>
+                                    <ChevronDown size={12} />
+                                </>
+                            )}
+                        </span>
+                    </div>
+                </button>
 
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm col-span-2 sm:col-span-1">
+                {/* 5. Distinction Rate Card */}
+                <button
+                    type="button"
+                    onClick={() => toggleCard('distinction')}
+                    aria-expanded={activeCard === 'distinction'}
+                    className={`group rounded-xl border p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md cursor-pointer col-span-2 sm:col-span-1 ${
+                        activeCard === 'distinction'
+                            ? 'border-amber-500 bg-amber-50/40 ring-2 ring-amber-500/20 shadow-md'
+                            : 'border-slate-200 bg-white hover:border-amber-500'
+                    }`}
+                >
                     <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-500">Distinction Rate</span>
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                        <span className="text-xs font-semibold text-slate-500 group-hover:text-slate-800">
+                            Distinction Rate
+                        </span>
+                        <span
+                            className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                                activeCard === 'distinction'
+                                    ? 'bg-amber-600 text-white'
+                                    : 'bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white'
+                            }`}
+                        >
                             <Award size={14} />
                         </span>
                     </div>
                     <p className="mt-2 text-2xl font-bold text-amber-700">{stats?.distinctionRate ?? 0}%</p>
-                    <p className="mt-1 text-[11px] text-slate-500">Score &ge; 75% excellence</p>
-                </div>
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+                        <span>&ge; 75% honors</span>
+                        <span className="flex items-center gap-0.5 font-bold text-amber-700">
+                            {activeCard === 'distinction' ? (
+                                <>
+                                    <span>Hide</span>
+                                    <ChevronUp size={12} />
+                                </>
+                            ) : (
+                                <>
+                                    <span>Reveal</span>
+                                    <ChevronDown size={12} />
+                                </>
+                            )}
+                        </span>
+                    </div>
+                </button>
             </div>
+
+            {/* Revealed Card Details & Interactive Insights Panel */}
+            {activeCard && (
+                <div className="rounded-2xl border-2 border-[#364c83] bg-gradient-to-b from-indigo-50/50 to-white p-5 shadow-lg transition-all">
+                    {/* Header of Revealed Panel */}
+                    <div className="flex items-start justify-between gap-3 border-b border-indigo-100 pb-3">
+                        <div className="flex items-center gap-2.5">
+                            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#364c83] text-white shadow-sm">
+                                {activeCard === 'candidates' && <Users size={18} />}
+                                {activeCard === 'exams' && <BarChart3 size={18} />}
+                                {activeCard === 'average' && <TrendingUp size={18} />}
+                                {activeCard === 'pass' && <CheckCircle2 size={18} />}
+                                {activeCard === 'distinction' && <Award size={18} />}
+                            </span>
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900">
+                                    {activeCard === 'candidates' && 'Candidate Demographics & Track Distribution'}
+                                    {activeCard === 'exams' && 'Examination Activity & Subject Breakdown'}
+                                    {activeCard === 'average' && 'Score Distribution & Performance Benchmarks'}
+                                    {activeCard === 'pass' && 'Pass Rate Analytics & Candidates Meeting Benchmark (≥ 50%)'}
+                                    {activeCard === 'distinction' && 'Distinction Honors & Top Performers (≥ 75%)'}
+                                </h3>
+                                <p className="text-xs text-slate-500">
+                                    {activeCard === 'candidates' && 'Breakdown of registered candidates across examination categories and Ghana regions.'}
+                                    {activeCard === 'exams' && 'Subject volume, attempt counts, and recent completed assessment sessions.'}
+                                    {activeCard === 'average' && 'Distribution across high mastery, distinction, proficient pass, and remedial brackets.'}
+                                    {activeCard === 'pass' && 'Success metrics and candidates who met the 50% pass threshold.'}
+                                    {activeCard === 'distinction' && 'Honor roll of candidates performing at the 75% distinction level.'}
+                                </p>
+                            </div>
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveCard(null)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                        >
+                            <X size={14} />
+                            <span>Close</span>
+                        </button>
+                    </div>
+
+                    {/* Content 1: Candidates Breakdown */}
+                    {activeCard === 'candidates' && (
+                        <div className="mt-4 space-y-4">
+                            <div>
+                                <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
+                                    Candidates by Examination Track
+                                </span>
+                                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+                                    <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
+                                        <span className="block text-[11px] font-semibold text-slate-500">GES Promotion</span>
+                                        <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.gesPromo}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setTrackFilter('ges-promo')}
+                                            className="mt-1.5 text-[10px] font-bold text-[#364c83] hover:underline"
+                                        >
+                                            Filter table →
+                                        </button>
+                                    </div>
+                                    <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
+                                        <span className="block text-[11px] font-semibold text-slate-500">Basic 4 – 9</span>
+                                        <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.basic}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setTrackFilter('basic')}
+                                            className="mt-1.5 text-[10px] font-bold text-[#364c83] hover:underline"
+                                        >
+                                            Filter table →
+                                        </button>
+                                    </div>
+                                    <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
+                                        <span className="block text-[11px] font-semibold text-slate-500">SHS 1 – 3</span>
+                                        <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.shs}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setTrackFilter('shs')}
+                                            className="mt-1.5 text-[10px] font-bold text-[#364c83] hover:underline"
+                                        >
+                                            Filter table →
+                                        </button>
+                                    </div>
+                                    <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
+                                        <span className="block text-[11px] font-semibold text-slate-500">BECE</span>
+                                        <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.bece}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setTrackFilter('bece')}
+                                            className="mt-1.5 text-[10px] font-bold text-[#364c83] hover:underline"
+                                        >
+                                            Filter table →
+                                        </button>
+                                    </div>
+                                    <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
+                                        <span className="block text-[11px] font-semibold text-slate-500">WASSCE</span>
+                                        <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.wassce}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setTrackFilter('wassce')}
+                                            className="mt-1.5 text-[10px] font-bold text-[#364c83] hover:underline"
+                                        >
+                                            Filter table →
+                                        </button>
+                                    </div>
+                                    <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
+                                        <span className="block text-[11px] font-semibold text-slate-500">GTLE</span>
+                                        <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.gtle}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setTrackFilter('gtle')}
+                                            className="mt-1.5 text-[10px] font-bold text-[#364c83] hover:underline"
+                                        >
+                                            Filter table →
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Regional breakdown for GES Promotion */}
+                            <div>
+                                <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
+                                    Regional Representation (GES Promotion Candidates)
+                                </span>
+                                {Object.keys(regionsMap).length === 0 ? (
+                                    <p className="text-xs text-slate-500">No regional data recorded yet.</p>
+                                ) : (
+                                    <div className="flex flex-wrap gap-2">
+                                        {Object.entries(regionsMap).map(([reg, count]) => (
+                                            <span
+                                                key={reg}
+                                                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-100 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs"
+                                            >
+                                                <span className="h-2 w-2 rounded-full bg-[#364c83]" />
+                                                <strong>{reg}:</strong> {count} candidate{count === 1 ? '' : 's'}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Content 2: Exams Activity Breakdown */}
+                    {activeCard === 'exams' && (
+                        <div className="mt-4 space-y-4">
+                            <div>
+                                <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
+                                    Attempts per Subject / Rank
+                                </span>
+                                {Object.keys(subjectAttemptMap).length === 0 ? (
+                                    <p className="text-xs text-slate-500">No examination attempts logged yet.</p>
+                                ) : (
+                                    <div className="flex flex-wrap gap-2">
+                                        {Object.entries(subjectAttemptMap).map(([subj, count]) => (
+                                            <span
+                                                key={subj}
+                                                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-100 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs"
+                                            >
+                                                <SubjectIcon name={subj} size={14} />
+                                                <strong className="text-slate-900">{subj}:</strong> {count} exam{count === 1 ? '' : 's'}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Recent completions list */}
+                            <div>
+                                <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
+                                    Recent Examination Submissions
+                                </span>
+                                {allRecentExams.length === 0 ? (
+                                    <p className="text-xs text-slate-500">No recent submissions recorded.</p>
+                                ) : (
+                                    <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+                                        {allRecentExams.slice(0, 5).map((e) => (
+                                            <div
+                                                key={e.id}
+                                                className="flex flex-wrap items-center justify-between gap-3 p-3 text-xs"
+                                            >
+                                                <div>
+                                                    <span className="font-semibold text-slate-900">{e.candidateName}</span>
+                                                    <span className="block text-[11px] text-slate-500">
+                                                        {e.subjectName} &middot; {formatRelativeOrDate(e.createdAt)}
+                                                    </span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-bold text-slate-900">
+                                                        {e.score}/{e.total} ({e.percent}%)
+                                                    </span>
+                                                    <span
+                                                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                                                            e.percent >= 50
+                                                                ? 'bg-emerald-50 text-emerald-700'
+                                                                : 'bg-rose-50 text-rose-700'
+                                                        }`}
+                                                    >
+                                                        {e.percent >= 75 ? 'Distinction' : e.percent >= 50 ? 'Pass' : 'Remedial'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Content 3: Overall Average Score Breakdown */}
+                    {activeCard === 'average' && (
+                        <div className="mt-4 space-y-4">
+                            <span className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                                Score Brackets Distribution Across All Completed Exams
+                            </span>
+                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                                <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs">
+                                    <span className="block text-[11px] font-bold uppercase text-emerald-700">
+                                        High Mastery (90–100%)
+                                    </span>
+                                    <span className="mt-1 block text-2xl font-bold text-emerald-800">
+                                        {scoreBrackets.mastery}
+                                    </span>
+                                    <span className="text-[11px] text-slate-500">Exemplary performance</span>
+                                </div>
+
+                                <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs">
+                                    <span className="block text-[11px] font-bold uppercase text-amber-700">
+                                        Distinction (75–89%)
+                                    </span>
+                                    <span className="mt-1 block text-2xl font-bold text-amber-800">
+                                        {scoreBrackets.distinction}
+                                    </span>
+                                    <span className="text-[11px] text-slate-500">Honors standard</span>
+                                </div>
+
+                                <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs">
+                                    <span className="block text-[11px] font-bold uppercase text-[#364c83]">
+                                        Proficient Pass (50–74%)
+                                    </span>
+                                    <span className="mt-1 block text-2xl font-bold text-[#364c83]">
+                                        {scoreBrackets.pass}
+                                    </span>
+                                    <span className="text-[11px] text-slate-500">Meets benchmark</span>
+                                </div>
+
+                                <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs">
+                                    <span className="block text-[11px] font-bold uppercase text-rose-700">
+                                        Needs Remediation (&lt;50%)
+                                    </span>
+                                    <span className="mt-1 block text-2xl font-bold text-rose-800">
+                                        {scoreBrackets.remedial}
+                                    </span>
+                                    <span className="text-[11px] text-slate-500">Below threshold</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Content 4: Pass Rate Analytics */}
+                    {activeCard === 'pass' && (
+                        <div className="mt-4 space-y-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                    <span className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                                        Passing Candidate Performance (&ge; 50%)
+                                    </span>
+                                    <p className="text-xs text-slate-500">
+                                        <strong>{passCandidates.length + distinctionCandidates.length}</strong> candidate(s) currently hold a passing or distinction average.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setStatusFilter('Pass')}
+                                    className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700"
+                                >
+                                    Filter Table to Passing Candidates
+                                </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                                <div className="rounded-xl border border-emerald-200 bg-white p-4">
+                                    <div className="flex items-center justify-between text-xs font-semibold text-emerald-800">
+                                        <span>Candidate Pass Threshold</span>
+                                        <span>{stats?.passRate ?? 0}%</span>
+                                    </div>
+                                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-emerald-100">
+                                        <div
+                                            className="h-full rounded-full bg-emerald-600"
+                                            style={{ width: `${Math.min(100, stats?.passRate ?? 0)}%` }}
+                                        />
+                                    </div>
+                                    <p className="mt-2 text-[11px] text-slate-500">
+                                        Percentage of completed tests scoring at least 50%.
+                                    </p>
+                                </div>
+
+                                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                                    <span className="block text-xs font-semibold text-slate-700">Status Summary</span>
+                                    <div className="mt-2 flex items-center justify-between text-xs">
+                                        <span className="text-slate-500">Pass/Distinction candidates:</span>
+                                        <strong className="text-emerald-700">{passCandidates.length + distinctionCandidates.length}</strong>
+                                    </div>
+                                    <div className="mt-1 flex items-center justify-between text-xs">
+                                        <span className="text-slate-500">Remedial status (&lt;50%):</span>
+                                        <strong className="text-rose-600">{remedialCandidates.length}</strong>
+                                    </div>
+                                    <div className="mt-1 flex items-center justify-between text-xs">
+                                        <span className="text-slate-500">Pending exam attempts:</span>
+                                        <strong className="text-slate-600">{pendingCandidates.length}</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Content 5: Distinction Honors & Leaderboard */}
+                    {activeCard === 'distinction' && (
+                        <div className="mt-4 space-y-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                    <span className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                                        Distinction Honors Roll (&ge; 75%)
+                                    </span>
+                                    <p className="text-xs text-slate-500">
+                                        <strong>{distinctionCandidates.length}</strong> candidate(s) have earned Distinction rank with 75%+ performance.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setStatusFilter('Distinction')}
+                                    className="rounded-lg bg-amber-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-amber-700"
+                                >
+                                    Filter Table to Distinction Candidates
+                                </button>
+                            </div>
+
+                            {distinctionCandidates.length === 0 ? (
+                                <p className="rounded-xl border border-slate-200 bg-white p-4 text-center text-xs text-slate-500">
+                                    No candidates have achieved 75%+ Distinction yet.
+                                </p>
+                            ) : (
+                                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                                    {distinctionCandidates.map((c) => (
+                                        <div
+                                            key={c.id}
+                                            className="flex items-center justify-between rounded-xl border border-amber-200 bg-white p-3.5 shadow-xs"
+                                        >
+                                            <div>
+                                                <span className="font-bold text-slate-900">{c.name}</span>
+                                                <span className="block text-[11px] text-slate-500">
+                                                    {c.accountType === 'ges-promo' ? c.promotionRank : levelLabel(c.gradeLevel)}
+                                                    {c.region ? ` (${c.region})` : ''}
+                                                </span>
+                                            </div>
+                                            <div className="text-right">
+                                                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-800">
+                                                    <Award size={12} />
+                                                    {c.avgPercent}% Avg
+                                                </span>
+                                                <span className="block text-[10px] text-slate-500">
+                                                    Best: {c.bestPercent}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Filter and Search Bar */}
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
