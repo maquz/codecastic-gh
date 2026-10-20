@@ -1265,6 +1265,8 @@ export const handler = router({
                     id: q.id,
                     text: q.text,
                     options: q.options,
+                    correctIndex: q.correctIndex,
+                    explanation: q.explanation || '',
                     year: q.year || undefined,
                     category: q.category || undefined,
                 })),
@@ -1282,13 +1284,18 @@ export const handler = router({
             const level = normLevel(b.level);
             const subjectId = String(b.subjectId || '');
             const answers = (b.answers || {}) as Record<string, number>;
+            const questionIds: string[] = Array.isArray(b.questionIds) ? b.questionIds.map(String) : [];
 
             if (!studentName) return error('Please sign in before submitting an exam', 401);
             if (level === null) return error('Invalid level', 400);
             if (!subjectId) return error('Subject is required', 400);
 
-            const qs = (await allQuestions()).filter((q: any) => q.subjectId === subjectId && q.level === level);
-            if (qs.length === 0) return error('There are no questions for this level and subject', 400);
+            const allLevelQs = (await allQuestions()).filter((q: any) => q.subjectId === subjectId && q.level === level);
+            if (allLevelQs.length === 0) return error('There are no questions for this level and subject', 400);
+
+            const qSet = new Set(questionIds);
+            const qs = questionIds.length > 0 ? allLevelQs.filter((q: any) => qSet.has(q.id)) : allLevelQs;
+            if (qs.length === 0) return error('No matching questions found for this exam submission', 400);
 
             let score = 0;
             const review = qs.map((q: any) => {
@@ -1557,6 +1564,82 @@ export const handler = router({
             const { items } = await db.list('results', { limit: 500 });
             const results = [...items].sort((a: any, c: any) => (c.createdAt || 0) - (a.createdAt || 0));
             return json({ results });
+        },
+    ],
+
+    'POST /api/admin/candidates': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+
+            const { items: rawUsers } = await db.list('users', { limit: 1000 });
+            const { items: rawResults } = await db.list('results', { limit: 2000 });
+
+            const candidates = rawUsers.map((u: any) => {
+                const userResults = rawResults.filter(
+                    (r: any) =>
+                        (r.userId && r.userId === u.id) ||
+                        (r.studentEmail && String(r.studentEmail).toLowerCase() === String(u.email).toLowerCase())
+                );
+                const sortedResults = [...userResults].sort((a: any, c: any) => (c.createdAt || 0) - (a.createdAt || 0));
+                const examsTaken = sortedResults.length;
+                const totalScore = sortedResults.reduce((acc: number, r: any) => acc + (Number(r.percent) || 0), 0);
+                const avgPercent = examsTaken > 0 ? Math.round(totalScore / examsTaken) : 0;
+                const bestPercent = examsTaken > 0 ? Math.max(...sortedResults.map((r: any) => Number(r.percent) || 0)) : 0;
+                const lastExamAt = sortedResults[0]?.createdAt || null;
+                const lastSubject = sortedResults[0]?.subjectName || null;
+
+                let performanceStatus: 'Distinction' | 'Pass' | 'Remedial' | 'Pending' = 'Pending';
+                if (examsTaken > 0) {
+                    if (avgPercent >= 75) performanceStatus = 'Distinction';
+                    else if (avgPercent >= 50) performanceStatus = 'Pass';
+                    else performanceStatus = 'Remedial';
+                }
+
+                return {
+                    id: u.id,
+                    name: u.name,
+                    email: u.email,
+                    accountType: u.accountType,
+                    gradeLevel: u.gradeLevel,
+                    region: u.region || '',
+                    promotionRank: u.promotionRank || '',
+                    schoolName: u.schoolName || '',
+                    registeredAt: u.createdAt || 0,
+                    examsTaken,
+                    avgPercent,
+                    bestPercent,
+                    lastExamAt,
+                    lastSubject,
+                    performanceStatus,
+                    recentResults: sortedResults.slice(0, 10).map((r: any) => ({
+                        id: r.id,
+                        subjectName: r.subjectName,
+                        level: r.level,
+                        score: r.score,
+                        total: r.total,
+                        percent: r.percent,
+                        createdAt: r.createdAt,
+                    })),
+                };
+            }).sort((a: any, b: any) => (b.lastExamAt || b.registeredAt || 0) - (a.lastExamAt || a.registeredAt || 0));
+
+            const totalExams = rawResults.length;
+            const totalPass = rawResults.filter((r: any) => (Number(r.percent) || 0) >= 50).length;
+            const totalDistinction = rawResults.filter((r: any) => (Number(r.percent) || 0) >= 75).length;
+            const overallAverage =
+                totalExams > 0 ? Math.round(rawResults.reduce((acc: number, r: any) => acc + (Number(r.percent) || 0), 0) / totalExams) : 0;
+            const passRate = totalExams > 0 ? Math.round((totalPass / totalExams) * 100) : 0;
+            const distinctionRate = totalExams > 0 ? Math.round((totalDistinction / totalExams) * 100) : 0;
+
+            return json({
+                candidates,
+                totalCandidates: candidates.length,
+                totalExams,
+                overallAverage,
+                passRate,
+                distinctionRate,
+            });
         },
     ],
 });
