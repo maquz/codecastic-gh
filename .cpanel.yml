@@ -1,0 +1,15 @@
+---
+deployment:
+  tasks:
+    # 1. Path to your cPanel web root / Node.js application directory
+    # Note: Replace /home/codecast/public_html with your actual cPanel home directory
+    - export DEPLOYPATH=/home/codecast/public_html
+    - /bin/mkdir -p $DEPLOYPATH/dist
+    - /bin/mkdir -p $DEPLOYPATH/data
+    - /bin/mkdir -p $DEPLOYPATH/tmp
+    # 2. Copy the production compiled files
+    - /bin/cp -R website/dist/* $DEPLOYPATH/dist/
+    - /bin/cp website/app.js $DEPLOYPATH/app.js
+    - /bin/cp website/package.json $DEPLOYPATH/package.json
+    # 3. Touch restart.txt to automatically trigger Phusion Passenger / Node.js restart
+    - /bin/touch $DEPLOYPATH/tmp/restart.txt

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { router, json, error, db } from './sdk';
+import { sendContactNotification, sendDirectReply } from './mailer';
 
 /* ------------------------------------------------------------------ */
 /* Password & Auth Helpers                                             */
@@ -1185,6 +1186,12 @@ export const handler = router({
 
             const [id] = await db.add('messages', [{ name, email, phone, topic, message, createdAt: Date.now() }]);
             if (!id) return error('Could not save your message. Please try again.', 500);
+
+            // Asynchronously dispatch email notification to info@codecasticgh.com
+            sendContactNotification({ name, email, phone, topic, message }).catch((err) => {
+                console.warn('[Contact] Notice: Could not send email notification:', err?.message || err);
+            });
+
             return json({ ok: true }, 201);
         },
     ],
@@ -1709,6 +1716,32 @@ export const handler = router({
             if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
             await db.delete('messages', [ctx.params.id]);
             return json({ ok: true });
+        },
+    ],
+
+    'POST /api/admin/messages/:id/reply': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+            const replyMessage = String(b.replyMessage || '').trim();
+            if (!replyMessage) return error('Enter your reply message', 400);
+
+            const { items } = await db.list('messages');
+            const msg = items.find((m: any) => m.id === ctx.params.id);
+            if (!msg) return error('Message not found', 404);
+
+            try {
+                await sendDirectReply({
+                    to: msg.email,
+                    toName: msg.name,
+                    subject: msg.topic || 'Inquiry on Codecastic GH',
+                    replyMessage,
+                    originalMessage: msg.message,
+                });
+                return json({ ok: true });
+            } catch (e: any) {
+                return error(e?.message || 'Could not send reply email', 500);
+            }
         },
     ],
 });

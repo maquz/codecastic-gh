@@ -3501,6 +3501,28 @@ function MessagesAdmin({
         }
     };
 
+    const [replyingId, setReplyingId] = useState<string | null>(null);
+    const [replyText, setReplyText] = useState('');
+    const [sendingReply, setSendingReply] = useState(false);
+
+    const handleDirectReply = async (msg: ContactMsg) => {
+        if (!replyText.trim()) return;
+        setSendingReply(true);
+        try {
+            await api.post(`/api/admin/messages/${msg.id}/reply`, {
+                passcode: code,
+                replyMessage: replyText.trim(),
+            });
+            flash(true, `Reply sent directly from info@codecasticgh.com to ${msg.email}!`);
+            setReplyingId(null);
+            setReplyText('');
+        } catch (e: any) {
+            flash(false, errMsg(e, 'Could not send reply email. Verify SMTP settings.'));
+        } finally {
+            setSendingReply(false);
+        }
+    };
+
     const topics = Array.from(new Set(messages.map((m) => m.topic).filter(Boolean)));
 
     const filtered = messages.filter((m) => {
@@ -3705,30 +3727,102 @@ function MessagesAdmin({
 
                                     {/* Expanded Actions & Details */}
                                     {isExpanded && (
-                                        <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                {msg.email && (
+                                        <div className="mt-4 pt-3 border-t border-slate-100 space-y-3">
+                                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    {msg.email && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                if (replyingId === msg.id) {
+                                                                    setReplyingId(null);
+                                                                } else {
+                                                                    setReplyingId(msg.id);
+                                                                    setReplyText(`Dear ${msg.name},\n\nThank you for contacting Codecastic GH regarding "${msg.topic}".\n\n`);
+                                                                }
+                                                            }}
+                                                            className="inline-flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1f2d57] transition shadow-xs"
+                                                        >
+                                                            <Mail size={12} />
+                                                            {replyingId === msg.id ? 'Close Direct Reply' : 'Direct Reply (info@codecasticgh.com)'}
+                                                        </button>
+                                                    )}
+                                                    {msg.email && (
+                                                        <a
+                                                            href={`mailto:${encodeURIComponent(msg.email)}?cc=info@codecasticgh.com&subject=Re: ${encodeURIComponent(msg.topic || 'Inquiry on Codecastic GH')}&body=Dear ${encodeURIComponent(msg.name)},%0D%0A%0D%0AThank you for reaching out to Codecastic GH.`}
+                                                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                                                            title="Open in your default email client (with info@codecasticgh.com CC'd)"
+                                                        >
+                                                            <ExternalLink size={12} />
+                                                            Open Mail App
+                                                        </a>
+                                                    )}
                                                     <a
-                                                        href={`mailto:${encodeURIComponent(msg.email)}?subject=Re: ${encodeURIComponent(msg.topic || 'Inquiry on Codecastic GH')}&body=Dear ${encodeURIComponent(msg.name)},%0D%0A%0D%0AThank you for reaching out to Codecastic GH.`}
-                                                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1f2d57] transition"
-                                                    >
-                                                        <Mail size={12} />
-                                                        Reply by Email
-                                                    </a>
-                                                )}
-                                                {msg.phone && (
-                                                    <a
-                                                        href={`https://wa.me/${msg.phone.replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(msg.name)},%20thank%20you%20for%20contacting%20Codecastic%20GH.`}
+                                                        href="https://codecasticgh.com/webmail"
                                                         target="_blank"
                                                         rel="noreferrer"
-                                                        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition"
+                                                        className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-[#364c83] hover:bg-indigo-100 transition"
+                                                        title="Log in to official cPanel Webmail (Roundcube) as info@codecasticgh.com"
                                                     >
-                                                        <Phone size={12} />
-                                                        WhatsApp Reply
+                                                        <Mail size={12} />
+                                                        Open cPanel Webmail
                                                     </a>
-                                                )}
+                                                    {msg.phone && (
+                                                        <a
+                                                            href={`https://wa.me/${msg.phone.replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(msg.name)},%20thank%20you%20for%20contacting%20Codecastic%20GH.`}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition"
+                                                        >
+                                                            <Phone size={12} />
+                                                            WhatsApp Reply
+                                                        </a>
+                                                    )}
+                                                </div>
+                                                <span className="text-[11px] text-slate-400">ID: {msg.id}</span>
                                             </div>
-                                            <span className="text-[11px] text-slate-400">ID: {msg.id}</span>
+
+                                            {/* Inline Direct Reply Form */}
+                                            {replyingId === msg.id && (
+                                                <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3.5 space-y-2 animate-in fade-in duration-150">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-xs font-bold text-slate-900">
+                                                            Compose Direct Reply (From: <span className="text-[#364c83]">info@codecasticgh.com</span>)
+                                                        </span>
+                                                        <span className="text-[11px] text-slate-500">To: {msg.email}</span>
+                                                    </div>
+                                                    <textarea
+                                                        value={replyText}
+                                                        onChange={(e) => setReplyText(e.target.value)}
+                                                        rows={4}
+                                                        placeholder="Write your email response here..."
+                                                        className="input text-xs w-full bg-white leading-relaxed"
+                                                    />
+                                                    <div className="flex items-center justify-between">
+                                                        <p className="text-[11px] text-slate-500">
+                                                            Requires <code>SMTP_PASS</code> in cPanel environment variables.
+                                                        </p>
+                                                        <div className="flex items-center gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setReplyingId(null)}
+                                                                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                                                            >
+                                                                Cancel
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleDirectReply(msg)}
+                                                                disabled={sendingReply || !replyText.trim()}
+                                                                className="flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3.5 py-1.5 text-xs font-bold text-white hover:bg-[#1f2d57] disabled:opacity-50"
+                                                            >
+                                                                {sendingReply && <Loader2 size={12} className="animate-spin" />}
+                                                                Send Reply Now
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>

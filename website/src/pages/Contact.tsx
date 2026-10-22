@@ -173,6 +173,16 @@ export default function Contact() {
 
                     <aside>
                         <div className="info-block">
+                            <h3>Direct Email Inquiries</h3>
+                            <p>
+                                You can also email us directly at{' '}
+                                <a href="mailto:info@codecasticgh.com" style={{ color: '#364c83', fontWeight: 600 }}>
+                                    info@codecasticgh.com
+                                </a>
+                                . Inquiries are processed and replied to promptly.
+                            </p>
+                        </div>
+                        <div className="info-block">
                             <h3>Where we are</h3>
                             <p>Codecastic GH is registered in Ghana, with branches and operational offices opened as the work requires.</p>
                         </div>
