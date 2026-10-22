@@ -408,7 +408,7 @@ function StudentAuthView({
     initialLevel: Level | null;
     onAuthenticated: (u: StudentUser, token: string) => void;
 }) {
-    const [mode, setMode] = useState<'login' | 'register' | 'recover'>(isGesPromo ? 'register' : 'login');
+    const [mode, setMode] = useState<'login' | 'register' | 'recover'>('login');
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [gradeLevel, setGradeLevel] = useState<Level>(initialLevel === 'SHS' ? 'SHS 1' : initialLevel ?? 4);
@@ -657,6 +657,41 @@ function StudentAuthView({
         return (
             <div className="mx-auto max-w-md py-2">
                 <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+                    <div className="mb-5 flex items-center justify-between">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-[#364c83]">
+                            <GraduationCap size={22} />
+                        </div>
+                        <div className="flex rounded-lg bg-slate-100 p-1">
+                            <button
+                                type="button"
+                                onClick={() => switchMode('login')}
+                                className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                                    mode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                                }`}
+                            >
+                                Sign in
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => switchMode('register')}
+                                className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                                    mode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                                }`}
+                            >
+                                Register
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => switchMode('recover')}
+                                className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                                    mode === 'recover' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                                }`}
+                            >
+                                Recover
+                            </button>
+                        </div>
+                    </div>
+
                     <div className="text-center">
                         <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">
                             {mode === 'register'
