@@ -1233,6 +1233,40 @@ export const handler = router({
         },
     ],
 
+    'POST /api/inbox/:id/reply': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            if (!(await isStaff(b.passcode))) return error('Incorrect passcode', 401);
+            const replyMessage = String(b.replyMessage || '').trim();
+            if (!replyMessage) return error('Enter your reply message', 400);
+
+            const { items } = await db.list('messages');
+            const msg = items.find((m: any) => m.id === ctx.params.id);
+            if (!msg) return error('Message not found', 404);
+
+            try {
+                await sendDirectReply({
+                    to: msg.email,
+                    toName: msg.name,
+                    subject: msg.topic || 'Inquiry on Codecastic GH',
+                    replyMessage,
+                    originalMessage: msg.message,
+                });
+
+                const now = Date.now();
+                await db.update('messages', msg.id, {
+                    repliedAt: now,
+                    replyCount: (Number(msg.replyCount) || 0) + 1,
+                    lastReply: replyMessage,
+                });
+
+                return json({ ok: true, repliedAt: now });
+            } catch (e: any) {
+                return error(e?.message || 'Could not send reply email', 500);
+            }
+        },
+    ],
+
     // ---------- ExamHub: Public (Student) ----------
     'GET /api/subjects': [
         async () => {
@@ -1738,7 +1772,15 @@ export const handler = router({
                     replyMessage,
                     originalMessage: msg.message,
                 });
-                return json({ ok: true });
+
+                const now = Date.now();
+                await db.update('messages', msg.id, {
+                    repliedAt: now,
+                    replyCount: (Number(msg.replyCount) || 0) + 1,
+                    lastReply: replyMessage,
+                });
+
+                return json({ ok: true, repliedAt: now });
             } catch (e: any) {
                 return error(e?.message || 'Could not send reply email', 500);
             }

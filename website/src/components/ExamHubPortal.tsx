@@ -49,6 +49,9 @@ import {
     ExternalLink,
     Database,
     AlertCircle,
+    Send,
+    CornerUpLeft,
+    Paperclip,
 } from 'lucide-react';
 
 export type Level = number | string;
@@ -61,6 +64,9 @@ type ContactMsg = {
     topic: string;
     message: string;
     createdAt: number;
+    repliedAt?: number;
+    replyCount?: number;
+    lastReply?: string;
 };
 type ExamQ = {
     id: string;
@@ -3501,25 +3507,71 @@ function MessagesAdmin({
         }
     };
 
-    const [replyingId, setReplyingId] = useState<string | null>(null);
-    const [replyText, setReplyText] = useState('');
-    const [sendingReply, setSendingReply] = useState(false);
+    const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
+    const [sendingReplyId, setSendingReplyId] = useState<string | null>(null);
 
-    const handleDirectReply = async (msg: ContactMsg) => {
-        if (!replyText.trim()) return;
-        setSendingReply(true);
+    const insertTemplate = (msg: ContactMsg, type: 'thankyou' | 'reviewing' | 'meeting' | 'ai' | 'formal') => {
+        let body = '';
+        if (type === 'thankyou') {
+            body = `Dear ${msg.name},\n\nThank you for reaching out to Codecastic GH regarding "${msg.topic || 'your inquiry'}".\n\nWe have received your message and our team is currently attending to it. We will get back to you with full details shortly.\n\nWarm regards,\nCodecastic GH Team\ninfo@codecasticgh.com\nhttps://codecasticgh.com`;
+        } else if (type === 'reviewing') {
+            body = `Dear ${msg.name},\n\nThank you for your inquiry regarding "${msg.topic || 'Codecastic GH'}".\n\nWe have reviewed your request:\n"${msg.message.slice(0, 140)}${msg.message.length > 140 ? '...' : ''}"\n\nWe would be glad to assist you. Could you share any additional requirements, timeline, or preferred start date?\n\nBest regards,\nCodecastic GH Team\ninfo@codecasticgh.com`;
+        } else if (type === 'meeting') {
+            body = `Dear ${msg.name},\n\nThank you for getting in touch with Codecastic GH.\n\nWe would love to invite you for a brief discovery call or WhatsApp consultation to discuss your "${msg.topic || 'project'}" in detail.\n\nPlease let us know what day and time works best for you, or reach us on WhatsApp at +233 24 459 7593.\n\nBest regards,\nCodecastic GH Team\ninfo@codecasticgh.com\nhttps://codecasticgh.com`;
+        } else if (type === 'ai') {
+            body = `Dear ${msg.name},\n\nThank you for contacting Codecastic GH regarding "${msg.topic || 'your inquiry'}".\n\nWe appreciate your interest in our digital solutions and educational technology platforms. Regarding your note:\n"${msg.message}"\n\nOur team is prepared to assist you promptly. A dedicated specialist will follow up with the requested information shortly.\n\nPlease feel free to reply directly to this email or reach us at info@codecasticgh.com for any immediate updates.\n\nSincerely,\nCodecastic GH Team\nhttps://codecasticgh.com`;
+        } else if (type === 'formal') {
+            const curr = replyTexts[msg.id] || '';
+            body = `Dear ${msg.name},\n\n${curr.trim() || 'Thank you for contacting Codecastic GH.'}\n\nWarm regards,\nCodecastic GH Team\ninfo@codecasticgh.com\nhttps://codecasticgh.com`;
+        }
+
+        setReplyTexts((prev) => ({
+            ...prev,
+            [msg.id]: body,
+        }));
+    };
+
+    const clearReply = (id: string) => {
+        setReplyTexts((prev) => {
+            const copy = { ...prev };
+            delete copy[id];
+            return copy;
+        });
+    };
+
+    const handleSendDirectReply = async (msg: ContactMsg) => {
+        const text = (replyTexts[msg.id] || '').trim();
+        if (!text) {
+            flash(false, 'Please write a reply message before sending.');
+            return;
+        }
+        setSendingReplyId(msg.id);
         try {
-            await api.post(`/api/admin/messages/${msg.id}/reply`, {
+            const res = await api.post(`/api/admin/messages/${msg.id}/reply`, {
                 passcode: code,
-                replyMessage: replyText.trim(),
+                replyMessage: text,
             });
-            flash(true, `Reply sent directly from info@codecasticgh.com to ${msg.email}!`);
-            setReplyingId(null);
-            setReplyText('');
+            flash(true, `Direct reply sent successfully from info@codecasticgh.com to ${msg.email}!`);
+            setMessages((prev) =>
+                prev.map((m) =>
+                    m.id === msg.id
+                        ? {
+                              ...m,
+                              repliedAt: res.data.repliedAt || Date.now(),
+                              lastReply: text,
+                              replyCount: (m.replyCount || 0) + 1,
+                          }
+                        : m
+                )
+            );
+            clearReply(msg.id);
         } catch (e: any) {
-            flash(false, errMsg(e, 'Could not send reply email. Verify SMTP settings.'));
+            flash(
+                false,
+                errMsg(e, 'Could not send reply email. Verify that SMTP_PASS is configured in cPanel Node.js environment variables.')
+            );
         } finally {
-            setSendingReply(false);
+            setSendingReplyId(null);
         }
     };
 
@@ -3667,6 +3719,12 @@ function MessagesAdmin({
                                                         {msg.topic}
                                                     </span>
                                                 )}
+                                                {msg.repliedAt && (
+                                                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200">
+                                                        <CheckCircle2 size={11} className="text-emerald-600" />
+                                                        Replied
+                                                    </span>
+                                                )}
                                                 <span className="text-[11px] text-slate-400">
                                                     {formatGhanaDate(msg.createdAt)}
                                                 </span>
@@ -3714,7 +3772,7 @@ function MessagesAdmin({
                                         </div>
                                     </div>
 
-                                    {/* Preview or Expanded Message Body */}
+                                    {/* Message Body */}
                                     <div className="mt-3">
                                         <p
                                             className={`text-xs text-slate-700 leading-relaxed whitespace-pre-wrap ${
@@ -3725,35 +3783,266 @@ function MessagesAdmin({
                                         </p>
                                     </div>
 
-                                    {/* Expanded Actions & Details */}
+                                    {/* Collapsed Quick Actions */}
+                                    {!isExpanded && (
+                                        <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setSelectedMsg(msg);
+                                                        if (!replyTexts[msg.id]) insertTemplate(msg, 'thankyou');
+                                                    }}
+                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1f2d57] transition shadow-xs"
+                                                >
+                                                    <CornerUpLeft size={12} />
+                                                    Reply by Email
+                                                </button>
+                                                {msg.phone && (
+                                                    <a
+                                                        href={`https://wa.me/${msg.phone.replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(msg.name)},%20thank%20you%20for%20contacting%20Codecastic%20GH.`}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition"
+                                                    >
+                                                        <Phone size={12} />
+                                                        WhatsApp Reply
+                                                    </a>
+                                                )}
+                                            </div>
+                                            <span className="text-[11px] text-slate-400">ID: {msg.id}</span>
+                                        </div>
+                                    )}
+
+                                    {/* Expanded: Previous Reply & Gmail-Style Direct Reply Composer */}
                                     {isExpanded && (
-                                        <div className="mt-4 pt-3 border-t border-slate-100 space-y-3">
-                                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                        <div className="mt-4 pt-3 border-t border-slate-100 space-y-3.5">
+                                            {/* Previous Sent Reply Banner (if available) */}
+                                            {msg.lastReply && (
+                                                <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-xs space-y-1">
+                                                    <div className="flex items-center justify-between text-emerald-800 font-semibold">
+                                                        <span className="flex items-center gap-1.5">
+                                                            <CheckCircle2 size={13} className="text-emerald-600" />
+                                                            Last Reply Sent from info@codecasticgh.com
+                                                        </span>
+                                                        <span className="text-[11px] text-emerald-600 font-normal">
+                                                            {formatGhanaDate(msg.repliedAt)}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-slate-700 whitespace-pre-wrap text-[11px] leading-relaxed bg-white/70 rounded-lg p-2 border border-emerald-100">
+                                                        {msg.lastReply}
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {/* Gmail-Style Direct Reply Composer Box (matching user reference) */}
+                                            <div className="flex items-start gap-3 pt-1">
+                                                {/* Left Sender Avatar (orange circle with initial matching image 2) */}
+                                                <div
+                                                    className="w-9 h-9 rounded-full bg-[#f97316] text-white flex items-center justify-center font-bold text-sm shadow-xs flex-shrink-0 select-none"
+                                                    title="Admin (Codecastic GH)"
+                                                >
+                                                    {msg.name ? msg.name.charAt(0).toLowerCase() : 'm'}
+                                                </div>
+
+                                                {/* Main Composer Box */}
+                                                <div className="flex-1 rounded-2xl border border-slate-200 bg-white shadow-xs hover:border-slate-300 transition-all focus-within:border-[#1a73e8] focus-within:ring-2 focus-within:ring-[#1a73e8]/20 overflow-hidden">
+                                                    {/* Header: Recipients & Popout */}
+                                                    <div className="flex items-center justify-between px-3.5 pt-2.5 pb-1.5 text-xs border-b border-slate-100 bg-slate-50/60">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <span className="inline-flex items-center gap-1 text-slate-500 font-medium">
+                                                                <CornerUpLeft size={13} className="text-slate-600" />
+                                                                <ChevronDown size={11} className="-ml-0.5 text-slate-400" />
+                                                                <span className="font-semibold text-slate-700">Recipients</span>
+                                                            </span>
+                                                            <span className="inline-flex items-center gap-1 rounded-full bg-slate-200/80 px-2.5 py-0.5 text-[11px] font-medium text-slate-800">
+                                                                {msg.name} &lt;{msg.email}&gt;
+                                                            </span>
+                                                            <span className="text-[11px] text-slate-400 hidden sm:inline">
+                                                                &bull; From: <strong className="text-[#364c83]">info@codecasticgh.com</strong>
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-1.5 text-slate-400">
+                                                            <a
+                                                                href="https://codecasticgh.com/webmail"
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                title="Open official cPanel Webmail in new tab"
+                                                                className="p-1 hover:text-slate-700 hover:bg-slate-200/70 rounded transition"
+                                                            >
+                                                                <ExternalLink size={13} />
+                                                            </a>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Textarea Body */}
+                                                    <div className="px-3.5 py-2.5">
+                                                        <textarea
+                                                            value={replyTexts[msg.id] ?? ''}
+                                                            onChange={(e) =>
+                                                                setReplyTexts((prev) => ({ ...prev, [msg.id]: e.target.value }))
+                                                            }
+                                                            rows={3}
+                                                            placeholder={`Write your reply to ${msg.name}... (Press Send to deliver from info@codecasticgh.com)`}
+                                                            className="w-full text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none resize-y min-h-[85px] leading-relaxed bg-transparent"
+                                                        />
+                                                    </div>
+
+                                                    {/* Smart Templates Bar (matching image 2 "Describe your message" bar) */}
+                                                    <div className="mx-3 mb-2 flex flex-wrap items-center justify-between gap-1.5 rounded-xl bg-slate-100/70 border border-slate-200/60 px-2.5 py-1 text-xs">
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500">
+                                                                <Sparkles size={12} className="text-amber-500" />
+                                                                <span className="hidden sm:inline">Templates:</span>
+                                                            </span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => insertTemplate(msg, 'thankyou')}
+                                                                className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-700 border border-slate-200 hover:bg-slate-50 hover:text-indigo-600 transition shadow-2xs"
+                                                            >
+                                                                &ldquo;Thank you for reaching out&rdquo;
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => insertTemplate(msg, 'reviewing')}
+                                                                className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-700 border border-slate-200 hover:bg-slate-50 hover:text-indigo-600 transition shadow-2xs"
+                                                            >
+                                                                &ldquo;Under review&rdquo;
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => insertTemplate(msg, 'meeting')}
+                                                                className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-700 border border-slate-200 hover:bg-slate-50 hover:text-indigo-600 transition shadow-2xs"
+                                                            >
+                                                                &ldquo;Schedule consultation&rdquo;
+                                                            </button>
+                                                        </div>
+                                                        <div className="flex items-center gap-1 text-slate-400">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => clearReply(msg.id)}
+                                                                className="p-1 hover:text-slate-600 hover:bg-slate-200/60 rounded text-[11px]"
+                                                                title="Clear / Undo draft"
+                                                            >
+                                                                <RotateCcw size={11} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Bottom Action Bar matching image 2 */}
+                                                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2.5 pt-1 border-t border-slate-100 bg-white">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            {/* Blue Send Pill Button */}
+                                                            <div className="inline-flex rounded-full shadow-xs">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleSendDirectReply(msg)}
+                                                                    disabled={
+                                                                        sendingReplyId === msg.id ||
+                                                                        !(replyTexts[msg.id] || '').trim()
+                                                                    }
+                                                                    className="inline-flex items-center gap-1.5 rounded-l-full bg-[#1a73e8] hover:bg-[#1557b0] text-white px-4 py-1.5 text-xs font-semibold disabled:opacity-50 transition active:scale-95"
+                                                                >
+                                                                    {sendingReplyId === msg.id ? (
+                                                                        <>
+                                                                            <Loader2 size={12} className="animate-spin" />
+                                                                            <span>Sending...</span>
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <Send size={12} />
+                                                                            <span>Send</span>
+                                                                        </>
+                                                                    )}
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleSendDirectReply(msg)}
+                                                                    disabled={
+                                                                        sendingReplyId === msg.id ||
+                                                                        !(replyTexts[msg.id] || '').trim()
+                                                                    }
+                                                                    title="Send options"
+                                                                    aria-label="Send options"
+                                                                    className="rounded-r-full bg-[#1557b0] hover:bg-[#0d47a1] text-white px-2 py-1.5 text-xs border-l border-white/20 disabled:opacity-50"
+                                                                >
+                                                                    <ChevronDown size={11} />
+                                                                </button>
+                                                            </div>
+
+                                                            {/* AI Reply Chip */}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => insertTemplate(msg, 'ai')}
+                                                                className="inline-flex items-center gap-1 rounded-full bg-slate-100 hover:bg-indigo-50 hover:text-[#364c83] px-2.5 py-1 text-xs font-medium text-slate-600 transition"
+                                                                title="Generate smart reply based on visitor's inquiry"
+                                                            >
+                                                                <Sparkles size={11} className="text-amber-500" />
+                                                                <span>AI reply</span>
+                                                            </button>
+
+                                                            {/* Formatting Tools: Aa, 📎, 🔗 */}
+                                                            <div className="hidden sm:flex items-center gap-1 text-slate-400 pl-1">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => insertTemplate(msg, 'formal')}
+                                                                    className="p-1 hover:text-slate-700 hover:bg-slate-100 rounded text-xs font-serif font-bold"
+                                                                    title="Format formal greeting & sign-off"
+                                                                >
+                                                                    Aa
+                                                                </button>
+                                                                <a
+                                                                    href="https://codecasticgh.com/webmail"
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className="p-1 hover:text-slate-700 hover:bg-slate-100 rounded"
+                                                                    title="Attach files (opens cPanel Webmail)"
+                                                                >
+                                                                    <Paperclip size={13} />
+                                                                </a>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setReplyTexts((prev) => ({
+                                                                            ...prev,
+                                                                            [msg.id]:
+                                                                                (prev[msg.id] || '') +
+                                                                                '\nhttps://codecasticgh.com',
+                                                                        }));
+                                                                    }}
+                                                                    className="p-1 hover:text-slate-700 hover:bg-slate-100 rounded"
+                                                                    title="Insert website link"
+                                                                >
+                                                                    <ExternalLink size={13} />
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Right Actions: Discard Trash */}
+                                                        <div className="flex items-center gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => clearReply(msg.id)}
+                                                                className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                                                                title="Clear draft"
+                                                            >
+                                                                <Trash2 size={13} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* External Alternate Channels & Info */}
+                                            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 text-[11px] text-slate-400 border-t border-slate-100">
                                                 <div className="flex flex-wrap items-center gap-2">
-                                                    {msg.email && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                if (replyingId === msg.id) {
-                                                                    setReplyingId(null);
-                                                                } else {
-                                                                    setReplyingId(msg.id);
-                                                                    setReplyText(`Dear ${msg.name},\n\nThank you for contacting Codecastic GH regarding "${msg.topic}".\n\n`);
-                                                                }
-                                                            }}
-                                                            className="inline-flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1f2d57] transition shadow-xs"
-                                                        >
-                                                            <Mail size={12} />
-                                                            {replyingId === msg.id ? 'Close Direct Reply' : 'Direct Reply (info@codecasticgh.com)'}
-                                                        </button>
-                                                    )}
+                                                    <span className="text-slate-500 font-medium">Alternate reply options:</span>
                                                     {msg.email && (
                                                         <a
-                                                            href={`mailto:${encodeURIComponent(msg.email)}?cc=info@codecasticgh.com&subject=Re: ${encodeURIComponent(msg.topic || 'Inquiry on Codecastic GH')}&body=Dear ${encodeURIComponent(msg.name)},%0D%0A%0D%0AThank you for reaching out to Codecastic GH.`}
-                                                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
-                                                            title="Open in your default email client (with info@codecasticgh.com CC'd)"
+                                                            href={`mailto:${encodeURIComponent(msg.email)}?cc=info@codecasticgh.com&subject=Re: ${encodeURIComponent(msg.topic || 'Inquiry on Codecastic GH')}`}
+                                                            className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-0.5 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                                                         >
-                                                            <ExternalLink size={12} />
+                                                            <Mail size={11} />
                                                             Open Mail App
                                                         </a>
                                                     )}
@@ -3761,68 +4050,25 @@ function MessagesAdmin({
                                                         href="https://codecasticgh.com/webmail"
                                                         target="_blank"
                                                         rel="noreferrer"
-                                                        className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-[#364c83] hover:bg-indigo-100 transition"
-                                                        title="Log in to official cPanel Webmail (Roundcube) as info@codecasticgh.com"
+                                                        className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50/50 px-2 py-0.5 text-[#364c83] hover:bg-indigo-100"
                                                     >
-                                                        <Mail size={12} />
-                                                        Open cPanel Webmail
+                                                        <ExternalLink size={11} />
+                                                        cPanel Webmail
                                                     </a>
                                                     {msg.phone && (
                                                         <a
                                                             href={`https://wa.me/${msg.phone.replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(msg.name)},%20thank%20you%20for%20contacting%20Codecastic%20GH.`}
                                                             target="_blank"
                                                             rel="noreferrer"
-                                                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition"
+                                                            className="inline-flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-emerald-800 hover:bg-emerald-100"
                                                         >
-                                                            <Phone size={12} />
-                                                            WhatsApp Reply
+                                                            <Phone size={11} />
+                                                            WhatsApp
                                                         </a>
                                                     )}
                                                 </div>
-                                                <span className="text-[11px] text-slate-400">ID: {msg.id}</span>
+                                                <span>ID: {msg.id}</span>
                                             </div>
-
-                                            {/* Inline Direct Reply Form */}
-                                            {replyingId === msg.id && (
-                                                <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3.5 space-y-2 animate-in fade-in duration-150">
-                                                    <div className="flex items-center justify-between">
-                                                        <span className="text-xs font-bold text-slate-900">
-                                                            Compose Direct Reply (From: <span className="text-[#364c83]">info@codecasticgh.com</span>)
-                                                        </span>
-                                                        <span className="text-[11px] text-slate-500">To: {msg.email}</span>
-                                                    </div>
-                                                    <textarea
-                                                        value={replyText}
-                                                        onChange={(e) => setReplyText(e.target.value)}
-                                                        rows={4}
-                                                        placeholder="Write your email response here..."
-                                                        className="input text-xs w-full bg-white leading-relaxed"
-                                                    />
-                                                    <div className="flex items-center justify-between">
-                                                        <p className="text-[11px] text-slate-500">
-                                                            Requires <code>SMTP_PASS</code> in cPanel environment variables.
-                                                        </p>
-                                                        <div className="flex items-center gap-2">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setReplyingId(null)}
-                                                                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                                                            >
-                                                                Cancel
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleDirectReply(msg)}
-                                                                disabled={sendingReply || !replyText.trim()}
-                                                                className="flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3.5 py-1.5 text-xs font-bold text-white hover:bg-[#1f2d57] disabled:opacity-50"
-                                                            >
-                                                                {sendingReply && <Loader2 size={12} className="animate-spin" />}
-                                                                Send Reply Now
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            )}
                                         </div>
                                     )}
                                 </div>

@@ -1,6 +1,6 @@
 // server.ts
 import http from "node:http";
-import fs2 from "node:fs";
+import fs3 from "node:fs";
 import path2 from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -333,36 +333,58 @@ function router(routes) {
 
 // backend/mailer.ts
 import nodemailer from "nodemailer";
+import fs2 from "node:fs";
 function getMailerConfig() {
   const user = process.env.SMTP_USER || process.env.EMAIL_USER || "info@codecasticgh.com";
   const pass = process.env.SMTP_PASS || process.env.EMAIL_PASSWORD || "";
   const host = process.env.SMTP_HOST || process.env.EMAIL_HOST || "localhost";
-  const port = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT) || 465;
+  const port = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT) || (pass ? 465 : 25);
   const secure = port === 465;
   return { host, port, secure, user, pass };
 }
-var transporter = null;
-function getTransporter() {
+function createTransporters() {
   const config = getMailerConfig();
-  if (!config.pass) {
-    return null;
-  }
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: config.host,
-      port: config.port,
-      secure: config.secure,
-      auth: {
-        user: config.user,
-        pass: config.pass
-      },
-      tls: {
-        rejectUnauthorized: false
-        // Allows self-signed certs common in local cPanel
-      }
+  const list = [];
+  if (config.pass) {
+    list.push({
+      name: `Authenticated SMTP (${config.host}:${config.port})`,
+      transport: nodemailer.createTransport({
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        auth: {
+          user: config.user,
+          pass: config.pass
+        },
+        tls: {
+          rejectUnauthorized: false
+        }
+      })
     });
   }
-  return transporter;
+  list.push({
+    name: "Local cPanel Exim (localhost:25)",
+    transport: nodemailer.createTransport({
+      host: "127.0.0.1",
+      port: 25,
+      secure: false,
+      ignoreTLS: true,
+      tls: {
+        rejectUnauthorized: false
+      }
+    })
+  });
+  if (fs2.existsSync("/usr/sbin/sendmail")) {
+    list.push({
+      name: "Local Sendmail (/usr/sbin/sendmail)",
+      transport: nodemailer.createTransport({
+        sendmail: true,
+        newline: "unix",
+        path: "/usr/sbin/sendmail"
+      })
+    });
+  }
+  return list;
 }
 async function sendContactNotification({
   name,
@@ -371,22 +393,17 @@ async function sendContactNotification({
   topic,
   message
 }) {
-  const transport = getTransporter();
-  if (!transport) {
-    console.log("[Mailer] Notice: SMTP_PASS not set. Email notification skipped (saved to database).");
-    return false;
-  }
   const config = getMailerConfig();
   const to = process.env.NOTIFY_EMAIL || "info@codecasticgh.com";
-  try {
-    await transport.sendMail({
-      from: `"Codecastic GH Contact" <${config.user}>`,
-      to,
-      replyTo: `"${name}" <${email}>`,
-      subject: `[New Inquiry] ${topic} - from ${name}`,
-      text: `New message received from Codecastic GH website:
+  const transporters = createTransporters();
+  const mailOptions = {
+    from: `"Codecastic GH Contact" <${config.user}>`,
+    to,
+    replyTo: `"${name}" <${email}>`,
+    subject: `[New Website Inquiry] ${topic} - from ${name}`,
+    text: `New contact form submission on Codecastic GH:
 
-Name: ${name}
+Sender: ${name}
 Email: ${email}
 Phone: ${phone || "Not provided"}
 Topic: ${topic}
@@ -395,46 +412,53 @@ Message:
 ${message}
 
 ---
-To reply directly, simply reply to this email or sign in to your ExamHub Admin Panel.`,
-      html: `
-                <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-                    <div style="border-bottom: 2px solid #364c83; padding-bottom: 12px; margin-bottom: 16px;">
-                        <h2 style="color: #364c83; margin: 0; font-size: 20px;">Codecastic GH - Website Inquiry</h2>
-                        <span style="font-size: 12px; color: #64748b;">Submitted via codecasticgh.com</span>
-                    </div>
-                    <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 14px;">
-                        <tr>
-                            <td style="padding: 6px 0; color: #64748b; width: 100px;"><strong>Sender:</strong></td>
-                            <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">${name}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 6px 0; color: #64748b;"><strong>Email:</strong></td>
-                            <td style="padding: 6px 0;"><a href="mailto:${email}" style="color: #364c83;">${email}</a></td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 6px 0; color: #64748b;"><strong>Phone:</strong></td>
-                            <td style="padding: 6px 0; color: #0f172a;">${phone || "Not provided"}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 6px 0; color: #64748b;"><strong>Topic:</strong></td>
-                            <td style="padding: 6px 0; color: #0f172a; font-weight: bold;">${topic}</td>
-                        </tr>
-                    </table>
-                    <div style="background-color: #f8fafc; border-left: 4px solid #364c83; padding: 14px; border-radius: 4px; font-size: 14px; line-height: 1.6; color: #1e293b; margin-bottom: 20px; white-space: pre-wrap;">
-${message}
-                    </div>
-                    <div style="font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px;">
-                        <p style="margin: 0;">Hit <strong>Reply</strong> to email this visitor directly, or access your inbox at <a href="https://codecasticgh.com/#/exam-hub" style="color: #364c83;">codecasticgh.com/#/exam-hub</a>.</p>
-                    </div>
+Reply directly to this email or sign in to your ExamHub Admin Panel.`,
+    html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background: #ffffff;">
+                <div style="border-bottom: 2px solid #364c83; padding-bottom: 12px; margin-bottom: 16px;">
+                    <h2 style="color: #364c83; margin: 0; font-size: 20px;">Codecastic GH - Website Inquiry</h2>
+                    <span style="font-size: 12px; color: #64748b;">Delivered to ${to}</span>
                 </div>
-            `
-    });
-    console.log(`[Mailer] Contact notification sent to ${to}`);
-    return true;
-  } catch (e) {
-    console.error("[Mailer] Could not send contact notification email:", e?.message || e);
-    return false;
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 14px;">
+                    <tr>
+                        <td style="padding: 6px 0; color: #64748b; width: 100px;"><strong>Sender:</strong></td>
+                        <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">${name}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 6px 0; color: #64748b;"><strong>Email:</strong></td>
+                        <td style="padding: 6px 0;"><a href="mailto:${email}" style="color: #364c83; font-weight: 600;">${email}</a></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 6px 0; color: #64748b;"><strong>Phone:</strong></td>
+                        <td style="padding: 6px 0; color: #0f172a;">${phone || "Not provided"}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 6px 0; color: #64748b;"><strong>Topic:</strong></td>
+                        <td style="padding: 6px 0; color: #0f172a; font-weight: bold;">${topic}</td>
+                    </tr>
+                </table>
+                <div style="background-color: #f8fafc; border-left: 4px solid #364c83; padding: 14px; border-radius: 4px; font-size: 14px; line-height: 1.6; color: #1e293b; margin-bottom: 20px; white-space: pre-wrap;">
+${message}
+                </div>
+                <div style="font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+                    <p style="margin: 0;">Hit <strong>Reply</strong> to email this visitor directly, or manage messages in your ExamHub Admin Panel at <a href="https://codecasticgh.com/#/exam-hub" style="color: #364c83;">codecasticgh.com</a>.</p>
+                </div>
+            </div>
+        `
+  };
+  let lastError = null;
+  for (const { name: tName, transport } of transporters) {
+    try {
+      await transport.sendMail(mailOptions);
+      console.log(`[Mailer] Contact notification delivered to ${to} via ${tName}`);
+      return true;
+    } catch (err) {
+      console.warn(`[Mailer] Attempt via ${tName} failed:`, err?.message || err);
+      lastError = err;
+    }
   }
+  console.error("[Mailer] All delivery attempts failed. Message is saved safely in database.", lastError?.message || lastError);
+  return false;
 }
 async function sendDirectReply({
   to,
@@ -443,12 +467,9 @@ async function sendDirectReply({
   replyMessage,
   originalMessage
 }) {
-  const transport = getTransporter();
-  if (!transport) {
-    throw new Error("SMTP email is not configured yet. Add SMTP_PASS to your cPanel environment variables or .env file.");
-  }
   const config = getMailerConfig();
-  await transport.sendMail({
+  const transporters = createTransporters();
+  const mailOptions = {
     from: `"Codecastic GH" <${config.user}>`,
     to,
     replyTo: config.user,
@@ -460,12 +481,13 @@ Original Message from ${toName}:
 ${originalMessage || ""}
 
 Codecastic GH Team
+info@codecasticgh.com
 https://codecasticgh.com`,
     html: `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background: #ffffff;">
                 <div style="border-bottom: 2px solid #364c83; padding-bottom: 12px; margin-bottom: 16px;">
                     <h2 style="color: #364c83; margin: 0; font-size: 18px;">Codecastic GH</h2>
-                    <span style="font-size: 12px; color: #64748b;">Official Response &middot; info@codecasticgh.com</span>
+                    <span style="font-size: 12px; color: #64748b;">Official Response &middot; ${config.user}</span>
                 </div>
                 <div style="font-size: 14px; line-height: 1.6; color: #0f172a; margin-bottom: 20px; white-space: pre-wrap;">
 ${replyMessage}
@@ -481,9 +503,21 @@ ${originalMessage}
                 </div>
             </div>
         `
-  });
-  console.log(`[Mailer] Direct reply sent from ${config.user} to ${to}`);
-  return true;
+  };
+  let lastError = null;
+  for (const { name: tName, transport } of transporters) {
+    try {
+      await transport.sendMail(mailOptions);
+      console.log(`[Mailer] Direct reply sent from ${config.user} to ${to} via ${tName}`);
+      return true;
+    } catch (err) {
+      console.warn(`[Mailer] Direct reply attempt via ${tName} failed:`, err?.message || err);
+      lastError = err;
+    }
+  }
+  throw new Error(
+    lastError?.message || "Could not send reply email. Please ensure SMTP_PASS is configured in cPanel Node.js environment variables."
+  );
 }
 
 // backend/index.ts
@@ -1486,6 +1520,35 @@ var handler = router({
       return json({ deleted: true });
     }
   ],
+  "POST /api/inbox/:id/reply": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      if (!await isStaff(b.passcode)) return error("Incorrect passcode", 401);
+      const replyMessage = String(b.replyMessage || "").trim();
+      if (!replyMessage) return error("Enter your reply message", 400);
+      const { items } = await db.list("messages");
+      const msg = items.find((m) => m.id === ctx.params.id);
+      if (!msg) return error("Message not found", 404);
+      try {
+        await sendDirectReply({
+          to: msg.email,
+          toName: msg.name,
+          subject: msg.topic || "Inquiry on Codecastic GH",
+          replyMessage,
+          originalMessage: msg.message
+        });
+        const now = Date.now();
+        await db.update("messages", msg.id, {
+          repliedAt: now,
+          replyCount: (Number(msg.replyCount) || 0) + 1,
+          lastReply: replyMessage
+        });
+        return json({ ok: true, repliedAt: now });
+      } catch (e) {
+        return error(e?.message || "Could not send reply email", 500);
+      }
+    }
+  ],
   // ---------- ExamHub: Public (Student) ----------
   "GET /api/subjects": [
     async () => {
@@ -1925,7 +1988,13 @@ var handler = router({
           replyMessage,
           originalMessage: msg.message
         });
-        return json({ ok: true });
+        const now = Date.now();
+        await db.update("messages", msg.id, {
+          repliedAt: now,
+          replyCount: (Number(msg.replyCount) || 0) + 1,
+          lastReply: replyMessage
+        });
+        return json({ ok: true, repliedAt: now });
       } catch (e) {
         return error(e?.message || "Could not send reply email", 500);
       }
@@ -1971,20 +2040,20 @@ function serveStatic(req, res) {
   }
   let stat = null;
   try {
-    if (fs2.existsSync(filePath)) {
-      stat = fs2.statSync(filePath);
+    if (fs3.existsSync(filePath)) {
+      stat = fs3.statSync(filePath);
       if (stat.isDirectory()) {
         filePath = path2.join(filePath, "index.html");
-        stat = fs2.existsSync(filePath) ? fs2.statSync(filePath) : null;
+        stat = fs3.existsSync(filePath) ? fs3.statSync(filePath) : null;
       }
     }
   } catch {
     stat = null;
   }
-  if (!stat || !fs2.existsSync(filePath)) {
+  if (!stat || !fs3.existsSync(filePath)) {
     filePath = path2.join(DIST_DIR, "index.html");
     try {
-      stat = fs2.statSync(filePath);
+      stat = fs3.statSync(filePath);
     } catch {
       res.statusCode = 404;
       res.end("Application not built yet. Run npm run build.");
@@ -2005,7 +2074,7 @@ function serveStatic(req, res) {
     res.end();
     return;
   }
-  const stream = fs2.createReadStream(filePath);
+  const stream = fs3.createReadStream(filePath);
   stream.pipe(res);
 }
 var server = http.createServer(async (req, res) => {
