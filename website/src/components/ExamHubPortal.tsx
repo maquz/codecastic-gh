@@ -48,6 +48,7 @@ import {
     Phone,
     ExternalLink,
     Database,
+    AlertCircle,
 } from 'lucide-react';
 
 export type Level = number | string;
@@ -274,11 +275,9 @@ export default function ExamHubPortal({
         setToken('');
     };
 
+    const [showSwitchPicker, setShowSwitchPicker] = useState<boolean>(false);
     const requiresAuth = !user || !userMatchesSection(user, activeSlug);
-    const visibleTracks =
-        tab === 'student' && user && !requiresAuth
-            ? TRACKS.filter((t) => t.slug === slugForUser(user))
-            : TRACKS;
+    const currentTrack = TRACKS.find((t) => t.slug === activeSlug);
 
     return (
         <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col w-full max-w-full overflow-x-hidden">
@@ -348,36 +347,63 @@ export default function ExamHubPortal({
                     </div>
                 </div>
 
-                {/* Section Sub-Tabs inside Full-Screen Portal (All Sections removed; locked to user's section once signed in) */}
-                <div className="border-t border-slate-100 bg-slate-50/70 w-full overflow-x-auto">
-                    <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-2 px-4 py-2.5 sm:px-6">
-                        {visibleTracks.map((t) => {
-                            const isCurrent = t.slug === activeSlug;
-                            const labelText =
-                                tab === 'student' && user && !requiresAuth
+                {/* Exam Sub-Header: Once an exam is selected, only show the selected exam (do not show the other exam buttons) */}
+                <div className="border-t border-slate-100 bg-slate-50/70 w-full">
+                    <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-2 sm:px-6">
+                        <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Selected Exam:</span>
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-[#364c83] px-3.5 py-1 text-xs font-bold text-white shadow-xs">
+                                <GraduationCap size={13} />
+                                {tab === 'student' && user && !requiresAuth
                                     ? user.accountType === 'ges-promo'
-                                        ? `${t.label} · ${user.promotionRank}`
+                                        ? `${currentTrack?.label || 'GES Promotion Exams'} · ${user.promotionRank}`
                                         : typeof user.gradeLevel === 'number'
                                         ? `Basic ${user.gradeLevel}`
                                         : SHS_LEVELS.includes(String(user.gradeLevel))
                                         ? String(user.gradeLevel)
-                                        : t.label
-                                    : t.label;
-                            return (
-                                <a
-                                    key={t.slug}
-                                    href={`#/exams/${t.slug}`}
-                                    className={`rounded-full px-4 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
-                                        isCurrent
-                                            ? 'bg-[#364c83] text-white shadow-sm'
-                                            : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                                    }`}
-                                >
-                                    {labelText}
-                                </a>
-                            );
-                        })}
+                                        : currentTrack?.label || sectionLabel
+                                    : currentTrack?.label || sectionLabel}
+                            </span>
+                        </div>
+                        {(!user || requiresAuth) && (
+                            <button
+                                type="button"
+                                onClick={() => setShowSwitchPicker((prev) => !prev)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-[#364c83] hover:text-[#364c83] shadow-xs"
+                                title="Change to a different examination category"
+                            >
+                                <RotateCcw size={11} />
+                                {showSwitchPicker ? 'Hide Other Exams' : 'Change Exam'}
+                            </button>
+                        )}
                     </div>
+
+                    {showSwitchPicker && (!user || requiresAuth) && (
+                        <div className="border-t border-slate-200/70 bg-white px-4 py-3 sm:px-6 shadow-xs animate-in fade-in duration-150">
+                            <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-2">
+                                <span className="w-full text-center text-xs font-semibold text-slate-500 mb-1">
+                                    Switch examination category:
+                                </span>
+                                {TRACKS.map((t) => {
+                                    const isCurrent = t.slug === activeSlug;
+                                    return (
+                                        <a
+                                            key={t.slug}
+                                            href={`#/exams/${t.slug}`}
+                                            onClick={() => setShowSwitchPicker(false)}
+                                            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
+                                                isCurrent
+                                                    ? 'bg-[#364c83] text-white shadow-sm ring-1 ring-[#364c83]'
+                                                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                            }`}
+                                        >
+                                            {t.label}
+                                        </a>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </header>
 
@@ -3759,11 +3785,11 @@ function CandidatesAdmin({
     // Detailed analytics for revealed card panels
     const trackCounts = {
         gesPromo: candidates.filter((c) => c.accountType === 'ges-promo').length,
-        basic: candidates.filter((c) => typeof c.gradeLevel === 'number' && c.gradeLevel >= 4 && c.gradeLevel <= 9).length,
-        shs: candidates.filter((c) => SHS_LEVELS.includes(String(c.gradeLevel))).length,
-        bece: candidates.filter((c) => c.gradeLevel === 'BECE').length,
-        wassce: candidates.filter((c) => c.gradeLevel === 'WASSCE').length,
-        gtle: candidates.filter((c) => c.gradeLevel === 'GTLE').length,
+        basic: candidates.filter((c) => c.accountType !== 'ges-promo' && typeof c.gradeLevel === 'number' && c.gradeLevel >= 4 && c.gradeLevel <= 9).length,
+        shs: candidates.filter((c) => c.accountType !== 'ges-promo' && SHS_LEVELS.includes(String(c.gradeLevel))).length,
+        bece: candidates.filter((c) => c.accountType !== 'ges-promo' && c.gradeLevel === 'BECE').length,
+        wassce: candidates.filter((c) => c.accountType !== 'ges-promo' && c.gradeLevel === 'WASSCE').length,
+        gtle: candidates.filter((c) => c.accountType !== 'ges-promo' && c.gradeLevel === 'GTLE').length,
     };
 
     const regionsMap: Record<string, number> = {};
@@ -3809,13 +3835,13 @@ function CandidatesAdmin({
 
         if (trackFilter !== 'all') {
             if (trackFilter === 'ges-promo' && c.accountType !== 'ges-promo') return false;
-            if (trackFilter === 'basic' && (typeof c.gradeLevel !== 'number' || c.gradeLevel < 4 || c.gradeLevel > 9)) {
+            if (trackFilter === 'basic' && (c.accountType === 'ges-promo' || typeof c.gradeLevel !== 'number' || c.gradeLevel < 4 || c.gradeLevel > 9)) {
                 return false;
             }
-            if (trackFilter === 'shs' && !SHS_LEVELS.includes(String(c.gradeLevel))) return false;
-            if (trackFilter === 'bece' && c.gradeLevel !== 'BECE') return false;
-            if (trackFilter === 'wassce' && c.gradeLevel !== 'WASSCE') return false;
-            if (trackFilter === 'gtle' && c.gradeLevel !== 'GTLE') return false;
+            if (trackFilter === 'shs' && (c.accountType === 'ges-promo' || !SHS_LEVELS.includes(String(c.gradeLevel)))) return false;
+            if (trackFilter === 'bece' && (c.accountType === 'ges-promo' || c.gradeLevel !== 'BECE')) return false;
+            if (trackFilter === 'wassce' && (c.accountType === 'ges-promo' || c.gradeLevel !== 'WASSCE')) return false;
+            if (trackFilter === 'gtle' && (c.accountType === 'ges-promo' || c.gradeLevel !== 'GTLE')) return false;
         }
 
         if (statusFilter !== 'all' && c.performanceStatus !== statusFilter) {
@@ -4513,6 +4539,40 @@ function CandidatesAdmin({
                     </div>
                 </div>
 
+                {/* Category Quick Filter Chips */}
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[11px] font-semibold text-slate-400 mr-1">Quick Filter:</span>
+                    {[
+                        { id: 'all', label: 'All Candidates', count: candidates.length },
+                        { id: 'ges-promo', label: 'GES Promotion', count: trackCounts.gesPromo },
+                        { id: 'basic', label: 'Basic 4–9', count: trackCounts.basic },
+                        { id: 'shs', label: 'SHS 1–3', count: trackCounts.shs },
+                        { id: 'bece', label: 'BECE', count: trackCounts.bece },
+                        { id: 'wassce', label: 'WASSCE', count: trackCounts.wassce },
+                        { id: 'gtle', label: 'GTLE', count: trackCounts.gtle },
+                    ].map((item) => (
+                        <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => setTrackFilter(item.id)}
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold transition ${
+                                trackFilter === item.id
+                                    ? 'bg-[#364c83] text-white shadow-xs'
+                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                        >
+                            <span>{item.label}</span>
+                            <span
+                                className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                                    trackFilter === item.id ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                                }`}
+                            >
+                                {item.count}
+                            </span>
+                        </button>
+                    ))}
+                </div>
+
                 <div className="flex flex-wrap items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
                     <span>
                         Showing <strong>{filtered.length}</strong> of <strong>{candidates.length}</strong> candidates
@@ -4532,6 +4592,29 @@ function CandidatesAdmin({
                     )}
                 </div>
             </div>
+
+            {/* Filter Warning Banner if any candidate is hidden */}
+            {filtered.length < candidates.length && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900 shadow-xs">
+                    <div className="flex items-center gap-2">
+                        <AlertCircle size={15} className="text-amber-600 shrink-0" />
+                        <span>
+                            Filter Active: Showing <strong>{filtered.length}</strong> of <strong>{candidates.length}</strong> total candidates ({candidates.length - filtered.length} candidate{candidates.length - filtered.length === 1 ? '' : 's'} hidden by current filter).
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setSearch('');
+                            setTrackFilter('all');
+                            setStatusFilter('all');
+                        }}
+                        className="rounded-lg bg-amber-600 px-3 py-1 text-xs font-bold text-white shadow-xs hover:bg-amber-700 transition"
+                    >
+                        Show All {candidates.length} Candidates
+                    </button>
+                </div>
+            )}
 
             {/* Candidates Monitoring Table */}
             <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden w-full max-w-full">

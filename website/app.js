@@ -1631,9 +1631,50 @@ var handler = router({
       if (!await isAdmin(b.passcode)) return error("Not authorised", 401);
       const { items: rawUsers } = await db.list("users", { limit: 1e3 });
       const { items: rawResults } = await db.list("results", { limit: 2e3 });
-      const candidates = rawUsers.map((u) => {
+      const allCandidateUsers = [...rawUsers];
+      const seenEmails = new Set(
+        rawUsers.map((u) => String(u.email || "").trim().toLowerCase()).filter(Boolean)
+      );
+      const seenUserIds = new Set(
+        rawUsers.map((u) => String(u.id || "").trim().toLowerCase()).filter(Boolean)
+      );
+      for (const r of rawResults) {
+        const rEmail = String(r.studentEmail || "").trim().toLowerCase();
+        const rUserId = String(r.userId || "").trim().toLowerCase();
+        if (rEmail && !seenEmails.has(rEmail)) {
+          seenEmails.add(rEmail);
+          if (rUserId) seenUserIds.add(rUserId);
+          allCandidateUsers.push({
+            id: r.userId || `candidate-res-${r.id || crypto2.randomUUID()}`,
+            name: r.studentName || r.studentEmail || "Candidate",
+            email: r.studentEmail || "",
+            accountType: r.level === "GES-PROMO" ? "ges-promo" : "student",
+            gradeLevel: r.level === "GES-PROMO" ? "GES-PROMO" : r.level,
+            schoolName: r.schoolName || "",
+            region: "",
+            promotionRank: r.level === "GES-PROMO" ? r.subjectName : "",
+            createdAt: r.createdAt || Date.now()
+          });
+        } else if (!rEmail && rUserId && !seenUserIds.has(rUserId)) {
+          seenUserIds.add(rUserId);
+          allCandidateUsers.push({
+            id: r.userId,
+            name: r.studentName || "Candidate",
+            email: "",
+            accountType: r.level === "GES-PROMO" ? "ges-promo" : "student",
+            gradeLevel: r.level === "GES-PROMO" ? "GES-PROMO" : r.level,
+            schoolName: r.schoolName || "",
+            region: "",
+            promotionRank: r.level === "GES-PROMO" ? r.subjectName : "",
+            createdAt: r.createdAt || Date.now()
+          });
+        }
+      }
+      const candidates = allCandidateUsers.map((u) => {
+        const uEmail = String(u.email || "").trim().toLowerCase();
+        const uId = String(u.id || "").trim();
         const userResults = rawResults.filter(
-          (r) => r.userId && r.userId === u.id || r.studentEmail && String(r.studentEmail).toLowerCase() === String(u.email).toLowerCase()
+          (r) => uId && r.userId && String(r.userId).trim() === uId || uEmail && r.studentEmail && String(r.studentEmail).trim().toLowerCase() === uEmail
         );
         const sortedResults = [...userResults].sort((a, c) => (c.createdAt || 0) - (a.createdAt || 0));
         const examsTaken = sortedResults.length;
