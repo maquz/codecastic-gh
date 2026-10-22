@@ -1642,4 +1642,24 @@ export const handler = router({
             });
         },
     ],
+
+    'POST /api/admin/messages': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+            const { items } = await db.list('messages', { limit: 1000 });
+            const messages = [...items].sort((a: any, c: any) => (c.createdAt || 0) - (a.createdAt || 0));
+            const isMariaDb = await (db as any).isMariaDbActive();
+            return json({ messages, isMariaDb });
+        },
+    ],
+
+    'POST /api/admin/messages/:id/delete': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+            await db.delete('messages', [ctx.params.id]);
+            return json({ ok: true });
+        },
+    ],
 });

@@ -44,10 +44,23 @@ import {
     ChevronDown,
     ChevronUp,
     X,
+    Mail,
+    Phone,
+    ExternalLink,
+    Database,
 } from 'lucide-react';
 
 export type Level = number | string;
 type Subject = { id: string; name: string };
+type ContactMsg = {
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+    topic: string;
+    message: string;
+    createdAt: number;
+};
 type ExamQ = {
     id: string;
     text: string;
@@ -1761,7 +1774,7 @@ function AdminView() {
     );
 }
 
-type AdminTab = 'candidates' | 'questions' | 'subjects' | 'results';
+type AdminTab = 'candidates' | 'questions' | 'subjects' | 'results' | 'messages';
 
 function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) {
     const [tab, setTab] = useState<AdminTab>('candidates');
@@ -1770,6 +1783,8 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
     const [results, setResults] = useState<ResultRow[]>([]);
     const [candidates, setCandidates] = useState<CandidateRow[]>([]);
     const [candidateStats, setCandidateStats] = useState<CandidatesStats | null>(null);
+    const [messages, setMessages] = useState<ContactMsg[]>([]);
+    const [isMariaDb, setIsMariaDb] = useState<boolean>(false);
     const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
     const flash = useCallback((ok: boolean, text: string) => {
@@ -1804,22 +1819,33 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
         });
     }, [code]);
 
+    const loadMessages = useCallback(async () => {
+        try {
+            const r = await api.post('/api/admin/messages', { passcode: code });
+            setMessages(r.data.messages || []);
+            if (r.data.isMariaDb !== undefined) setIsMariaDb(!!r.data.isMariaDb);
+        } catch {
+            // ignore
+        }
+    }, [code]);
+
     useEffect(() => {
         (async () => {
             try {
                 await loadSubjects();
-                await Promise.all([loadQuestions(), loadResults(), loadCandidates()]);
+                await Promise.all([loadQuestions(), loadResults(), loadCandidates(), loadMessages()]);
             } catch (e) {
                 flash(false, errMsg(e, 'Could not load admin data.'));
             }
         })();
-    }, [loadSubjects, loadQuestions, loadResults, loadCandidates, flash]);
+    }, [loadSubjects, loadQuestions, loadResults, loadCandidates, loadMessages, flash]);
 
-    const tabs: { id: AdminTab; label: string; icon: any }[] = [
+    const tabs: { id: AdminTab; label: string; icon: any; count?: number }[] = [
         { id: 'candidates', label: 'Candidates & Monitoring', icon: Users },
         { id: 'questions', label: 'Questions', icon: BookOpen },
         { id: 'subjects', label: 'Subjects', icon: ClipboardCheck },
         { id: 'results', label: 'Exam Results', icon: Trophy },
+        { id: 'messages', label: 'Contact Messages', icon: Mail, count: messages.length },
     ];
 
     return (
@@ -1842,18 +1868,40 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
                             >
                                 <Icon size={14} className={active ? 'text-[#364c83]' : 'text-slate-400'} />
                                 <span>{t.label}</span>
+                                {t.count !== undefined && (
+                                    <span
+                                        className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                                            active ? 'bg-[#364c83] text-white' : 'bg-slate-200 text-slate-700'
+                                        }`}
+                                    >
+                                        {t.count}
+                                    </span>
+                                )}
                             </button>
                         );
                     })}
                 </div>
-                <button
-                    type="button"
-                    onClick={onLogout}
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                >
-                    <LogOut size={13} />
-                    Sign out
-                </button>
+                <div className="flex items-center gap-2">
+                    {isMariaDb ? (
+                        <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-800 border border-emerald-200">
+                            <Database size={12} />
+                            MariaDB Active
+                        </span>
+                    ) : (
+                        <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                            <Database size={12} />
+                            JSON Storage
+                        </span>
+                    )}
+                    <button
+                        type="button"
+                        onClick={onLogout}
+                        className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                        <LogOut size={13} />
+                        Sign out
+                    </button>
+                </div>
             </div>
 
             {msg && (
@@ -1890,6 +1938,15 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
                     />
                 )}
                 {tab === 'results' && <ResultsAdmin results={results} reload={loadResults} flash={flash} />}
+                {tab === 'messages' && (
+                    <MessagesAdmin
+                        code={code}
+                        messages={messages}
+                        reload={loadMessages}
+                        flash={flash}
+                        isMariaDb={isMariaDb}
+                    />
+                )}
             </div>
         </div>
     );
@@ -3366,6 +3423,292 @@ function ResultsAdmin({
                             ))}
                         </tbody>
                     </table>
+                </div>
+            )}
+        </section>
+    );
+}
+
+function MessagesAdmin({
+    code,
+    messages,
+    reload,
+    flash,
+    isMariaDb,
+}: {
+    code: string;
+    messages: ContactMsg[];
+    reload: () => Promise<void>;
+    flash: Flash;
+    isMariaDb: boolean;
+}) {
+    const [search, setSearch] = useState('');
+    const [topicFilter, setTopicFilter] = useState('all');
+    const [selectedMsg, setSelectedMsg] = useState<ContactMsg | null>(null);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
+    const [refreshing, setRefreshing] = useState(false);
+
+    const handleRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await reload();
+            flash(true, 'Inquiries refreshed.');
+        } catch (e) {
+            flash(false, errMsg(e, 'Could not refresh messages.'));
+        } finally {
+            setRefreshing(false);
+        }
+    };
+
+    const handleDelete = async (msg: ContactMsg) => {
+        if (!window.confirm(`Delete message from "${msg.name}"?`)) return;
+        setDeletingId(msg.id);
+        try {
+            await api.post(`/api/admin/messages/${msg.id}/delete`, { passcode: code });
+            if (selectedMsg?.id === msg.id) setSelectedMsg(null);
+            await reload();
+            flash(true, 'Message deleted.');
+        } catch (e) {
+            flash(false, errMsg(e, 'Could not delete message.'));
+        } finally {
+            setDeletingId(null);
+        }
+    };
+
+    const topics = Array.from(new Set(messages.map((m) => m.topic).filter(Boolean)));
+
+    const filtered = messages.filter((m) => {
+        const matchesTopic = topicFilter === 'all' || m.topic === topicFilter;
+        const q = search.toLowerCase().trim();
+        const matchesSearch =
+            !q ||
+            (m.name || '').toLowerCase().includes(q) ||
+            (m.email || '').toLowerCase().includes(q) ||
+            (m.phone || '').toLowerCase().includes(q) ||
+            (m.topic || '').toLowerCase().includes(q) ||
+            (m.message || '').toLowerCase().includes(q);
+        return matchesTopic && matchesSearch;
+    });
+
+    const formatGhanaDate = (ts?: number) => {
+        if (!ts) return 'Unknown';
+        try {
+            return new Date(ts).toLocaleString('en-GH', {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+            });
+        } catch {
+            return new Date(ts).toLocaleString();
+        }
+    };
+
+    return (
+        <section className="space-y-4">
+            {/* Top Toolbar */}
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                                <Mail size={16} />
+                            </span>
+                            <h2 className="text-base font-bold text-slate-900">
+                                Contact &amp; Inquiries Inbox ({messages.length})
+                            </h2>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                            All messages submitted through the website contact forms are saved securely and listed below.
+                        </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                        {isMariaDb ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 border border-emerald-200">
+                                <Database size={13} />
+                                MariaDB Enterprise Active
+                            </span>
+                        ) : (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                                <Database size={13} />
+                                JSON Flat-File Storage
+                            </span>
+                        )}
+                        <button
+                            type="button"
+                            onClick={handleRefresh}
+                            disabled={refreshing}
+                            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                            <RotateCcw size={13} className={refreshing ? 'animate-spin' : ''} />
+                            Refresh
+                        </button>
+                        <a
+                            href="#/inbox"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-[#364c83] hover:bg-indigo-100 transition"
+                        >
+                            Open Dedicated Inbox
+                            <ExternalLink size={12} />
+                        </a>
+                    </div>
+                </div>
+
+                {/* Filters */}
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <div className="relative flex-1 min-w-[220px]">
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                            type="text"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            placeholder="Search by name, email, phone, topic, or content..."
+                            className="input pl-9 text-xs"
+                        />
+                    </div>
+                    {topics.length > 0 && (
+                        <div className="w-full sm:w-56">
+                            <select
+                                value={topicFilter}
+                                onChange={(e) => setTopicFilter(e.target.value)}
+                                className="input text-xs"
+                            >
+                                <option value="all">All Topics ({messages.length})</option>
+                                {topics.map((t) => (
+                                    <option key={t} value={t}>
+                                        {t} ({messages.filter((m) => m.topic === t).length})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Messages List */}
+            {filtered.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center">
+                    <Mail size={32} className="mx-auto text-slate-300" />
+                    <p className="mt-3 text-sm font-semibold text-slate-700">No messages found</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                        {messages.length === 0
+                            ? 'Contact form submissions will appear here once visitors submit messages.'
+                            : 'No inquiries match your current search or topic filter.'}
+                    </p>
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 gap-3">
+                    {filtered.map((msg) => {
+                        const isExpanded = selectedMsg?.id === msg.id;
+                        return (
+                            <div
+                                key={msg.id}
+                                className={`rounded-xl border transition-all duration-200 bg-white ${
+                                    isExpanded
+                                        ? 'border-[#364c83] ring-1 ring-[#364c83] shadow-md'
+                                        : 'border-slate-200 shadow-sm hover:border-slate-300'
+                                }`}
+                            >
+                                <div className="p-4 sm:p-5">
+                                    <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <h3 className="text-sm font-bold text-slate-900">{msg.name}</h3>
+                                                {msg.topic && (
+                                                    <span className="inline-block rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-semibold text-[#364c83]">
+                                                        {msg.topic}
+                                                    </span>
+                                                )}
+                                                <span className="text-[11px] text-slate-400">
+                                                    {formatGhanaDate(msg.createdAt)}
+                                                </span>
+                                            </div>
+
+                                            <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                                                {msg.email && (
+                                                    <a
+                                                        href={`mailto:${encodeURIComponent(msg.email)}?subject=Re: ${encodeURIComponent(msg.topic || 'Inquiry on Codecastic GH')}`}
+                                                        className="inline-flex items-center gap-1 hover:text-[#364c83] hover:underline"
+                                                    >
+                                                        <Mail size={12} />
+                                                        {msg.email}
+                                                    </a>
+                                                )}
+                                                {msg.phone && (
+                                                    <a
+                                                        href={`tel:${msg.phone}`}
+                                                        className="inline-flex items-center gap-1 hover:text-[#364c83] hover:underline"
+                                                    >
+                                                        <Phone size={12} />
+                                                        {msg.phone}
+                                                    </a>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedMsg(isExpanded ? null : msg)}
+                                                className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                                            >
+                                                {isExpanded ? 'Hide' : 'View'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDelete(msg)}
+                                                disabled={deletingId === msg.id}
+                                                className="rounded-lg border border-red-200 p-1.5 text-xs text-red-600 hover:bg-red-50 transition disabled:opacity-50"
+                                                title="Delete message"
+                                            >
+                                                <Trash2 size={13} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Preview or Expanded Message Body */}
+                                    <div className="mt-3">
+                                        <p
+                                            className={`text-xs text-slate-700 leading-relaxed whitespace-pre-wrap ${
+                                                isExpanded ? '' : 'line-clamp-2'
+                                            }`}
+                                        >
+                                            {msg.message}
+                                        </p>
+                                    </div>
+
+                                    {/* Expanded Actions & Details */}
+                                    {isExpanded && (
+                                        <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                {msg.email && (
+                                                    <a
+                                                        href={`mailto:${encodeURIComponent(msg.email)}?subject=Re: ${encodeURIComponent(msg.topic || 'Inquiry on Codecastic GH')}&body=Dear ${encodeURIComponent(msg.name)},%0D%0A%0D%0AThank you for reaching out to Codecastic GH.`}
+                                                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1f2d57] transition"
+                                                    >
+                                                        <Mail size={12} />
+                                                        Reply by Email
+                                                    </a>
+                                                )}
+                                                {msg.phone && (
+                                                    <a
+                                                        href={`https://wa.me/${msg.phone.replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(msg.name)},%20thank%20you%20for%20contacting%20Codecastic%20GH.`}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition"
+                                                    >
+                                                        <Phone size={12} />
+                                                        WhatsApp Reply
+                                                    </a>
+                                                )}
+                                            </div>
+                                            <span className="text-[11px] text-slate-400">ID: {msg.id}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </section>
