@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { api } from '@appdeploy/client';
 import { TRACKS } from '../exams';
@@ -22,6 +22,7 @@ import {
     Trophy,
     ClipboardCheck,
     ArrowLeft,
+    ArrowRight,
     UserCheck,
     School,
     Eye,
@@ -55,6 +56,35 @@ import {
 } from 'lucide-react';
 
 export type Level = number | string;
+
+export const TRACK_NAMES: Record<string, string> = {
+    'ges-promotion': 'GES Promotion Exams',
+    'basic': 'Basic 4 to 9 Exams',
+    'bece': 'BECE Examination Hub',
+    'shs': 'SHS 1 - 3 Exams',
+    'wassce': 'WASSCE Examination Hub',
+    'gtle': 'GTLE (Teacher Licensure) Exams',
+};
+
+export const DEFAULT_TIMERS: Record<string, number> = {
+    'ges-promotion': 45,
+    'basic': 30,
+    'bece': 45,
+    'shs': 45,
+    'wassce': 60,
+    'gtle': 60,
+};
+
+export function getTrackSlugForCandidate(c: { accountType?: string; gradeLevel?: Level }): string {
+    if (c.accountType === 'ges-promo') return 'ges-promotion';
+    const lvl = String(c.gradeLevel || '').toUpperCase();
+    if (lvl === 'BECE') return 'bece';
+    if (lvl === 'WASSCE') return 'wassce';
+    if (lvl === 'GTLE') return 'gtle';
+    if (lvl.startsWith('SHS') || lvl === 'SHS 1' || lvl === 'SHS 2' || lvl === 'SHS 3') return 'shs';
+    return 'basic';
+}
+
 type Subject = { id: string; name: string };
 type ContactMsg = {
     id: string;
@@ -1144,8 +1174,20 @@ function StudentView({
     const [notice, setNotice] = useState('');
     const [starting, setStarting] = useState<string | null>(null);
 
-    // Number of exam questions limit: 20, 30, 40, 50, 60, 70, 75, or all
+    // Timers: loaded per examhub track
+    const [trackTimers, setTrackTimers] = useState<Record<string, number>>(DEFAULT_TIMERS);
+    const [secondsLeft, setSecondsLeft] = useState<number>(45 * 60);
+    const [timerActive, setTimerActive] = useState<boolean>(false);
+
+    // Number of exam questions limit: Dropbox selection (10, 20, 30, 40, 50, 60, 70, 75, 100, or all)
     const [questionLimit, setQuestionLimit] = useState<number | 'all'>(20);
+
+    // Examination Mode & Focus Filter: 'all' | 'year' | 'category'
+    const [filterMode, setFilterMode] = useState<'all' | 'year' | 'category'>('all');
+    const [selectedYear, setSelectedYear] = useState<string>('all');
+    const [selectedCategory, setSelectedCategory] = useState<string>('all');
+    const [yearsMap, setYearsMap] = useState<Record<string, string[]>>({});
+    const [categoriesMap, setCategoriesMap] = useState<Record<string, string[]>>({});
 
     const [subject, setSubject] = useState<Subject | null>(null);
     const [questions, setQuestions] = useState<ExamQ[]>([]);
@@ -1154,11 +1196,22 @@ function StudentView({
     const [submitting, setSubmitting] = useState(false);
     const [result, setResult] = useState<{ score: number; total: number; percent: number; review: ReviewItem[] } | null>(null);
 
+    const currentTrackSlug = getTrackSlugForCandidate(user);
+    const currentTrackTimerMinutes = trackTimers[currentTrackSlug] || 45;
+
     const loadCatalog = useCallback(async () => {
         const s = await api.get('/api/subjects');
         setSubjects(s.data.subjects);
         const c = await api.get('/api/counts');
-        setCounts(c.data.counts);
+        setCounts(c.data.counts || {});
+        if (c.data.yearsMap) setYearsMap(c.data.yearsMap);
+        if (c.data.categoriesMap) setCategoriesMap(c.data.categoriesMap);
+        try {
+            const t = await api.get('/api/exam/timers');
+            if (t.data?.timers) setTrackTimers({ ...DEFAULT_TIMERS, ...t.data.timers });
+        } catch {
+            // ignore
+        }
     }, []);
 
     useEffect(() => {
@@ -1173,15 +1226,54 @@ function StudentView({
         })();
     }, [loadCatalog]);
 
+    const displayedYears = useMemo(() => {
+        const set = new Set<string>();
+        Object.entries(yearsMap).forEach(([k, yrs]) => {
+            if (k.endsWith(`|${level}`)) {
+                yrs.forEach((y) => { if (y) set.add(String(y).trim()); });
+            }
+        });
+        ['2024', '2023', '2022', '2021', '2020', '2019'].forEach((y) => set.add(y));
+        return Array.from(set).sort((a, b) => b.localeCompare(a));
+    }, [yearsMap, level]);
+
+    const displayedCategories = useMemo(() => {
+        const set = new Set<string>();
+        Object.entries(categoriesMap).forEach(([k, cats]) => {
+            if (k.endsWith(`|${level}`)) {
+                cats.forEach((c) => { if (c) set.add(String(c).trim()); });
+            }
+        });
+        if (level === 'GES-PROMO') {
+            ['Pedagogy & Teaching Methodology', 'Educational Policies & Governance', 'School Management & Supervision', 'Curriculum & Assessment', 'Educational Technology (ICT)'].forEach((c) => set.add(c));
+        } else {
+            ['Core Concepts', 'Past Papers & Mock', 'Problem Solving', 'Comprehension & Vocabulary'].forEach((c) => set.add(c));
+        }
+        return Array.from(set).sort();
+    }, [categoriesMap, level]);
+
     const startExam = async (s: Subject) => {
         if (level === null) return;
         setNotice('');
         setStarting(s.id);
         try {
-            const res = await api.get(`/api/exam/${level}/${s.id}`);
+            let queryStr = '';
+            if (filterMode === 'year' && selectedYear !== 'all') {
+                queryStr += `?year=${encodeURIComponent(selectedYear)}`;
+            }
+            if (filterMode === 'category' && selectedCategory !== 'all') {
+                queryStr += `${queryStr ? '&' : '?'}category=${encodeURIComponent(selectedCategory)}`;
+            }
+            const res = await api.get(`/api/exam/${level}/${s.id}${queryStr}`);
             const qs: ExamQ[] = res.data.questions;
             if (qs.length === 0) {
-                setNotice('There are no questions for this section and subject yet.');
+                setNotice(
+                    filterMode === 'year' && selectedYear !== 'all'
+                        ? `No questions found for Year ${selectedYear} in ${s.name}. Please select another year or choose "All Questions".`
+                        : filterMode === 'category' && selectedCategory !== 'all'
+                        ? `No questions found for category "${selectedCategory}" in ${s.name}. Please select another category or choose "All Questions".`
+                        : 'There are no questions for this section and subject yet.'
+                );
                 return;
             }
             let chosenQs = qs;
@@ -1194,6 +1286,12 @@ function StudentView({
             setAnswers({});
             setIndex(0);
             setResult(null);
+
+            // Initialize countdown timer for this examhub track
+            const durationMins = trackTimers[currentTrackSlug] || 45;
+            setSecondsLeft(durationMins * 60);
+            setTimerActive(true);
+
             setStage('exam');
         } catch (e) {
             setNotice(errMsg(e, 'Could not start the exam.'));
@@ -1202,10 +1300,13 @@ function StudentView({
         }
     };
 
-    const submitExam = async () => {
-        const unanswered = questions.filter((q) => answers[q.id] === undefined).length;
-        if (unanswered > 0 && !window.confirm(`You have ${unanswered} unanswered question(s). Submit anyway?`)) return;
+    const submitExam = async (force = false) => {
+        if (!force) {
+            const unanswered = questions.filter((q) => answers[q.id] === undefined).length;
+            if (unanswered > 0 && !window.confirm(`You have ${unanswered} unanswered question(s). Submit anyway?`)) return;
+        }
         if (!subject || level === null) return;
+        setTimerActive(false);
         setSubmitting(true);
         try {
             const res = await api.post('/api/exam/submit', {
@@ -1229,7 +1330,30 @@ function StudentView({
         }
     };
 
+    // Live Exam Countdown Timer
+    useEffect(() => {
+        if (stage !== 'exam' || !timerActive) return;
+        const interval = setInterval(() => {
+            setSecondsLeft((prev) => {
+                if (prev <= 1) {
+                    clearInterval(interval);
+                    submitExam(true);
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [stage, timerActive, questions, answers, subject, level]);
+
+    const formatTimer = (totalSeconds: number) => {
+        const m = Math.floor(totalSeconds / 60);
+        const s = totalSeconds % 60;
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    };
+
     const backToStart = () => {
+        setTimerActive(false);
         setStage('select');
         setSubject(null);
         setQuestions([]);
@@ -1276,7 +1400,22 @@ function StudentView({
                         <SubjectIcon name={subject.name} size={18} />
                         {subject.name} &middot; {levelLabel(level)}
                     </span>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                        {/* Live Countdown Timer Badge */}
+                        <div
+                            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all shadow-2xs ${
+                                secondsLeft <= 60
+                                    ? 'bg-rose-100 text-rose-700 animate-pulse border border-rose-300'
+                                    : secondsLeft <= 300
+                                    ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                    : 'bg-indigo-50 text-[#364c83] border border-indigo-200'
+                            }`}
+                            title="Time remaining for this examination session"
+                        >
+                            <Clock size={13} className={secondsLeft <= 60 ? 'text-rose-600' : secondsLeft <= 300 ? 'text-amber-600' : 'text-[#364c83]'} />
+                            <span>Time Left: {formatTimer(secondsLeft)}</span>
+                        </div>
+
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-[#364c83]">
                             <Sparkles size={13} />
                             Score: {liveScore} / {answeredCount} ({livePercent}%)
@@ -1578,41 +1717,156 @@ function StudentView({
                 </div>
             </div>
 
-            {/* Question Count Setting (from 20, 30, 40 ... to 75, or All) */}
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* Exam Configuration & Focus Selection Card */}
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
                     <div>
                         <span className="text-[11px] font-bold uppercase tracking-wider text-[#364c83]">
-                            Exam Question Settings
+                            Exam Settings &amp; Focus Mode
                         </span>
-                        <h3 className="text-sm font-bold text-slate-900">Set Number of Exam Questions</h3>
+                        <h3 className="text-sm font-bold text-slate-900">Customise Your Examination Session</h3>
                         <p className="mt-0.5 text-xs text-slate-500">
-                            Choose how many questions to attempt per exam session (from 20 to 75, or all available questions).
+                            Configure question volume, choose to practice by year or by category, and review your timed session.
                         </p>
                     </div>
-                    <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-[#364c83]">
-                        {questionLimit === 'all' ? 'All Questions' : `${questionLimit} Questions Set`}
-                    </span>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-200/80 px-3 py-1 text-xs font-bold text-[#364c83]">
+                            <Clock size={13} />
+                            Timer: {currentTrackTimerMinutes} Minutes
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 px-3 py-1 text-xs font-bold text-emerald-800">
+                            <Sparkles size={13} />
+                            {questionLimit === 'all' ? 'All Questions' : `${questionLimit} Questions Set`}
+                        </span>
+                    </div>
                 </div>
 
-                <div className="mt-3.5 flex flex-wrap gap-2">
-                    {[20, 30, 40, 50, 60, 70, 75, 'all'].map((limit) => {
-                        const active = questionLimit === limit;
-                        return (
+                {/* Dropdowns Row: 1. Question Count Dropbox | 2. Exam Mode (By Year or Category) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Setting 1: Question Count Dropdown (Dropbox) */}
+                    <div>
+                        <label htmlFor="question-limit-select" className="block text-xs font-bold text-slate-700 mb-1.5">
+                            Number of Exam Questions (Dropbox)
+                        </label>
+                        <select
+                            id="question-limit-select"
+                            value={String(questionLimit)}
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                setQuestionLimit(val === 'all' ? 'all' : Number(val));
+                            }}
+                            className="input text-xs font-semibold text-slate-800 bg-white border-slate-300 w-full rounded-lg py-2 focus:border-[#364c83] focus:ring-1 focus:ring-[#364c83]"
+                        >
+                            <option value="10">10 Questions (Quick Practice Quiz)</option>
+                            <option value="20">20 Questions (Standard Trial Quiz)</option>
+                            <option value="30">30 Questions (Practice Test)</option>
+                            <option value="40">40 Questions (Half Mock Paper)</option>
+                            <option value="50">50 Questions (Comprehensive Examination)</option>
+                            <option value="60">60 Questions</option>
+                            <option value="70">70 Questions</option>
+                            <option value="75">75 Questions (Full Promotion Test)</option>
+                            <option value="100">100 Questions (Mastery Drill)</option>
+                            <option value="all">All Available Questions in Question Bank</option>
+                        </select>
+                        <p className="mt-1 text-[11px] text-slate-400">
+                            Select how many questions will be randomly drawn for your practice test session.
+                        </p>
+                    </div>
+
+                    {/* Setting 2: Examination Mode (By Year vs By Category vs All) */}
+                    <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                            Exam Practice Focus (By Year or By Category)
+                        </label>
+                        <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1 mb-2">
                             <button
-                                key={String(limit)}
                                 type="button"
-                                onClick={() => setQuestionLimit(limit as number | 'all')}
-                                className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all ${
-                                    active
-                                        ? 'bg-[#364c83] text-white shadow-sm ring-2 ring-[#364c83]/20'
-                                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                                onClick={() => {
+                                    setFilterMode('all');
+                                    setSelectedYear('all');
+                                    setSelectedCategory('all');
+                                }}
+                                className={`flex-1 rounded-md py-1.5 px-2 text-xs font-bold transition ${
+                                    filterMode === 'all'
+                                        ? 'bg-white text-[#364c83] shadow-xs'
+                                        : 'text-slate-600 hover:text-slate-900'
                                 }`}
                             >
-                                {limit === 'all' ? 'All Questions' : `${limit} Questions`}
+                                All Questions
                             </button>
-                        );
-                    })}
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setFilterMode('year');
+                                    setSelectedCategory('all');
+                                }}
+                                className={`flex-1 rounded-md py-1.5 px-2 text-xs font-bold transition ${
+                                    filterMode === 'year'
+                                        ? 'bg-white text-[#364c83] shadow-xs'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                            >
+                                By Exam Year
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setFilterMode('category');
+                                    setSelectedYear('all');
+                                }}
+                                className={`flex-1 rounded-md py-1.5 px-2 text-xs font-bold transition ${
+                                    filterMode === 'category'
+                                        ? 'bg-white text-[#364c83] shadow-xs'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                            >
+                                By Category
+                            </button>
+                        </div>
+
+                        {/* Year Selector Dropdown (when By Year is active) */}
+                        {filterMode === 'year' && (
+                            <div className="animate-in fade-in duration-150">
+                                <select
+                                    value={selectedYear}
+                                    onChange={(e) => setSelectedYear(e.target.value)}
+                                    className="input text-xs font-semibold text-slate-800 bg-white border-indigo-300 w-full rounded-lg py-2 focus:border-[#364c83] focus:ring-1 focus:ring-[#364c83]"
+                                >
+                                    <option value="all">All Available Past Years</option>
+                                    {displayedYears.map((yr) => (
+                                        <option key={yr} value={yr}>
+                                            Year {yr} Past Questions
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {/* Category Selector Dropdown (when By Category is active) */}
+                        {filterMode === 'category' && (
+                            <div className="animate-in fade-in duration-150">
+                                <select
+                                    value={selectedCategory}
+                                    onChange={(e) => setSelectedCategory(e.target.value)}
+                                    className="input text-xs font-semibold text-slate-800 bg-white border-indigo-300 w-full rounded-lg py-2 focus:border-[#364c83] focus:ring-1 focus:ring-[#364c83]"
+                                >
+                                    <option value="all">All Topics &amp; Categories</option>
+                                    {displayedCategories.map((cat) => (
+                                        <option key={cat} value={cat}>
+                                            {cat}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {filterMode === 'all' && (
+                            <p className="text-[11px] text-slate-400">
+                                Questions will be drawn randomly from across all years and syllabus categories.
+                            </p>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -1622,9 +1876,9 @@ function StudentView({
                 <h3 className="text-sm font-semibold text-slate-900">
                     {level === 'GES-PROMO'
                         ? 'Your Registered Promotion Rank Assessment'
-                        : `Choose a ${levelLabel(level)} subject to start`}
+                        : `Choose a ${levelLabel(level)} subject to start trial quiz`}
                 </h3>
-                <div className={`mt-3 grid gap-3 ${level === 'GES-PROMO' ? 'sm:grid-cols-1' : 'sm:grid-cols-2'}`}>
+                <div className={`mt-3 grid gap-3.5 ${level === 'GES-PROMO' ? 'sm:grid-cols-1' : 'sm:grid-cols-2'}`}>
                     {availableItems.map((s) => {
                         const count = counts[`${s.id}|${level}`] || 0;
                         const disabled = count === 0 || starting !== null;
@@ -1632,34 +1886,68 @@ function StudentView({
                         const questionsToTake = questionLimit === 'all' ? count : Math.min(count, questionLimit);
 
                         return (
-                            <button
+                            <div
                                 key={s.id}
-                                type="button"
-                                onClick={() => startExam(s)}
-                                disabled={disabled}
-                                className={`flex items-center gap-3 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:border-[#364c83] hover:shadow disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-none ${
-                                    isUserRank ? 'border-[#364c83] ring-1 ring-[#364c83]/30' : 'border-slate-200'
+                                className={`rounded-xl border bg-white p-4 shadow-sm transition-all hover:border-[#364c83] flex flex-col justify-between gap-3 ${
+                                    isUserRank ? 'border-[#364c83] ring-1 ring-[#364c83]/30 bg-indigo-50/10' : 'border-slate-200'
                                 }`}
                             >
-                                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
-                                    {starting === s.id ? <Loader2 className="animate-spin" size={18} /> : <SubjectIcon name={s.name} />}
-                                </span>
-                                <span className="min-w-0 flex-1">
-                                    <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-slate-900">
-                                        <span>{s.name}</span>
-                                        {isUserRank && (
-                                            <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#364c83]">
-                                                Registered Rank
+                                <div className="flex items-start gap-3">
+                                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-[#364c83]">
+                                        <SubjectIcon name={s.name} />
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-1.5 text-sm font-bold text-slate-900">
+                                            <span>{s.name}</span>
+                                            {isUserRank && (
+                                                <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#364c83]">
+                                                    Registered Rank
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                                            <span>Bank: <strong>{count} questions</strong></span>
+                                            <span>&middot;</span>
+                                            <span>Attempting: <strong className="text-[#364c83]">{questionsToTake}</strong></span>
+                                            <span>&middot;</span>
+                                            <span className="inline-flex items-center gap-1 text-slate-600">
+                                                <Clock size={11} /> {currentTrackTimerMinutes} mins
                                             </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                                    <span className="text-[11px] text-slate-400">
+                                        {filterMode === 'year' && selectedYear !== 'all'
+                                            ? `Year ${selectedYear} Focus`
+                                            : filterMode === 'category' && selectedCategory !== 'all'
+                                            ? `${selectedCategory}`
+                                            : 'Comprehensive Practice'}
+                                    </span>
+
+                                    {/* Dedicated Start Trial Quiz Button */}
+                                    <button
+                                        type="button"
+                                        onClick={() => startExam(s)}
+                                        disabled={disabled}
+                                        className="inline-flex items-center gap-2 rounded-lg bg-[#364c83] hover:bg-[#1f2d57] text-white px-4 py-2 text-xs font-bold transition shadow-xs active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {starting === s.id ? (
+                                            <>
+                                                <Loader2 className="animate-spin" size={13} />
+                                                <span>Preparing Quiz...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Sparkles size={13} className="text-amber-300" />
+                                                <span>Start Trial Quiz</span>
+                                                <ArrowRight size={13} />
+                                            </>
                                         )}
-                                    </span>
-                                    <span className="block text-xs text-slate-500">
-                                        {count === 0
-                                            ? 'No questions yet'
-                                            : `${questionsToTake} question${questionsToTake === 1 ? '' : 's'} to attempt (Total in bank: ${count})`}
-                                    </span>
-                                </span>
-                            </button>
+                                    </button>
+                                </div>
+                            </div>
                         );
                     })}
                 </div>
@@ -1806,7 +2094,7 @@ function AdminView() {
     );
 }
 
-type AdminTab = 'candidates' | 'questions' | 'subjects' | 'results' | 'messages';
+type AdminTab = 'candidates' | 'questions' | 'subjects' | 'results' | 'messages' | 'timers';
 
 function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) {
     const [tab, setTab] = useState<AdminTab>('candidates');
@@ -1878,6 +2166,7 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
         { id: 'subjects', label: 'Subjects', icon: ClipboardCheck },
         { id: 'results', label: 'Exam Results', icon: Trophy },
         { id: 'messages', label: 'Contact Messages', icon: Mail, count: messages.length },
+        { id: 'timers', label: 'ExamHub Timers', icon: Clock },
     ];
 
     return (
@@ -1979,8 +2268,197 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
                         isMariaDb={isMariaDb}
                     />
                 )}
+                {tab === 'timers' && <AdminTimers code={code} flash={flash} />}
             </div>
         </div>
+    );
+}
+
+function AdminTimers({
+    code,
+    flash,
+}: {
+    code: string;
+    flash: (ok: boolean, text: string) => void;
+}) {
+    const [timers, setTimers] = useState<Record<string, number>>(DEFAULT_TIMERS);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        api.get('/api/exam/timers')
+            .then((res) => {
+                if (res.data?.timers) setTimers({ ...DEFAULT_TIMERS, ...res.data.timers });
+            })
+            .catch(() => undefined)
+            .finally(() => setLoading(false));
+    }, []);
+
+    const handleSave = async (e: FormEvent) => {
+        e.preventDefault();
+        setSaving(true);
+        try {
+            const res = await api.post('/api/admin/timers', {
+                passcode: code,
+                timers,
+            });
+            if (res.data?.timers) setTimers(res.data.timers);
+            flash(true, 'ExamHub timers successfully saved!');
+        } catch (e: any) {
+            flash(false, errMsg(e, 'Could not save timers.'));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const tracksList = [
+        {
+            slug: 'ges-promotion',
+            label: 'GES Promotion Exams',
+            badge: 'Teachers & Officers',
+            desc: 'For Assistant Director II, Assistant Director I, Principal Superintendent, and Deputy Director ranks.',
+            defaultMins: 45,
+        },
+        {
+            slug: 'basic',
+            label: 'Basic School (Basic 4 to 9)',
+            badge: 'Primary & JHS',
+            desc: 'End-of-term and end-of-year practice for Basic 4, 5, 6, 7, 8, and 9 pupils.',
+            defaultMins: 30,
+        },
+        {
+            slug: 'bece',
+            label: 'BECE Examination Hub',
+            badge: 'JHS 3 National',
+            desc: 'National examination practice for Basic Education Certificate Examination candidates.',
+            defaultMins: 45,
+        },
+        {
+            slug: 'shs',
+            label: 'SHS 1 - 3 Exams',
+            badge: 'Senior High School',
+            desc: 'End-of-term and mock tests for SHS 1, SHS 2, and SHS 3 students.',
+            defaultMins: 45,
+        },
+        {
+            slug: 'wassce',
+            label: 'WASSCE Examination Hub',
+            badge: 'SHS 3 National',
+            desc: 'West African Senior School Certificate Examination comprehensive mock papers.',
+            defaultMins: 60,
+        },
+        {
+            slug: 'gtle',
+            label: 'GTLE (Teacher Licensure)',
+            badge: 'Licensure Hub',
+            desc: 'Ghana Teacher Licensure Examination professional knowledge papers.',
+            defaultMins: 60,
+        },
+    ];
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center gap-2 py-16 text-slate-400">
+                <Loader2 className="animate-spin" size={18} />
+                Loading ExamHub timers...
+            </div>
+        );
+    }
+
+    return (
+        <form onSubmit={handleSave} className="space-y-6">
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                                <Clock size={16} />
+                            </span>
+                            <h2 className="text-base font-bold text-slate-900">
+                                ExamHub Timers Configuration
+                            </h2>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                            Set the official time duration (in minutes) for every ExamHub track. Candidates will see this countdown timer during their tests.
+                        </p>
+                    </div>
+
+                    <button
+                        type="submit"
+                        disabled={saving}
+                        className="inline-flex items-center gap-2 rounded-lg bg-[#364c83] hover:bg-[#1f2d57] text-white px-4 py-2 text-xs font-bold transition shadow-xs disabled:opacity-50"
+                    >
+                        {saving ? (
+                            <>
+                                <Loader2 size={13} className="animate-spin" />
+                                Saving Timers...
+                            </>
+                        ) : (
+                            <>
+                                <CheckCircle2 size={13} />
+                                Save All Timers
+                            </>
+                        )}
+                    </button>
+                </div>
+
+                <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {tracksList.map((t) => {
+                        const currentVal = timers[t.slug] ?? t.defaultMins;
+                        return (
+                            <div
+                                key={t.slug}
+                                className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 hover:border-slate-300 transition"
+                            >
+                                <div className="flex items-center justify-between gap-2">
+                                    <h3 className="text-sm font-bold text-slate-900">{t.label}</h3>
+                                    <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold uppercase text-[#364c83]">
+                                        {t.badge}
+                                    </span>
+                                </div>
+                                <p className="mt-1 text-xs text-slate-500 line-clamp-2">{t.desc}</p>
+
+                                <div className="mt-3.5 flex flex-wrap items-center gap-3">
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="number"
+                                            min={5}
+                                            max={300}
+                                            value={currentVal}
+                                            onChange={(e) => {
+                                                const val = Math.max(1, Math.min(360, Number(e.target.value) || 1));
+                                                setTimers((prev) => ({ ...prev, [t.slug]: val }));
+                                            }}
+                                            className="input text-xs w-24 font-bold text-center bg-white"
+                                        />
+                                        <span className="text-xs font-semibold text-slate-600">Minutes</span>
+                                    </div>
+
+                                    {/* Presets */}
+                                    <div className="flex items-center gap-1 text-[11px]">
+                                        <span className="text-slate-400 mr-1">Presets:</span>
+                                        {[15, 30, 45, 60, 90].map((m) => (
+                                            <button
+                                                key={m}
+                                                type="button"
+                                                onClick={() => setTimers((prev) => ({ ...prev, [t.slug]: m }))}
+                                                className={`rounded px-1.5 py-0.5 border text-[10px] font-bold transition ${
+                                                    currentVal === m
+                                                        ? 'bg-[#364c83] text-white border-[#364c83]'
+                                                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                                                }`}
+                                            >
+                                                {m}m
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        </form>
     );
 }
 

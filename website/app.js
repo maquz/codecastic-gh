@@ -806,6 +806,25 @@ async function isAdmin(code) {
   const saved = await getAdminCode();
   return !!saved && typeof code === "string" && code === saved;
 }
+var DEFAULT_TIMERS = {
+  "ges-promotion": 45,
+  "basic": 30,
+  "bece": 45,
+  "shs": 45,
+  "wassce": 60,
+  "gtle": 60
+};
+async function getExamTimers() {
+  try {
+    const { items } = await db.list("settings", { limit: 100 });
+    const record = items.find((i) => i.key === "exam_timers");
+    if (record && record.timers && typeof record.timers === "object") {
+      return { ...DEFAULT_TIMERS, ...record.timers };
+    }
+  } catch {
+  }
+  return { ...DEFAULT_TIMERS };
+}
 async function allQuestions() {
   const { items } = await db.list("questions", { limit: 5e3 });
   return [...items].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -1565,20 +1584,71 @@ var handler = router({
       await ensureGesPromoRankSeed();
       const qs = await allQuestions();
       const counts = {};
+      const yearsMap = {};
+      const categoriesMap = {};
       qs.forEach((q2) => {
         const key = `${q2.subjectId}|${q2.level}`;
         counts[key] = (counts[key] || 0) + 1;
+        if (q2.year && String(q2.year).trim()) {
+          const yr = String(q2.year).trim();
+          yearsMap[key] = yearsMap[key] || [];
+          if (!yearsMap[key].includes(yr)) yearsMap[key].push(yr);
+        }
+        if (q2.category && String(q2.category).trim()) {
+          const cat = String(q2.category).trim();
+          categoriesMap[key] = categoriesMap[key] || [];
+          if (!categoriesMap[key].includes(cat)) categoriesMap[key].push(cat);
+        }
       });
-      return json({ counts });
+      return json({ counts, yearsMap, categoriesMap });
+    }
+  ],
+  "GET /api/exam/timers": [
+    async () => {
+      const timers = await getExamTimers();
+      return json({ timers });
+    }
+  ],
+  "POST /api/admin/timers": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      if (!await isAdmin(b.passcode)) return error("Not authorised", 401);
+      const inputTimers = b.timers || {};
+      const current = await getExamTimers();
+      const updated = { ...current };
+      for (const [key, val] of Object.entries(inputTimers)) {
+        const num = Number(val);
+        if (num > 0 && num <= 360) {
+          updated[key] = Math.round(num);
+        }
+      }
+      const { items } = await db.list("settings", { limit: 100 });
+      const existing = items.find((i) => i.key === "exam_timers");
+      if (existing) {
+        await db.update("settings", existing.id, { key: "exam_timers", timers: updated, updatedAt: Date.now() });
+      } else {
+        await db.add("settings", [{ key: "exam_timers", timers: updated, updatedAt: Date.now() }]);
+      }
+      return json({ ok: true, timers: updated });
     }
   ],
   "GET /api/exam/:level/:subjectId": [
     async (ctx) => {
       const level = normLevel(ctx.params.level);
       if (level === null) return error("Invalid level", 400);
-      const qs = (await allQuestions()).filter(
+      let qs = (await allQuestions()).filter(
         (q2) => q2.subjectId === ctx.params.subjectId && q2.level === level
       );
+      const yearParam = ctx.query?.year;
+      const catParam = ctx.query?.category;
+      if (yearParam && yearParam !== "all") {
+        qs = qs.filter((q2) => String(q2.year || "").trim() === String(yearParam).trim());
+      }
+      if (catParam && catParam !== "all") {
+        qs = qs.filter(
+          (q2) => String(q2.category || "").toLowerCase().trim() === String(catParam).toLowerCase().trim()
+        );
+      }
       return json({
         questions: qs.map((q2) => ({
           id: q2.id,

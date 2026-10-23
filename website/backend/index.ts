@@ -336,6 +336,28 @@ async function isAdmin(code: unknown): Promise<boolean> {
     return !!saved && typeof code === 'string' && code === saved;
 }
 
+const DEFAULT_TIMERS: Record<string, number> = {
+    'ges-promotion': 45,
+    'basic': 30,
+    'bece': 45,
+    'shs': 45,
+    'wassce': 60,
+    'gtle': 60,
+};
+
+async function getExamTimers(): Promise<Record<string, number>> {
+    try {
+        const { items } = await db.list('settings', { limit: 100 });
+        const record: any = items.find((i: any) => i.key === 'exam_timers');
+        if (record && record.timers && typeof record.timers === 'object') {
+            return { ...DEFAULT_TIMERS, ...record.timers };
+        }
+    } catch {
+        // fallback
+    }
+    return { ...DEFAULT_TIMERS };
+}
+
 async function allQuestions(): Promise<any[]> {
     const { items } = await db.list('questions', { limit: 5000 });
     return [...items].sort((a: any, b: any) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -1286,11 +1308,58 @@ export const handler = router({
             await ensureGesPromoRankSeed();
             const qs = await allQuestions();
             const counts: Record<string, number> = {};
+            const yearsMap: Record<string, string[]> = {};
+            const categoriesMap: Record<string, string[]> = {};
+
             qs.forEach((q: any) => {
                 const key = `${q.subjectId}|${q.level}`;
                 counts[key] = (counts[key] || 0) + 1;
+                if (q.year && String(q.year).trim()) {
+                    const yr = String(q.year).trim();
+                    yearsMap[key] = yearsMap[key] || [];
+                    if (!yearsMap[key].includes(yr)) yearsMap[key].push(yr);
+                }
+                if (q.category && String(q.category).trim()) {
+                    const cat = String(q.category).trim();
+                    categoriesMap[key] = categoriesMap[key] || [];
+                    if (!categoriesMap[key].includes(cat)) categoriesMap[key].push(cat);
+                }
             });
-            return json({ counts });
+            return json({ counts, yearsMap, categoriesMap });
+        },
+    ],
+
+    'GET /api/exam/timers': [
+        async () => {
+            const timers = await getExamTimers();
+            return json({ timers });
+        },
+    ],
+
+    'POST /api/admin/timers': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+            const inputTimers = (b.timers || {}) as Record<string, number>;
+            const current = await getExamTimers();
+            const updated: Record<string, number> = { ...current };
+
+            for (const [key, val] of Object.entries(inputTimers)) {
+                const num = Number(val);
+                if (num > 0 && num <= 360) {
+                    updated[key] = Math.round(num);
+                }
+            }
+
+            const { items } = await db.list('settings', { limit: 100 });
+            const existing: any = items.find((i: any) => i.key === 'exam_timers');
+            if (existing) {
+                await db.update('settings', existing.id, { key: 'exam_timers', timers: updated, updatedAt: Date.now() });
+            } else {
+                await db.add('settings', [{ key: 'exam_timers', timers: updated, updatedAt: Date.now() }]);
+            }
+
+            return json({ ok: true, timers: updated });
         },
     ],
 
@@ -1298,9 +1367,19 @@ export const handler = router({
         async (ctx) => {
             const level = normLevel(ctx.params.level);
             if (level === null) return error('Invalid level', 400);
-            const qs = (await allQuestions()).filter(
+            let qs = (await allQuestions()).filter(
                 (q: any) => q.subjectId === ctx.params.subjectId && q.level === level
             );
+            const yearParam = ctx.query?.year;
+            const catParam = ctx.query?.category;
+            if (yearParam && yearParam !== 'all') {
+                qs = qs.filter((q: any) => String(q.year || '').trim() === String(yearParam).trim());
+            }
+            if (catParam && catParam !== 'all') {
+                qs = qs.filter(
+                    (q: any) => String(q.category || '').toLowerCase().trim() === String(catParam).toLowerCase().trim()
+                );
+            }
             return json({
                 questions: qs.map((q: any) => ({
                     id: q.id,
