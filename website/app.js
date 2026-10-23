@@ -15111,3 +15111,8 @@ var PORT = process.env.PORT || 3e3;
 server.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
+var server_default = server;
+export {
+  server_default as default,
+  server
+};
