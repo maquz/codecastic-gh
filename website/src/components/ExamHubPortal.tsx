@@ -1188,6 +1188,9 @@ function StudentView({
     const [selectedCategory, setSelectedCategory] = useState<string>('all');
     const [yearsMap, setYearsMap] = useState<Record<string, string[]>>({});
     const [categoriesMap, setCategoriesMap] = useState<Record<string, string[]>>({});
+    const [yearCounts, setYearCounts] = useState<Record<string, number>>({});
+    const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+    const [autoBackfill, setAutoBackfill] = useState<boolean>(false);
 
     const [subject, setSubject] = useState<Subject | null>(null);
     const [questions, setQuestions] = useState<ExamQ[]>([]);
@@ -1206,6 +1209,8 @@ function StudentView({
         setCounts(c.data.counts || {});
         if (c.data.yearsMap) setYearsMap(c.data.yearsMap);
         if (c.data.categoriesMap) setCategoriesMap(c.data.categoriesMap);
+        if (c.data.yearCounts) setYearCounts(c.data.yearCounts);
+        if (c.data.categoryCounts) setCategoryCounts(c.data.categoryCounts);
         try {
             const t = await api.get('/api/exam/timers');
             if (t.data?.timers) setTrackTimers({ ...DEFAULT_TIMERS, ...t.data.timers });
@@ -1225,6 +1230,12 @@ function StudentView({
             }
         })();
     }, [loadCatalog]);
+
+    const availableItems = useMemo(() => {
+        return level === 'GES-PROMO'
+            ? PROMOTION_RANK_ITEMS.filter((r) => !user.promotionRank || r.name === user.promotionRank)
+            : subjects;
+    }, [level, user.promotionRank, subjects]);
 
     const displayedYears = useMemo(() => {
         const set = new Set<string>();
@@ -1252,18 +1263,43 @@ function StudentView({
         return Array.from(set).sort();
     }, [categoriesMap, level]);
 
+    const getYearTotalCount = useCallback(
+        (yr: string) => {
+            return availableItems.reduce((sum, s) => {
+                return sum + (yearCounts[`${s.id}|${level}|${yr}`] || 0);
+            }, 0);
+        },
+        [availableItems, yearCounts, level]
+    );
+
+    const getCategoryTotalCount = useCallback(
+        (cat: string) => {
+            return availableItems.reduce((sum, s) => {
+                return sum + (categoryCounts[`${s.id}|${level}|${cat}`] || 0);
+            }, 0);
+        },
+        [availableItems, categoryCounts, level]
+    );
+
     const startExam = async (s: Subject) => {
         if (level === null) return;
         setNotice('');
         setStarting(s.id);
         try {
-            let queryStr = '';
+            const queryParts: string[] = [];
             if (filterMode === 'year' && selectedYear !== 'all') {
-                queryStr += `?year=${encodeURIComponent(selectedYear)}`;
+                queryParts.push(`year=${encodeURIComponent(selectedYear)}`);
             }
             if (filterMode === 'category' && selectedCategory !== 'all') {
-                queryStr += `${queryStr ? '&' : '?'}category=${encodeURIComponent(selectedCategory)}`;
+                queryParts.push(`category=${encodeURIComponent(selectedCategory)}`);
             }
+            if (questionLimit !== 'all') {
+                queryParts.push(`limit=${questionLimit}`);
+            }
+            if (autoBackfill) {
+                queryParts.push(`backfill=true`);
+            }
+            const queryStr = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
             const res = await api.get(`/api/exam/${level}/${s.id}${queryStr}`);
             const qs: ExamQ[] = res.data.questions;
             if (qs.length === 0) {
@@ -1396,9 +1432,19 @@ function StudentView({
             <div className="mx-auto max-w-2xl">
                 {/* Live Exam Header with Real-time Scoring */}
                 <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-                    <span className="flex items-center gap-2 font-bold text-[#364c83]">
+                    <span className="flex items-center gap-2 font-bold text-[#364c83] flex-wrap">
                         <SubjectIcon name={subject.name} size={18} />
-                        {subject.name} &middot; {levelLabel(level)}
+                        <span>{subject.name} &middot; {levelLabel(level)}</span>
+                        {filterMode === 'year' && selectedYear !== 'all' && (
+                            <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[11px] font-semibold text-[#364c83]">
+                                Year {selectedYear}
+                            </span>
+                        )}
+                        {filterMode === 'category' && selectedCategory !== 'all' && (
+                            <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[11px] font-semibold text-[#364c83]">
+                                {selectedCategory}
+                            </span>
+                        )}
                     </span>
                     <div className="flex items-center gap-2.5 flex-wrap">
                         {/* Live Countdown Timer Badge */}
@@ -1688,10 +1734,6 @@ function StudentView({
     }
 
     /* ---------------- Select ---------------- */
-    const availableItems =
-        level === 'GES-PROMO'
-            ? PROMOTION_RANK_ITEMS.filter((r) => !user.promotionRank || r.name === user.promotionRank)
-            : subjects;
 
     return (
         <div className="mx-auto max-w-2xl space-y-5">
@@ -1834,11 +1876,14 @@ function StudentView({
                                     className="input text-xs font-semibold text-slate-800 bg-white border-indigo-300 w-full rounded-lg py-2 focus:border-[#364c83] focus:ring-1 focus:ring-[#364c83]"
                                 >
                                     <option value="all">All Available Past Years</option>
-                                    {displayedYears.map((yr) => (
-                                        <option key={yr} value={yr}>
-                                            Year {yr} Past Questions
-                                        </option>
-                                    ))}
+                                    {displayedYears.map((yr) => {
+                                        const yrCount = getYearTotalCount(yr);
+                                        return (
+                                            <option key={yr} value={yr} disabled={yrCount === 0}>
+                                                Year {yr} Past Questions ({yrCount} question{yrCount === 1 ? '' : 's'}{yrCount === 0 ? ' - None available' : ''})
+                                            </option>
+                                        );
+                                    })}
                                 </select>
                             </div>
                         )}
@@ -1852,11 +1897,14 @@ function StudentView({
                                     className="input text-xs font-semibold text-slate-800 bg-white border-indigo-300 w-full rounded-lg py-2 focus:border-[#364c83] focus:ring-1 focus:ring-[#364c83]"
                                 >
                                     <option value="all">All Topics &amp; Categories</option>
-                                    {displayedCategories.map((cat) => (
-                                        <option key={cat} value={cat}>
-                                            {cat}
-                                        </option>
-                                    ))}
+                                    {displayedCategories.map((cat) => {
+                                        const catCount = getCategoryTotalCount(cat);
+                                        return (
+                                            <option key={cat} value={cat} disabled={catCount === 0}>
+                                                {cat} ({catCount} question{catCount === 1 ? '' : 's'}{catCount === 0 ? ' - None available' : ''})
+                                            </option>
+                                        );
+                                    })}
                                 </select>
                             </div>
                         )}
@@ -1880,10 +1928,31 @@ function StudentView({
                 </h3>
                 <div className={`mt-3 grid gap-3.5 ${level === 'GES-PROMO' ? 'sm:grid-cols-1' : 'sm:grid-cols-2'}`}>
                     {availableItems.map((s) => {
-                        const count = counts[`${s.id}|${level}`] || 0;
-                        const disabled = count === 0 || starting !== null;
+                        const totalCount = counts[`${s.id}|${level}`] || 0;
+                        let focusCount = totalCount;
+                        let focusName = 'All Syllabus Topics & Years';
+                        if (filterMode === 'year' && selectedYear !== 'all') {
+                            focusCount = yearCounts[`${s.id}|${level}|${selectedYear}`] || 0;
+                            focusName = `Year ${selectedYear}`;
+                        } else if (filterMode === 'category' && selectedCategory !== 'all') {
+                            focusCount = categoryCounts[`${s.id}|${level}|${selectedCategory}`] || 0;
+                            focusName = selectedCategory;
+                        }
+
                         const isUserRank = level === 'GES-PROMO' && user.promotionRank === s.name;
-                        const questionsToTake = questionLimit === 'all' ? count : Math.min(count, questionLimit);
+                        const isEmptyFocus = focusCount === 0;
+                        const isShortage = questionLimit !== 'all' && focusCount > 0 && focusCount < questionLimit;
+
+                        // Calculate effective questions candidate will take
+                        const questionsToTake = isEmptyFocus
+                            ? 0
+                            : autoBackfill && questionLimit !== 'all'
+                            ? Math.min(totalCount, questionLimit)
+                            : questionLimit === 'all'
+                            ? focusCount
+                            : Math.min(focusCount, questionLimit);
+
+                        const disabled = isEmptyFocus || totalCount === 0 || starting !== null;
 
                         return (
                             <div
@@ -1906,7 +1975,12 @@ function StudentView({
                                             )}
                                         </div>
                                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                                            <span>Bank: <strong>{count} questions</strong></span>
+                                            <span>
+                                                Focus Bank: <strong className="text-slate-800">{focusCount} questions</strong>
+                                                {filterMode !== 'all' && (
+                                                    <span className="text-slate-400 font-normal"> (of {totalCount} total in rank)</span>
+                                                )}
+                                            </span>
                                             <span>&middot;</span>
                                             <span>Attempting: <strong className="text-[#364c83]">{questionsToTake}</strong></span>
                                             <span>&middot;</span>
@@ -1916,6 +1990,44 @@ function StudentView({
                                         </div>
                                     </div>
                                 </div>
+
+                                {/* Intelligent Shortage / Empty State Guidance */}
+                                {isEmptyFocus && (
+                                    <div className="rounded-lg bg-rose-50 border border-rose-200 p-2.5 text-xs text-rose-800 flex items-start gap-2">
+                                        <AlertCircle size={15} className="shrink-0 text-rose-600 mt-0.5" />
+                                        <div>
+                                            <strong>No questions available:</strong> There are currently 0 questions for <em>"{focusName}"</em> in this rank. Please select another topic, past year, or choose <em>"All Questions"</em> to practice.
+                                        </div>
+                                    </div>
+                                )}
+
+                                {!isEmptyFocus && isShortage && (
+                                    <div className="rounded-lg bg-amber-50/90 border border-amber-200/90 p-3 text-xs text-amber-900 space-y-2">
+                                        <div className="flex items-start gap-2">
+                                            <Sparkles size={14} className="shrink-0 text-amber-600 mt-0.5" />
+                                            <div>
+                                                <strong>Notice on Question Count:</strong> You selected <strong>{questionLimit} questions</strong>, but <em>"{focusName}"</em> currently has <strong>{focusCount} questions</strong> available.
+                                                <p className="mt-0.5 text-amber-800">
+                                                    By default, your quiz will present all <strong>{focusCount} available questions</strong> for this topic.
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {totalCount > focusCount && (
+                                            <label className="flex items-start gap-2 pt-1 border-t border-amber-200/60 cursor-pointer select-none">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={autoBackfill}
+                                                    onChange={(e) => setAutoBackfill(e.target.checked)}
+                                                    className="mt-0.5 rounded border-amber-300 text-[#364c83] focus:ring-[#364c83]"
+                                                />
+                                                <span className="text-[11px] leading-snug text-slate-700">
+                                                    Fill remaining <strong>{Math.min(totalCount, questionLimit) - focusCount} question{Math.min(totalCount, questionLimit) - focusCount === 1 ? '' : 's'}</strong> from related {s.name} topics to complete your <strong>{questionLimit}</strong>-question trial quiz.
+                                                </span>
+                                            </label>
+                                        )}
+                                    </div>
+                                )}
 
                                 <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
                                     <span className="text-[11px] text-slate-400">
@@ -1941,7 +2053,9 @@ function StudentView({
                                         ) : (
                                             <>
                                                 <Sparkles size={13} className="text-amber-300" />
-                                                <span>Start Trial Quiz</span>
+                                                <span>
+                                                    Start Trial Quiz {questionsToTake > 0 ? `(${questionsToTake} Questions)` : ''}
+                                                </span>
                                                 <ArrowRight size={13} />
                                             </>
                                         )}

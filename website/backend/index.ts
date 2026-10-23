@@ -1310,6 +1310,8 @@ export const handler = router({
             const counts: Record<string, number> = {};
             const yearsMap: Record<string, string[]> = {};
             const categoriesMap: Record<string, string[]> = {};
+            const yearCounts: Record<string, number> = {};
+            const categoryCounts: Record<string, number> = {};
 
             qs.forEach((q: any) => {
                 const key = `${q.subjectId}|${q.level}`;
@@ -1318,14 +1320,18 @@ export const handler = router({
                     const yr = String(q.year).trim();
                     yearsMap[key] = yearsMap[key] || [];
                     if (!yearsMap[key].includes(yr)) yearsMap[key].push(yr);
+                    const yKey = `${key}|${yr}`;
+                    yearCounts[yKey] = (yearCounts[yKey] || 0) + 1;
                 }
                 if (q.category && String(q.category).trim()) {
                     const cat = String(q.category).trim();
                     categoriesMap[key] = categoriesMap[key] || [];
                     if (!categoriesMap[key].includes(cat)) categoriesMap[key].push(cat);
+                    const cKey = `${key}|${cat}`;
+                    categoryCounts[cKey] = (categoryCounts[cKey] || 0) + 1;
                 }
             });
-            return json({ counts, yearsMap, categoriesMap });
+            return json({ counts, yearsMap, categoriesMap, yearCounts, categoryCounts });
         },
     ],
 
@@ -1367,11 +1373,15 @@ export const handler = router({
         async (ctx) => {
             const level = normLevel(ctx.params.level);
             if (level === null) return error('Invalid level', 400);
-            let qs = (await allQuestions()).filter(
+            const allSubjectLevelQs = (await allQuestions()).filter(
                 (q: any) => q.subjectId === ctx.params.subjectId && q.level === level
             );
             const yearParam = ctx.query?.year;
             const catParam = ctx.query?.category;
+            const limitParam = Number(ctx.query?.limit) || 0;
+            const backfillParam = ctx.query?.backfill === 'true';
+
+            let qs = allSubjectLevelQs;
             if (yearParam && yearParam !== 'all') {
                 qs = qs.filter((q: any) => String(q.year || '').trim() === String(yearParam).trim());
             }
@@ -1380,6 +1390,19 @@ export const handler = router({
                     (q: any) => String(q.category || '').toLowerCase().trim() === String(catParam).toLowerCase().trim()
                 );
             }
+
+            // If backfill requested and filtered questions are fewer than the requested limit,
+            // supplement with additional questions from the same subject/rank
+            if (backfillParam && limitParam > 0 && qs.length < limitParam && allSubjectLevelQs.length > qs.length) {
+                const existingIds = new Set(qs.map((q: any) => q.id));
+                const needed = limitParam - qs.length;
+                const pool = allSubjectLevelQs
+                    .filter((q: any) => !existingIds.has(q.id))
+                    .sort(() => Math.random() - 0.5)
+                    .slice(0, needed);
+                qs = [...qs, ...pool];
+            }
+
             return json({
                 questions: qs.map((q: any) => ({
                     id: q.id,

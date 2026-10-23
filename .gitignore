@@ -5,6 +5,8 @@ node_modules/
 # Build output
 dist/
 **/dist/
+!website/dist/
+!website/dist/**
 
 # Local runtime databases
 **/data/*.json

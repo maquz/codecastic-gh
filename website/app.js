@@ -1586,6 +1586,8 @@ var handler = router({
       const counts = {};
       const yearsMap = {};
       const categoriesMap = {};
+      const yearCounts = {};
+      const categoryCounts = {};
       qs.forEach((q2) => {
         const key = `${q2.subjectId}|${q2.level}`;
         counts[key] = (counts[key] || 0) + 1;
@@ -1593,14 +1595,18 @@ var handler = router({
           const yr = String(q2.year).trim();
           yearsMap[key] = yearsMap[key] || [];
           if (!yearsMap[key].includes(yr)) yearsMap[key].push(yr);
+          const yKey = `${key}|${yr}`;
+          yearCounts[yKey] = (yearCounts[yKey] || 0) + 1;
         }
         if (q2.category && String(q2.category).trim()) {
           const cat = String(q2.category).trim();
           categoriesMap[key] = categoriesMap[key] || [];
           if (!categoriesMap[key].includes(cat)) categoriesMap[key].push(cat);
+          const cKey = `${key}|${cat}`;
+          categoryCounts[cKey] = (categoryCounts[cKey] || 0) + 1;
         }
       });
-      return json({ counts, yearsMap, categoriesMap });
+      return json({ counts, yearsMap, categoriesMap, yearCounts, categoryCounts });
     }
   ],
   "GET /api/exam/timers": [
@@ -1636,11 +1642,14 @@ var handler = router({
     async (ctx) => {
       const level = normLevel(ctx.params.level);
       if (level === null) return error("Invalid level", 400);
-      let qs = (await allQuestions()).filter(
+      const allSubjectLevelQs = (await allQuestions()).filter(
         (q2) => q2.subjectId === ctx.params.subjectId && q2.level === level
       );
       const yearParam = ctx.query?.year;
       const catParam = ctx.query?.category;
+      const limitParam = Number(ctx.query?.limit) || 0;
+      const backfillParam = ctx.query?.backfill === "true";
+      let qs = allSubjectLevelQs;
       if (yearParam && yearParam !== "all") {
         qs = qs.filter((q2) => String(q2.year || "").trim() === String(yearParam).trim());
       }
@@ -1648,6 +1657,12 @@ var handler = router({
         qs = qs.filter(
           (q2) => String(q2.category || "").toLowerCase().trim() === String(catParam).toLowerCase().trim()
         );
+      }
+      if (backfillParam && limitParam > 0 && qs.length < limitParam && allSubjectLevelQs.length > qs.length) {
+        const existingIds = new Set(qs.map((q2) => q2.id));
+        const needed = limitParam - qs.length;
+        const pool2 = allSubjectLevelQs.filter((q2) => !existingIds.has(q2.id)).sort(() => Math.random() - 0.5).slice(0, needed);
+        qs = [...qs, ...pool2];
       }
       return json({
         questions: qs.map((q2) => ({
