@@ -103,6 +103,14 @@ const server = http.createServer(async (req, res) => {
     serveStatic(req, res);
 });
 
+process.on('uncaughtException', (err) => {
+    console.error('[Server Error] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('[Server Error] Unhandled Rejection:', reason);
+});
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
