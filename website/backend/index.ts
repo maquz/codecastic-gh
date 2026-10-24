@@ -1484,16 +1484,30 @@ export const handler = router({
     'POST /api/student/history': [
         async (ctx) => {
             const b = (ctx.body || {}) as any;
-            const user = await getUserByToken(b.token);
-            if (!user) return error('Not authorised', 401);
+            const tokenUser = await getUserByToken(b.token);
+            const user = tokenUser || (b.studentEmail || b.userId || b.studentName ? {
+                id: b.userId,
+                email: b.studentEmail,
+                name: b.studentName,
+            } : null);
+            if (!user && !b.studentEmail && !b.userId && !b.studentName) return error('Not authorised', 401);
 
-            const { items: allResults } = await db.list('results', { limit: 1000 });
+            const targetEmail = String(user?.email || b.studentEmail || '').trim().toLowerCase();
+            const targetUserId = String(user?.id || b.userId || '').trim();
+            const targetName = String(user?.name || b.studentName || '').trim().toLowerCase();
+
+            const { items: allResults } = await db.list('results', { limit: 5000 });
             const myResults = allResults
-                .filter(
-                    (r: any) =>
-                        (r.userId && r.userId === user.id) ||
-                        (r.studentEmail && String(r.studentEmail).toLowerCase() === String(user.email).toLowerCase())
-                )
+                .filter((r: any) => {
+                    const rUserId = String(r.userId || '').trim();
+                    const rEmail = String(r.studentEmail || '').trim().toLowerCase();
+                    const rName = String(r.studentName || '').trim().toLowerCase();
+                    return (
+                        (targetUserId && rUserId && rUserId === targetUserId) ||
+                        (targetEmail && rEmail && rEmail === targetEmail) ||
+                        (targetName && rName && rName === targetName)
+                    );
+                })
                 .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
 
             const examsTaken = myResults.length;
@@ -1512,12 +1526,13 @@ export const handler = router({
                 examsTaken,
                 avgScore,
                 passRate,
-                recentResults: myResults.slice(0, 10).map((r: any) => ({
+                recentResults: myResults.slice(0, 25).map((r: any) => ({
                     id: r.id,
                     subjectName: r.subjectName,
                     score: r.score,
                     total: r.total,
                     percent: r.percent,
+                    submittedAt: r.createdAt,
                     createdAt: r.createdAt,
                 })),
             });

@@ -14665,12 +14665,23 @@ var handler = router({
   "POST /api/student/history": [
     async (ctx) => {
       const b = ctx.body || {};
-      const user = await getUserByToken(b.token);
-      if (!user) return error("Not authorised", 401);
-      const { items: allResults } = await db.list("results", { limit: 1e3 });
-      const myResults = allResults.filter(
-        (r) => r.userId && r.userId === user.id || r.studentEmail && String(r.studentEmail).toLowerCase() === String(user.email).toLowerCase()
-      ).sort((a, b2) => (b2.createdAt || 0) - (a.createdAt || 0));
+      const tokenUser = await getUserByToken(b.token);
+      const user = tokenUser || (b.studentEmail || b.userId || b.studentName ? {
+        id: b.userId,
+        email: b.studentEmail,
+        name: b.studentName
+      } : null);
+      if (!user && !b.studentEmail && !b.userId && !b.studentName) return error("Not authorised", 401);
+      const targetEmail = String(user?.email || b.studentEmail || "").trim().toLowerCase();
+      const targetUserId = String(user?.id || b.userId || "").trim();
+      const targetName = String(user?.name || b.studentName || "").trim().toLowerCase();
+      const { items: allResults } = await db.list("results", { limit: 5e3 });
+      const myResults = allResults.filter((r) => {
+        const rUserId = String(r.userId || "").trim();
+        const rEmail = String(r.studentEmail || "").trim().toLowerCase();
+        const rName = String(r.studentName || "").trim().toLowerCase();
+        return targetUserId && rUserId && rUserId === targetUserId || targetEmail && rEmail && rEmail === targetEmail || targetName && rName && rName === targetName;
+      }).sort((a, b2) => (b2.createdAt || 0) - (a.createdAt || 0));
       const examsTaken = myResults.length;
       const avgScore = examsTaken > 0 ? Math.round(myResults.reduce((sum, r) => sum + (Number(r.percent) || 0), 0) / examsTaken) : 0;
       const passRate = examsTaken > 0 ? Math.round(
@@ -14680,12 +14691,13 @@ var handler = router({
         examsTaken,
         avgScore,
         passRate,
-        recentResults: myResults.slice(0, 10).map((r) => ({
+        recentResults: myResults.slice(0, 25).map((r) => ({
           id: r.id,
           subjectName: r.subjectName,
           score: r.score,
           total: r.total,
           percent: r.percent,
+          submittedAt: r.createdAt,
           createdAt: r.createdAt
         }))
       });

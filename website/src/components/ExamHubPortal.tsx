@@ -1284,12 +1284,17 @@ function StudentView({
 
     const loadStudentStats = useCallback(async () => {
         try {
-            const res = await api.post('/api/student/history', { token });
+            const res = await api.post('/api/student/history', {
+                token,
+                studentEmail: user.email,
+                studentName: user.name,
+                userId: user.id,
+            });
             if (res.data) setStudentStats(res.data);
         } catch {
             // ignore
         }
-    }, [token]);
+    }, [token, user.email, user.name, user.id]);
 
     useEffect(() => {
         (async () => {
@@ -1423,6 +1428,12 @@ function StudentView({
         setShowEndConfirm(false);
         setSubmitting(true);
         try {
+            // When a candidate ends a quiz, do not include or summarize questions not taken
+            const takenQuestions = force
+                ? questions.filter((q) => answers[q.id] !== undefined)
+                : questions;
+            const finalQuestions = takenQuestions.length > 0 ? takenQuestions : [questions[index] || questions[0]];
+
             const res = await api.post('/api/exam/submit', {
                 token,
                 studentName: user.name,
@@ -1431,8 +1442,10 @@ function StudentView({
                 level,
                 subjectId: subject.id,
                 answers,
-                questionIds: questions.map((q) => q.id),
+                questionIds: finalQuestions.map((q) => q.id),
             });
+            // Update active question set to taken questions so untaken questions are never displayed in the summary
+            setQuestions(finalQuestions);
             setResult(res.data);
             setStage('result');
             window.scrollTo({ top: 0 });
@@ -1891,11 +1904,19 @@ function StudentView({
                     </div>
                 </div>
 
-                <h3 className="mt-8 text-sm font-semibold text-slate-900">Review your answers</h3>
+                <h3 className="mt-8 text-sm font-semibold text-slate-900">
+                    Review your answers ({questions.filter((q) => { const r = reviewById.get(q.id); return r && r.chosen !== null && r.chosen !== undefined; }).length} completed)
+                </h3>
                 <div className="mt-3 space-y-3">
-                    {questions.map((q, i) => {
-                        const r = reviewById.get(q.id);
-                        if (!r) return null;
+                    {questions
+                        .filter((q) => {
+                            const r = reviewById.get(q.id);
+                            // Do not provide summary of questions not taken
+                            return r && r.chosen !== null && r.chosen !== undefined;
+                        })
+                        .map((q, i) => {
+                            const r = reviewById.get(q.id);
+                            if (!r) return null;
                         return (
                             <div key={q.id} className="rounded-xl border border-slate-200 bg-white p-4">
                                 <div className="flex items-start gap-2.5">
@@ -1989,9 +2010,11 @@ function StudentView({
                         </span>
                     </div>
                     <div className="mt-2">
-                        <div className="text-2xl font-bold text-slate-900">{totalQuestionsInBank}</div>
-                        <p className="text-[11px] text-slate-500 truncate">
+                        <div className="text-sm font-bold text-slate-900 truncate">
                             {user.promotionRank || levelLabel(level)}
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                            Standard Syllabus
                         </p>
                     </div>
                     <div className="mt-2.5 pt-2 border-t border-indigo-100/60 flex items-center justify-between gap-1 text-[11px]">
