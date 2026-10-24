@@ -61,7 +61,7 @@ function App() {
                                     </a>
                                     <div className="nav-dropdown" role="menu" aria-label="ExamHub sections">
                                         <a
-                                            href="#/exams"
+                                            href="/exams"
                                             role="menuitem"
                                             aria-current={route === 'exams' && !sub ? 'page' : undefined}
                                         >
@@ -70,7 +70,7 @@ function App() {
                                         {TRACKS.map((t) => (
                                             <a
                                                 key={t.slug}
-                                                href={`#/exams/${t.slug}`}
+                                                href={`/exams/${t.slug}`}
                                                 role="menuitem"
                                                 aria-current={route === 'exams' && sub === t.slug ? 'page' : undefined}
                                             >
@@ -90,13 +90,13 @@ function App() {
                 {route === 'exams' && (
                     <div className="header-subtabs">
                         <div className="wrap header-subtabs-row" role="navigation" aria-label="ExamHub sub-tabs">
-                            <a href="#/exams" aria-current={!sub ? 'page' : undefined}>
+                            <a href="/exams" aria-current={!sub ? 'page' : undefined}>
                                 Overview
                             </a>
                             {TRACKS.map((t) => (
                                 <a
                                     key={t.slug}
-                                    href={`#/exams/${t.slug}`}
+                                    href={`/exams/${t.slug}`}
                                     aria-current={sub === t.slug ? 'page' : undefined}
                                 >
                                     {t.label}
@@ -147,7 +147,7 @@ function App() {
                     </div>
                     <div className="footer-base">
                         <span>© {new Date().getFullYear()} Codecastic GH. Registered in Ghana.</span>
-                        <a href="#/inbox">Staff inbox</a>
+                        <a href="/inbox">Staff inbox</a>
                     </div>
                 </div>
             </footer>

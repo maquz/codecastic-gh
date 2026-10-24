@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { api } from '@appdeploy/client';
 import { TRACKS } from '../exams';
+import { navigate } from '../ui';
 import {
     GraduationCap,
     BookOpen,
@@ -53,6 +54,9 @@ import {
     Send,
     CornerUpLeft,
     Paperclip,
+    Pause,
+    Play,
+    StopCircle,
 } from 'lucide-react';
 
 export type Level = number | string;
@@ -296,7 +300,7 @@ export default function ExamHubPortal({
         setToken(newToken);
         const targetSlug = slugForUser(newUser);
         if (targetSlug !== activeSlug) {
-            window.location.hash = `#/exams/${targetSlug}`;
+            navigate(`/exams/${targetSlug}`);
         }
     };
 
@@ -322,7 +326,11 @@ export default function ExamHubPortal({
                 <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
                     <div className="flex items-center gap-3">
                         <a
-                            href="#/"
+                            href="/"
+                            onClick={(e) => {
+                                e.preventDefault();
+                                navigate('/');
+                            }}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
                         >
                             <ArrowLeft size={14} />
@@ -425,8 +433,12 @@ export default function ExamHubPortal({
                                     return (
                                         <a
                                             key={t.slug}
-                                            href={`#/exams/${t.slug}`}
-                                            onClick={() => setShowSwitchPicker(false)}
+                                            href={`/exams/${t.slug}`}
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                setShowSwitchPicker(false);
+                                                navigate(`/exams/${t.slug}`);
+                                            }}
                                             className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
                                                 isCurrent
                                                     ? 'bg-[#364c83] text-white shadow-sm ring-1 ring-[#364c83]'
@@ -1174,10 +1186,21 @@ function StudentView({
     const [notice, setNotice] = useState('');
     const [starting, setStarting] = useState<string | null>(null);
 
-    // Timers: loaded per examhub track
-    const [trackTimers, setTrackTimers] = useState<Record<string, number>>(DEFAULT_TIMERS);
-    const [secondsLeft, setSecondsLeft] = useState<number>(45 * 60);
-    const [timerActive, setTimerActive] = useState<boolean>(false);
+    // Per-question timer: default 60s, adjustable (30s, 45s, 60s, 90s, 120s, or 0/untimed)
+    const [perQuestionSeconds, setPerQuestionSeconds] = useState<number>(60);
+    const [questionSecondsLeft, setQuestionSecondsLeft] = useState<number>(60);
+    const [isPaused, setIsPaused] = useState<boolean>(false);
+    const [showEndConfirm, setShowEndConfirm] = useState<boolean>(false);
+    const [timedOutQuestionIds, setTimedOutQuestionIds] = useState<Record<string, boolean>>({});
+
+    // Student performance stats for interactive KPI cards
+    const [studentStats, setStudentStats] = useState<{
+        examsTaken: number;
+        avgScore: number;
+        passRate: number;
+        recentResults: any[];
+    }>({ examsTaken: 0, avgScore: 0, passRate: 0, recentResults: [] });
+    const [showRecentModal, setShowRecentModal] = useState<boolean>(false);
 
     // Number of exam questions limit: Dropbox selection (10, 20, 30, 40, 50, 60, 70, 75, 100, or all)
     const [questionLimit, setQuestionLimit] = useState<number | 'all'>(20);
@@ -1199,9 +1222,6 @@ function StudentView({
     const [submitting, setSubmitting] = useState(false);
     const [result, setResult] = useState<{ score: number; total: number; percent: number; review: ReviewItem[] } | null>(null);
 
-    const currentTrackSlug = getTrackSlugForCandidate(user);
-    const currentTrackTimerMinutes = trackTimers[currentTrackSlug] || 45;
-
     const loadCatalog = useCallback(async () => {
         const s = await api.get('/api/subjects');
         setSubjects(s.data.subjects);
@@ -1211,31 +1231,38 @@ function StudentView({
         if (c.data.categoriesMap) setCategoriesMap(c.data.categoriesMap);
         if (c.data.yearCounts) setYearCounts(c.data.yearCounts);
         if (c.data.categoryCounts) setCategoryCounts(c.data.categoryCounts);
+    }, []);
+
+    const loadStudentStats = useCallback(async () => {
         try {
-            const t = await api.get('/api/exam/timers');
-            if (t.data?.timers) setTrackTimers({ ...DEFAULT_TIMERS, ...t.data.timers });
+            const res = await api.post('/api/student/history', { token });
+            if (res.data) setStudentStats(res.data);
         } catch {
             // ignore
         }
-    }, []);
+    }, [token]);
 
     useEffect(() => {
         (async () => {
             try {
-                await loadCatalog();
+                await Promise.all([loadCatalog(), loadStudentStats()]);
             } catch {
                 setNotice('Could not load exams. Please refresh.');
             } finally {
                 setLoading(false);
             }
         })();
-    }, [loadCatalog]);
+    }, [loadCatalog, loadStudentStats]);
 
     const availableItems = useMemo(() => {
         return level === 'GES-PROMO'
             ? PROMOTION_RANK_ITEMS.filter((r) => !user.promotionRank || r.name === user.promotionRank)
             : subjects;
     }, [level, user.promotionRank, subjects]);
+
+    const totalQuestionsInBank = useMemo(() => {
+        return availableItems.reduce((sum, s) => sum + (counts[`${s.id}|${level}`] || 0), 0);
+    }, [availableItems, counts, level]);
 
     const displayedYears = useMemo(() => {
         const set = new Set<string>();
@@ -1323,10 +1350,11 @@ function StudentView({
             setIndex(0);
             setResult(null);
 
-            // Initialize countdown timer for this examhub track
-            const durationMins = trackTimers[currentTrackSlug] || 45;
-            setSecondsLeft(durationMins * 60);
-            setTimerActive(true);
+            // Initialize per-question countdown timer (default 60s, adjustable)
+            setQuestionSecondsLeft(perQuestionSeconds);
+            setIsPaused(false);
+            setShowEndConfirm(false);
+            setTimedOutQuestionIds({});
 
             setStage('exam');
         } catch (e) {
@@ -1342,7 +1370,8 @@ function StudentView({
             if (unanswered > 0 && !window.confirm(`You have ${unanswered} unanswered question(s). Submit anyway?`)) return;
         }
         if (!subject || level === null) return;
-        setTimerActive(false);
+        setIsPaused(false);
+        setShowEndConfirm(false);
         setSubmitting(true);
         try {
             const res = await api.post('/api/exam/submit', {
@@ -1359,6 +1388,7 @@ function StudentView({
             setStage('result');
             window.scrollTo({ top: 0 });
             loadCatalog().catch(() => undefined);
+            loadStudentStats().catch(() => undefined);
         } catch (e) {
             setNotice(errMsg(e, 'Could not submit the exam. Please try again.'));
         } finally {
@@ -1366,36 +1396,39 @@ function StudentView({
         }
     };
 
-    // Live Exam Countdown Timer
+    // Live Per-Question Timer (Default 60 seconds, adjustable, pause-aware)
     useEffect(() => {
-        if (stage !== 'exam' || !timerActive) return;
+        if (stage !== 'exam' || isPaused || perQuestionSeconds === 0) return;
+        const curQ = questions[index];
+        if (!curQ) return;
+        // Pause timer once the question is answered so candidate can review explanation
+        if (answers[curQ.id] !== undefined) return;
+
         const interval = setInterval(() => {
-            setSecondsLeft((prev) => {
+            setQuestionSecondsLeft((prev) => {
                 if (prev <= 1) {
                     clearInterval(interval);
-                    submitExam(true);
+                    // 60s reached 0: lock question as timed-out (shows explanation and 0 marks)
+                    setAnswers((prevAns) => ({ ...prevAns, [curQ.id]: -1 }));
+                    setTimedOutQuestionIds((prevT) => ({ ...prevT, [curQ.id]: true }));
                     return 0;
                 }
                 return prev - 1;
             });
         }, 1000);
         return () => clearInterval(interval);
-    }, [stage, timerActive, questions, answers, subject, level]);
-
-    const formatTimer = (totalSeconds: number) => {
-        const m = Math.floor(totalSeconds / 60);
-        const s = totalSeconds % 60;
-        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    };
+    }, [stage, isPaused, perQuestionSeconds, index, questions, answers]);
 
     const backToStart = () => {
-        setTimerActive(false);
+        setIsPaused(false);
+        setShowEndConfirm(false);
         setStage('select');
         setSubject(null);
         setQuestions([]);
         setAnswers({});
         setResult(null);
         setNotice('');
+        loadStudentStats().catch(() => undefined);
     };
 
     if (loading) {
@@ -1447,20 +1480,38 @@ function StudentView({
                         )}
                     </span>
                     <div className="flex items-center gap-2.5 flex-wrap">
-                        {/* Live Countdown Timer Badge */}
-                        <div
-                            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all shadow-2xs ${
-                                secondsLeft <= 60
-                                    ? 'bg-rose-100 text-rose-700 animate-pulse border border-rose-300'
-                                    : secondsLeft <= 300
-                                    ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                                    : 'bg-indigo-50 text-[#364c83] border border-indigo-200'
-                            }`}
-                            title="Time remaining for this examination session"
-                        >
-                            <Clock size={13} className={secondsLeft <= 60 ? 'text-rose-600' : secondsLeft <= 300 ? 'text-amber-600' : 'text-[#364c83]'} />
-                            <span>Time Left: {formatTimer(secondsLeft)}</span>
-                        </div>
+                        {/* Live Per-Question Countdown Timer Badge (Default: 60s, adjustable) */}
+                        {perQuestionSeconds > 0 ? (
+                            <div
+                                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all shadow-2xs ${
+                                    isPaused
+                                        ? 'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse'
+                                        : questionSecondsLeft <= 10
+                                        ? 'bg-rose-100 text-rose-700 animate-pulse border border-rose-300'
+                                        : questionSecondsLeft <= 20
+                                        ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                        : 'bg-indigo-50 text-[#364c83] border border-indigo-200'
+                                }`}
+                                title={`Per-question time limit: ${perQuestionSeconds} seconds`}
+                            >
+                                <Clock
+                                    size={13}
+                                    className={
+                                        questionSecondsLeft <= 10
+                                            ? 'text-rose-600'
+                                            : questionSecondsLeft <= 20
+                                            ? 'text-amber-600'
+                                            : 'text-[#364c83]'
+                                    }
+                                />
+                                <span>{isPaused ? 'Timer Paused' : `Question Time: ${questionSecondsLeft}s`}</span>
+                            </div>
+                        ) : (
+                            <div className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200">
+                                <Clock size={13} />
+                                <span>Untimed Practice</span>
+                            </div>
+                        )}
 
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-[#364c83]">
                             <Sparkles size={13} />
@@ -1481,8 +1532,29 @@ function StudentView({
 
                 {notice && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
 
-                {/* Question Card */}
-                <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                {/* Pause State Notice if Paused */}
+                {isPaused && (
+                    <div className="mt-5 rounded-2xl border border-amber-300 bg-amber-50/90 p-8 text-center shadow-sm animate-in fade-in duration-150">
+                        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-amber-800 mb-3">
+                            <Pause size={28} />
+                        </div>
+                        <h3 className="text-base font-bold text-slate-900">Quiz Paused</h3>
+                        <p className="mt-1 text-xs text-slate-600 max-w-sm mx-auto">
+                            Your question timer is frozen and your progress is securely saved. Take a break and click resume whenever you are ready.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => setIsPaused(false)}
+                            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#364c83] hover:bg-[#1f2d57] text-white px-5 py-2.5 text-xs font-bold shadow-xs transition active:scale-95"
+                        >
+                            <Play size={14} />
+                            Resume Quiz
+                        </button>
+                    </div>
+                )}
+
+                {/* Question Card (blurred if paused) */}
+                <div className={`mt-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition ${isPaused ? 'opacity-30 pointer-events-none blur-xs select-none' : ''}`}>
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                         <div className="flex items-center gap-2">
                             <span className="rounded-md bg-slate-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-slate-700">
@@ -1618,23 +1690,54 @@ function StudentView({
                     )}
                 </div>
 
-                {/* Clean Navigation (Previous / Next / Finish) without the cluttering numbering buttons */}
-                <div className="mt-6 flex items-center justify-between">
+                {/* Clean Navigation Bar with Pause & End Quiz Options between Previous and Next */}
+                <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
                     <button
                         type="button"
-                        onClick={() => setIndex((i) => Math.max(0, i - 1))}
+                        onClick={() => {
+                            setIndex((i) => Math.max(0, i - 1));
+                            setQuestionSecondsLeft(perQuestionSeconds);
+                        }}
                         disabled={index === 0}
-                        className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                        className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 shadow-xs"
                     >
                         <ChevronLeft size={16} />
                         Previous Question
                     </button>
+
+                    {/* Middle: Pause / Resume AND End Quiz Buttons */}
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setIsPaused((p) => !p)}
+                            className={`flex items-center gap-1.5 rounded-lg border px-3.5 py-2.5 text-xs sm:text-sm font-bold transition shadow-xs ${
+                                isPaused
+                                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 animate-pulse'
+                                    : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                            }`}
+                            title={isPaused ? 'Resume quiz' : 'Pause question timer'}
+                        >
+                            {isPaused ? <Play size={15} /> : <Pause size={15} />}
+                            <span>{isPaused ? 'Resume Quiz' : 'Pause Quiz'}</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setShowEndConfirm(true)}
+                            className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs sm:text-sm font-bold text-rose-700 hover:bg-rose-100 transition shadow-xs"
+                            title="End quiz early and submit answers"
+                        >
+                            <StopCircle size={15} />
+                            <span>End Quiz</span>
+                        </button>
+                    </div>
+
                     {isLast ? (
                         <button
                             type="button"
-                            onClick={submitExam}
+                            onClick={() => submitExam(false)}
                             disabled={submitting}
-                            className="flex items-center gap-2 rounded-lg bg-[#364c83] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-[#1f2d57] disabled:opacity-60"
+                            className="flex items-center gap-2 rounded-lg bg-[#364c83] px-5 py-2.5 text-xs sm:text-sm font-bold text-white shadow-sm hover:bg-[#1f2d57] disabled:opacity-60"
                         >
                             {submitting && <Loader2 className="animate-spin" size={15} />}
                             Finish &amp; Submit Exam
@@ -1642,14 +1745,54 @@ function StudentView({
                     ) : (
                         <button
                             type="button"
-                            onClick={() => setIndex((i) => Math.min(questions.length - 1, i + 1))}
-                            className="flex items-center gap-1 rounded-lg bg-[#364c83] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-[#1f2d57]"
+                            onClick={() => {
+                                setIndex((i) => Math.min(questions.length - 1, i + 1));
+                                setQuestionSecondsLeft(perQuestionSeconds);
+                            }}
+                            className="flex items-center gap-1 rounded-lg bg-[#364c83] px-5 py-2.5 text-xs sm:text-sm font-bold text-white shadow-sm hover:bg-[#1f2d57]"
                         >
                             Next Question
                             <ChevronRight size={16} />
                         </button>
                     )}
                 </div>
+
+                {/* End Quiz Confirmation Modal */}
+                {showEndConfirm && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+                        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-slate-200">
+                            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 text-rose-600 mb-3">
+                                <StopCircle size={26} />
+                            </div>
+                            <h3 className="text-base font-bold text-slate-900">End &amp; Submit Quiz Early?</h3>
+                            <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
+                                You have answered <strong>{answeredCount}</strong> of <strong>{questions.length}</strong> questions.
+                                Ending the quiz will submit your current answers for grading immediately and display your results and review.
+                            </p>
+                            <div className="mt-5 flex items-center justify-end gap-2.5">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowEndConfirm(false)}
+                                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                    Keep Answering
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowEndConfirm(false);
+                                        submitExam(true);
+                                    }}
+                                    disabled={submitting}
+                                    className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 shadow-xs"
+                                >
+                                    {submitting && <Loader2 className="animate-spin" size={13} />}
+                                    Yes, End &amp; Grade Quiz
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         );
     }
@@ -1759,6 +1902,114 @@ function StudentView({
                 </div>
             </div>
 
+            {/* Interactive Candidate KPI Performance Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+                {/* Card 1: Question Bank */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-500">Question Bank</span>
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                            <BookOpen size={14} />
+                        </span>
+                    </div>
+                    <div className="mt-2 text-2xl font-bold text-slate-900">{totalQuestionsInBank}</div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                        <span className="truncate max-w-[120px]">{user.promotionRank || levelLabel(level)}</span>
+                        <span className="font-semibold text-emerald-600">Active</span>
+                    </div>
+                </div>
+
+                {/* Card 2: Exams Taken */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-500">Exams Taken</span>
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                            <ClipboardCheck size={14} />
+                        </span>
+                    </div>
+                    <div className="mt-2 text-2xl font-bold text-slate-900">{studentStats.examsTaken}</div>
+                    <div className="mt-2 flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400">Total attempts</span>
+                        <button
+                            type="button"
+                            onClick={() => setShowRecentModal(true)}
+                            className="inline-flex items-center gap-0.5 font-bold text-[#364c83] hover:underline"
+                        >
+                            Reveal <ChevronDown size={12} />
+                        </button>
+                    </div>
+                </div>
+
+                {/* Card 3: Overall Average */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-500">Overall Average</span>
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                            <TrendingUp size={14} />
+                        </span>
+                    </div>
+                    <div>
+                        <div className="mt-2 text-2xl font-bold text-slate-900">
+                            {studentStats.examsTaken > 0 ? `${studentStats.avgScore}%` : '--%'}
+                        </div>
+                        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                            <div
+                                className="h-full rounded-full bg-[#364c83] transition-all duration-500"
+                                style={{ width: `${Math.min(100, Math.max(0, studentStats.avgScore || 0))}%` }}
+                            />
+                        </div>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400">Score analysis</span>
+                        <button
+                            type="button"
+                            onClick={() => setShowRecentModal(true)}
+                            className="inline-flex items-center gap-0.5 font-bold text-[#364c83] hover:underline"
+                        >
+                            Reveal <ChevronDown size={12} />
+                        </button>
+                    </div>
+                </div>
+
+                {/* Card 4: Question Timer */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-500">Question Timer</span>
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                            <Clock size={14} />
+                        </span>
+                    </div>
+                    <div className="mt-1 flex items-baseline justify-between gap-1">
+                        <div className="text-2xl font-bold text-emerald-700">
+                            {perQuestionSeconds === 0 ? 'Off' : `${perQuestionSeconds}s`}
+                        </div>
+                        <select
+                            value={String(perQuestionSeconds)}
+                            onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setPerQuestionSeconds(val);
+                                setQuestionSecondsLeft(val);
+                            }}
+                            className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-700 focus:border-[#364c83] focus:outline-hidden"
+                            title="Set timer per question"
+                        >
+                            <option value="30">30s (Rapid)</option>
+                            <option value="45">45s (Fast)</option>
+                            <option value="60">60s (Default)</option>
+                            <option value="90">90s (Standard)</option>
+                            <option value="120">120s (Extended)</option>
+                            <option value="0">Untimed</option>
+                        </select>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Pace per question</span>
+                        <span className="font-semibold text-slate-600">
+                            {perQuestionSeconds === 60 ? 'Default 60s' : 'Adjusted'}
+                        </span>
+                    </div>
+                </div>
+            </div>
+
             {/* Exam Configuration & Focus Selection Card */}
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
@@ -1775,7 +2026,7 @@ function StudentView({
                     <div className="flex items-center gap-2 flex-wrap">
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-200/80 px-3 py-1 text-xs font-bold text-[#364c83]">
                             <Clock size={13} />
-                            Timer: {currentTrackTimerMinutes} Minutes
+                            {perQuestionSeconds === 0 ? 'Untimed' : `${perQuestionSeconds}s / Question`}
                         </span>
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 px-3 py-1 text-xs font-bold text-emerald-800">
                             <Sparkles size={13} />
@@ -1985,7 +2236,7 @@ function StudentView({
                                             <span>Attempting: <strong className="text-[#364c83]">{questionsToTake}</strong></span>
                                             <span>&middot;</span>
                                             <span className="inline-flex items-center gap-1 text-slate-600">
-                                                <Clock size={11} /> {currentTrackTimerMinutes} mins
+                                                <Clock size={11} /> {perQuestionSeconds === 0 ? 'Untimed' : `${perQuestionSeconds}s/question`}
                                             </span>
                                         </div>
                                     </div>
@@ -2066,6 +2317,99 @@ function StudentView({
                     })}
                 </div>
             </div>
+
+            {/* Recent Attempts History Modal */}
+            {showRecentModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+                    <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl border border-slate-200 max-h-[85vh] flex flex-col">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div className="flex items-center gap-2">
+                                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                                    <ClipboardCheck size={18} />
+                                </span>
+                                <div>
+                                    <h3 className="text-sm font-bold text-slate-900">Your Exam Performance History</h3>
+                                    <p className="text-[11px] text-slate-500">
+                                        Review your past practice quiz scores and progression
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowRecentModal(false)}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="my-3 flex-1 overflow-y-auto space-y-2.5 pr-1">
+                            {studentStats.recentResults && studentStats.recentResults.length > 0 ? (
+                                studentStats.recentResults.map((r, i) => (
+                                    <div
+                                        key={i}
+                                        className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/50 p-3 hover:bg-white transition"
+                                    >
+                                        <div className="min-w-0 flex-1 pr-3">
+                                            <div className="text-xs font-bold text-slate-900 truncate">
+                                                {r.subjectName || r.subjectId || 'Trial Quiz'}
+                                            </div>
+                                            <div className="mt-0.5 text-[11px] text-slate-500">
+                                                {r.submittedAt ? new Date(r.submittedAt).toLocaleDateString(undefined, {
+                                                    month: 'short',
+                                                    day: 'numeric',
+                                                    year: 'numeric',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit',
+                                                }) : 'Recent'}
+                                            </div>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <div className="text-sm font-bold text-slate-900">
+                                                {r.score} / {r.total} &middot;{' '}
+                                                <span
+                                                    className={
+                                                        r.percent >= 50 ? 'text-emerald-600' : 'text-rose-600'
+                                                    }
+                                                >
+                                                    {r.percent}%
+                                                </span>
+                                            </div>
+                                            <span
+                                                className={`inline-block mt-0.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                                    r.percent >= 50
+                                                        ? 'bg-emerald-100 text-emerald-800'
+                                                        : 'bg-rose-100 text-rose-800'
+                                                }`}
+                                            >
+                                                {r.percent >= 50 ? 'Passed' : 'Needs Review'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="py-8 text-center text-xs text-slate-500">
+                                    <ClipboardCheck size={28} className="mx-auto mb-2 text-slate-300" />
+                                    No exam attempts recorded yet.
+                                    <p className="mt-1 text-[11px] text-slate-400">
+                                        Choose a subject or rank below to start your first trial quiz!
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="pt-3 border-t border-slate-100 flex justify-end">
+                            <button
+                                type="button"
+                                onClick={() => setShowRecentModal(false)}
+                                className="rounded-lg bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
@@ -4235,7 +4579,7 @@ function MessagesAdmin({
                             Refresh
                         </button>
                         <a
-                            href="#/inbox"
+                            href="/inbox"
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-[#364c83] hover:bg-indigo-100 transition"

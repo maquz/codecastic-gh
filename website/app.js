@@ -14662,6 +14662,35 @@ var handler = router({
       return json({ score, total, percent, review });
     }
   ],
+  "POST /api/student/history": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      const user = await getUserByToken(b.token);
+      if (!user) return error("Not authorised", 401);
+      const { items: allResults } = await db.list("results", { limit: 1e3 });
+      const myResults = allResults.filter(
+        (r) => r.userId && r.userId === user.id || r.studentEmail && String(r.studentEmail).toLowerCase() === String(user.email).toLowerCase()
+      ).sort((a, b2) => (b2.createdAt || 0) - (a.createdAt || 0));
+      const examsTaken = myResults.length;
+      const avgScore = examsTaken > 0 ? Math.round(myResults.reduce((sum, r) => sum + (Number(r.percent) || 0), 0) / examsTaken) : 0;
+      const passRate = examsTaken > 0 ? Math.round(
+        myResults.filter((r) => (Number(r.percent) || 0) >= 50).length / examsTaken * 100
+      ) : 0;
+      return json({
+        examsTaken,
+        avgScore,
+        passRate,
+        recentResults: myResults.slice(0, 10).map((r) => ({
+          id: r.id,
+          subjectName: r.subjectName,
+          score: r.score,
+          total: r.total,
+          percent: r.percent,
+          createdAt: r.createdAt
+        }))
+      });
+    }
+  ],
   // ---------- ExamHub: Admin ----------
   "GET /api/admin/status": [
     async () => {

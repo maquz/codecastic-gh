@@ -83,7 +83,7 @@ export default function About() {
                 <div className="wrap cta-band">
                     <h2>Want to work with us?</h2>
                     <p>We welcome clients, consultants and strategic partners whose work fits our objectives.</p>
-                    <a className="btn btn-navy" href="#/contact">
+                    <a className="btn btn-navy" href="/contact">
                         Get in touch
                     </a>
                 </div>

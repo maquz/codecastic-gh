@@ -1481,6 +1481,49 @@ export const handler = router({
         },
     ],
 
+    'POST /api/student/history': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const user = await getUserByToken(b.token);
+            if (!user) return error('Not authorised', 401);
+
+            const { items: allResults } = await db.list('results', { limit: 1000 });
+            const myResults = allResults
+                .filter(
+                    (r: any) =>
+                        (r.userId && r.userId === user.id) ||
+                        (r.studentEmail && String(r.studentEmail).toLowerCase() === String(user.email).toLowerCase())
+                )
+                .sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+
+            const examsTaken = myResults.length;
+            const avgScore =
+                examsTaken > 0
+                    ? Math.round(myResults.reduce((sum: number, r: any) => sum + (Number(r.percent) || 0), 0) / examsTaken)
+                    : 0;
+            const passRate =
+                examsTaken > 0
+                    ? Math.round(
+                          (myResults.filter((r: any) => (Number(r.percent) || 0) >= 50).length / examsTaken) * 100
+                      )
+                    : 0;
+
+            return json({
+                examsTaken,
+                avgScore,
+                passRate,
+                recentResults: myResults.slice(0, 10).map((r: any) => ({
+                    id: r.id,
+                    subjectName: r.subjectName,
+                    score: r.score,
+                    total: r.total,
+                    percent: r.percent,
+                    createdAt: r.createdAt,
+                })),
+            });
+        },
+    ],
+
     // ---------- ExamHub: Admin ----------
     'GET /api/admin/status': [
         async () => {

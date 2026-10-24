@@ -26,13 +26,13 @@ export default function Exams({ sub }: { sub: string }) {
                         <div className="section-row" key={t.slug}>
                             <div>
                                 <h3>
-                                    <a href={`#/exams/${t.slug}`}>{t.label}</a>
+                                    <a href={`/exams/${t.slug}`}>{t.label}</a>
                                 </h3>
                                 <p className="small">{t.lead}</p>
                             </div>
                             <div>
                                 <p style={{ marginBottom: 14 }}>{t.about}</p>
-                                <a className="btn btn-navy" style={{ padding: '8px 18px', fontSize: '0.9rem' }} href={`#/exams/${t.slug}`}>
+                                <a className="btn btn-navy" style={{ padding: '8px 18px', fontSize: '0.9rem' }} href={`/exams/${t.slug}`}>
                                     Open {t.label} Portal
                                 </a>
                             </div>

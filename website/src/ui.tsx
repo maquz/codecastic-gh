@@ -15,12 +15,29 @@ export const NAV: { route: Route; label: string }[] = [
 export const MOTTO = 'Innovating Today, Transforming Tomorrow.';
 
 export function hrefFor(r: Route): string {
-    return r === 'home' ? '#/' : `#/${r}`;
+    return r === 'home' ? '/' : `/${r}`;
+}
+
+export function navigate(to: string): void {
+    if (typeof window === 'undefined') return;
+    const cleanTo = to.startsWith('/') ? to : `/${to}`;
+    if (window.location.pathname !== cleanTo) {
+        window.history.pushState(null, '', cleanTo);
+        window.dispatchEvent(new Event('popstate'));
+    }
 }
 
 function parse(): Loc {
-    const parts = window.location.hash
-        .replace(/^#\/?/, '')
+    if (typeof window === 'undefined') return { route: 'home', sub: '' };
+
+    // Auto-normalize legacy hash URLs (e.g. #/exams/ges-promotion -> /exams/ges-promotion)
+    if (window.location.hash && window.location.hash.startsWith('#/')) {
+        const cleanPath = window.location.hash.slice(1);
+        window.history.replaceState(null, '', cleanPath);
+    }
+
+    const pathname = window.location.pathname;
+    const parts = pathname
         .split('?')[0]
         .split('/')
         .filter(Boolean);
@@ -37,8 +54,27 @@ export function useRoute(): Loc {
             setLoc(parse());
             window.scrollTo({ top: 0 });
         };
+        window.addEventListener('popstate', onChange);
         window.addEventListener('hashchange', onChange);
-        return () => window.removeEventListener('hashchange', onChange);
+
+        // Global link click interceptor for clean client-side routing
+        const onLinkClick = (e: MouseEvent) => {
+            if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            const target = (e.target as Element)?.closest('a');
+            if (!target) return;
+            const href = target.getAttribute('href');
+            if (href && href.startsWith('/') && !href.startsWith('//') && target.target !== '_blank' && !target.hasAttribute('download')) {
+                e.preventDefault();
+                navigate(href);
+            }
+        };
+        document.addEventListener('click', onLinkClick);
+
+        return () => {
+            window.removeEventListener('popstate', onChange);
+            window.removeEventListener('hashchange', onChange);
+            document.removeEventListener('click', onLinkClick);
+        };
     }, []);
     return loc;
 }
@@ -75,7 +111,7 @@ export function LogoMark() {
 
 export function Logo() {
     return (
-        <a className="logo" href="#/" aria-label="Codecastic GH home">
+        <a className="logo" href="/" aria-label="Codecastic GH home">
             <LogoMark />
             <span className="logo-text">codeCasticgh</span>
         </a>

@@ -16,10 +16,10 @@ export default function Home() {
                             teachers.
                         </p>
                         <div className="hero-actions">
-                            <a className="btn btn-gold" href="#/services">
+                            <a className="btn btn-gold" href="/services">
                                 See our services
                             </a>
-                            <a className="btn btn-outline" href="#/exams">
+                            <a className="btn btn-outline" href="/exams">
                                 Try ExamHub
                             </a>
                         </div>
@@ -80,7 +80,7 @@ export default function Home() {
                         ))}
                     </div>
                     <p style={{ marginTop: 36 }}>
-                        <a className="btn btn-line" href="#/services">
+                        <a className="btn btn-line" href="/services">
                             Read about each service
                         </a>
                     </p>
@@ -95,7 +95,7 @@ export default function Home() {
                             Students pick a level or exam section, answer multiple choice questions and see their score straight
                             away. Teachers and schools can add their own subjects and questions.
                         </p>
-                        <a className="btn btn-navy" href="#/exams">
+                        <a className="btn btn-navy" href="/exams">
                             Open ExamHub
                         </a>
                     </div>
@@ -104,7 +104,7 @@ export default function Home() {
                         <ul className="pill-list">
                             {TRACKS.map((t) => (
                                 <li key={t.slug}>
-                                    <a href={`#/exams/${t.slug}`}>{t.label}</a>
+                                    <a href={`/exams/${t.slug}`}>{t.label}</a>
                                 </li>
                             ))}
                         </ul>
@@ -131,7 +131,7 @@ export default function Home() {
                 <div className="wrap cta-band">
                     <h2>Have a project, a problem or a training need?</h2>
                     <p>Tell us what you are trying to achieve and we will get back to you.</p>
-                    <a className="btn btn-navy" href="#/contact">
+                    <a className="btn btn-navy" href="/contact">
                         Contact us
                     </a>
                 </div>

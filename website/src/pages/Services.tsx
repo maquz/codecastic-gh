@@ -37,7 +37,7 @@ export default function Services() {
                         We take on any lawful work related to information technology and innovation. Describe what you
                         need and we will tell you honestly whether we can help.
                     </p>
-                    <a className="btn btn-navy" href="#/contact">
+                    <a className="btn btn-navy" href="/contact">
                         Request a service
                     </a>
                 </div>
