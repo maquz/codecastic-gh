@@ -205,18 +205,21 @@ const PROMOTION_RANKS: string[] = [
     'Assistant Director I (AD I)',
     'Deputy Director (DD)',
     'Director II (Dir II)',
+    'Director I (Dir I)',
 ];
 const PROMOTION_RANK_ITEMS: Subject[] = [
     { id: 'rank-ad-ii', name: 'Assistant Director II (AD II)' },
     { id: 'rank-ad-i', name: 'Assistant Director I (AD I)' },
     { id: 'rank-dd', name: 'Deputy Director (DD)' },
     { id: 'rank-dir-ii', name: 'Director II (Dir II)' },
+    { id: 'rank-dir-i', name: 'Director I (Dir I)' },
 ];
 const PROMOTION_RANK_CODE_BY_ID: Record<string, string> = {
     'rank-ad-ii': 'AD_II',
     'rank-ad-i': 'AD_I',
     'rank-dd': 'DD',
     'rank-dir-ii': 'DIR_II',
+    'rank-dir-i': 'DIR_I',
 };
 const LETTERS = ['A', 'B', 'C', 'D'];
 
@@ -3348,7 +3351,7 @@ function QuestionsAdmin({
                 'Instructions for Administrators:',
                 '1. Fill in your questions following the structured blocks below.',
                 '2. Separate each question with three dashes: ---',
-                '3. Valid Ranks: AD_II (Assistant Director II), AD_I (Assistant Director I), DD (Deputy Director), DIR_II (Director II).',
+                '3. Valid Ranks: AD_II (Assistant Director II), AD_I (Assistant Director I), DD (Deputy Director), DIR_II (Director II), DIR_I (Director I).',
                 '4. Correct choices: A, B, C, or D.',
                 '',
                 '---',
@@ -4063,7 +4066,7 @@ function QuestionsAdmin({
     ? `Instructions for Administrators:
 1. Fill in your questions following the structured blocks below.
 2. Separate each question with three dashes: ---
-3. Valid Ranks: AD_II (Assistant Director II), AD_I (Assistant Director I), DD (Deputy Director), DIR_II (Director II).
+3. Valid Ranks: AD_II (Assistant Director II), AD_I (Assistant Director I), DD (Deputy Director), DIR_II (Director II), DIR_I (Director I).
 4. Correct choices: A, B, C, or D.
 
 ---

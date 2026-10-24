@@ -13600,7 +13600,8 @@ var PROMOTION_RANK_ITEMS = [
   { id: "rank-ad-ii", name: "Assistant Director II (AD II)" },
   { id: "rank-ad-i", name: "Assistant Director I (AD I)" },
   { id: "rank-dd", name: "Deputy Director (DD)" },
-  { id: "rank-dir-ii", name: "Director II (Dir II)" }
+  { id: "rank-dir-ii", name: "Director II (Dir II)" },
+  { id: "rank-dir-i", name: "Director I (Dir I)" }
 ];
 async function ensureTrackSeed() {
   const { items: settings } = await db.list("settings", { limit: 50 });
@@ -13632,9 +13633,6 @@ async function ensureTrackSeed() {
   if (rows.length > 0) await db.add("questions", rows);
 }
 async function ensureGesPromoRankSeed() {
-  const { items: settings } = await db.list("settings", { limit: 50 });
-  if (settings.some((s) => s.key === "seed-ges-ranks-v1")) return;
-  await db.add("settings", [{ key: "seed-ges-ranks-v1" }]);
   const validRankIds = new Set(PROMOTION_RANK_ITEMS.map((r) => r.id));
   const existingQs = await allQuestions();
   for (const eq of existingQs) {
@@ -13642,6 +13640,47 @@ async function ensureGesPromoRankSeed() {
       await db.update("questions", eq.id, { subjectId: "rank-ad-ii" });
     }
   }
+  const hasDirI = existingQs.some((q2) => q2.level === "GES-PROMO" && q2.subjectId === "rank-dir-i");
+  if (!hasDirI) {
+    const dirISamples = [
+      {
+        subjectId: "rank-dir-i",
+        level: "GES-PROMO",
+        text: "At the Director I level in the Ghana Education Service, strategic educational policy formulation and systemic quality assurance primarily focus on:",
+        options: [
+          "Managing individual classroom duty rosters for basic schools",
+          "Strategic leadership, national education reforms implementation, and systemic multi-agency collaboration",
+          "Issuing daily terminal report cards to junior high students",
+          "Exclusively conducting inventory audits of classroom chalkboards"
+        ],
+        correctIndex: 1,
+        explanation: "A Director I provides top-tier strategic leadership, coordinates national pre-tertiary education reform implementation, and oversees systemic educational performance.",
+        year: "2023",
+        category: "Educational Policies & Governance",
+        createdAt: Date.now() + 15
+      },
+      {
+        subjectId: "rank-dir-i",
+        level: "GES-PROMO",
+        text: "Under the Education Regulatory Bodies Act, 2020 (Act 1023), the regulatory oversight of school inspection and teacher licensing is distributed respectively between:",
+        options: [
+          "NaSIA and NTC",
+          "WAEC and NaCCA",
+          "NTC and GES Council",
+          "NaCCA and TVET Commission"
+        ],
+        correctIndex: 0,
+        explanation: "Under Act 1023, the National Schools Inspectorate Authority (NaSIA) conducts school inspections and evaluations, while the National Teaching Council (NTC) licenses professional teachers.",
+        year: "2022",
+        category: "Educational Policies & Governance",
+        createdAt: Date.now() + 16
+      }
+    ];
+    await db.add("questions", dirISamples);
+  }
+  const { items: settings } = await db.list("settings", { limit: 50 });
+  if (settings.some((s) => s.key === "seed-ges-ranks-v1")) return;
+  await db.add("settings", [{ key: "seed-ges-ranks-v1" }]);
   const rankSamples = [
     {
       subjectId: "rank-ad-i",
@@ -13775,6 +13814,9 @@ function resolvePromotionRankId(rawRank) {
   }
   if (norm === "DIR_II" || norm === "DIR2" || norm === "RANK_DIR_II" || norm.includes("DIRECTOR_II") || norm.endsWith("_DIR_II")) {
     return "rank-dir-ii";
+  }
+  if (norm === "DIR_I" || norm === "DIR1" || norm === "RANK_DIR_I" || norm.includes("DIRECTOR_I") || norm.endsWith("_DIR_I")) {
+    return "rank-dir-i";
   }
   return void 0;
 }
