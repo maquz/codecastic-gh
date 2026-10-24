@@ -258,6 +258,55 @@ function SubjectIcon({ name, size = 20 }: { name: string; size?: number }) {
     return <BookOpen size={size} />;
 }
 
+export function FormattedQuestionText({
+    text,
+    className = '',
+}: {
+    text: string;
+    className?: string;
+}) {
+    if (!text) return null;
+
+    // Check if question contains Roman numerals (I., II., III., IV., V., etc.), (i), (ii), or numbered statements
+    // Example: "Which of the following statements is/are false? I. It is easy... II. Students who..."
+    let formattedText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    // Step down Roman numerals (I., II., III., IV., V., VI., VII., VIII., IX., X.) that follow a space, question mark, colon, or period
+    formattedText = formattedText.replace(/([?.!:]|\s)\s+([IVXLCDM]+\.\s+)/g, '$1\n$2');
+
+    // Step down lowercase roman numerals (i), (ii), (iii), (iv)
+    formattedText = formattedText.replace(/([?.!:]|\s)\s+(\([ivxlcdm]+\)\s+)/gi, '$1\n$2');
+
+    // Step down numbered statements like "1. ", "2. " if they appear after a sentence/question mark
+    formattedText = formattedText.replace(/([?:]|\.\s+)\s*([0-9]+\.\s+[A-Z])/g, '$1\n$2');
+
+    const lines = formattedText.split('\n').map((l) => l.trim()).filter(Boolean);
+
+    if (lines.length <= 1) {
+        return <div className={`leading-relaxed whitespace-pre-line ${className}`}>{text}</div>;
+    }
+
+    return (
+        <div className={`space-y-2 leading-relaxed ${className}`}>
+            {lines.map((line, idx) => {
+                const isStatement = /^(?:[IVXLCDM]+\.|\([ivxlcdm]+\)|[0-9]+\.)\s+/i.test(line);
+                return (
+                    <div
+                        key={idx}
+                        className={
+                            isStatement
+                                ? 'font-medium text-slate-900 pl-3 border-l-2 border-indigo-400 bg-indigo-50/40 py-1 rounded-r-md'
+                                : ''
+                        }
+                    >
+                        {line}
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
 type Tab = 'student' | 'admin';
 
 export default function ExamHubPortal({
@@ -1589,7 +1638,9 @@ function StudentView({
                         )}
                     </div>
 
-                    <h2 className="mt-4 text-lg font-semibold leading-relaxed text-slate-900">{q.text}</h2>
+                    <div className="mt-4">
+                        <FormattedQuestionText text={q.text} className="text-base sm:text-lg font-semibold text-slate-900" />
+                    </div>
 
                     {/* Answer Options with Instant Feedback */}
                     <div className="mt-5 space-y-2.5">
@@ -1817,14 +1868,27 @@ function StudentView({
                     </p>
                     <p className="mt-1 text-lg font-semibold text-[#364c83]">{result.percent}%</p>
                     <p className="mt-2 text-sm text-slate-600">{msg}</p>
-                    <button
-                        type="button"
-                        onClick={backToStart}
-                        className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[#364c83] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2d57]"
-                    >
-                        <RotateCcw size={15} />
-                        Take another exam
-                    </button>
+                    <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                backToStart();
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }}
+                            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                        >
+                            <ArrowLeft size={15} />
+                            Candidate Dashboard
+                        </button>
+                        <button
+                            type="button"
+                            onClick={backToStart}
+                            className="inline-flex items-center gap-2 rounded-lg bg-[#364c83] px-4 py-2 text-sm font-bold text-white hover:bg-[#1f2d57] transition shadow-xs"
+                        >
+                            <RotateCcw size={15} />
+                            Take Another Exam
+                        </button>
+                    </div>
                 </div>
 
                 <h3 className="mt-8 text-sm font-semibold text-slate-900">Review your answers</h3>
@@ -1834,15 +1898,16 @@ function StudentView({
                         if (!r) return null;
                         return (
                             <div key={q.id} className="rounded-xl border border-slate-200 bg-white p-4">
-                                <div className="flex items-start gap-2">
+                                <div className="flex items-start gap-2.5">
                                     {r.correct ? (
-                                        <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-600" size={17} />
+                                        <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-600" size={18} />
                                     ) : (
-                                        <XCircle className="mt-0.5 shrink-0 text-red-500" size={17} />
+                                        <XCircle className="mt-0.5 shrink-0 text-red-500" size={18} />
                                     )}
-                                    <p className="text-sm font-medium text-slate-900">
-                                        {i + 1}. {q.text}
-                                    </p>
+                                    <div className="text-sm font-medium text-slate-900 flex-1">
+                                        <span className="font-bold text-[#364c83] mr-1">{i + 1}.</span>
+                                        <FormattedQuestionText text={q.text} />
+                                    </div>
                                 </div>
                                 <div className="mt-2.5 space-y-1.5 pl-6">
                                     {q.options.map((opt, oi) => {
@@ -1903,37 +1968,71 @@ function StudentView({
             </div>
 
             {/* Interactive Candidate KPI Performance Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-                {/* Card 1: Question Bank */}
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-500">Question Bank</span>
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
-                            <BookOpen size={14} />
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {/* Card 1: Promotion Trial Exam (Clickable to Start Quiz) */}
+                <div
+                    onClick={() => {
+                        const target = availableItems[0];
+                        if (target && starting === null) startExam(target);
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    className="rounded-xl border border-indigo-200/90 bg-linear-to-b from-indigo-50/50 to-white p-3.5 sm:p-4 shadow-xs hover:border-[#364c83] hover:shadow-md cursor-pointer transition active:scale-[0.99] flex flex-col justify-between min-w-0 overflow-hidden group"
+                    title="Click to start trial exam"
+                >
+                    <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-bold text-[#364c83] truncate">
+                            {level === 'GES-PROMO' ? 'Promotion Trial Exam' : 'Trial Practice Exam'}
+                        </span>
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100/70 text-[#364c83] group-hover:bg-[#364c83] group-hover:text-white transition">
+                            <Sparkles size={14} />
                         </span>
                     </div>
-                    <div className="mt-2 text-2xl font-bold text-slate-900">{totalQuestionsInBank}</div>
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-                        <span className="truncate max-w-[120px]">{user.promotionRank || levelLabel(level)}</span>
-                        <span className="font-semibold text-emerald-600">Active</span>
+                    <div className="mt-2">
+                        <div className="text-2xl font-bold text-slate-900">{totalQuestionsInBank}</div>
+                        <p className="text-[11px] text-slate-500 truncate">
+                            {user.promotionRank || levelLabel(level)}
+                        </p>
+                    </div>
+                    <div className="mt-2.5 pt-2 border-t border-indigo-100/60 flex items-center justify-between gap-1 text-[11px]">
+                        <span className="font-semibold text-emerald-700">Ready</span>
+                        <span className="inline-flex items-center gap-1 font-bold text-[#364c83] group-hover:translate-x-0.5 transition">
+                            {starting ? (
+                                <>
+                                    <Loader2 className="animate-spin" size={12} />
+                                    <span>Starting...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <span>Start Quiz</span>
+                                    <ArrowRight size={12} />
+                                </>
+                            )}
+                        </span>
                     </div>
                 </div>
 
                 {/* Card 2: Exams Taken */}
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-500">Exams Taken</span>
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                <div className="rounded-xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-xs flex flex-col justify-between min-w-0 overflow-hidden">
+                    <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-semibold text-slate-500 truncate">Exams Taken</span>
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
                             <ClipboardCheck size={14} />
                         </span>
                     </div>
-                    <div className="mt-2 text-2xl font-bold text-slate-900">{studentStats.examsTaken}</div>
-                    <div className="mt-2 flex items-center justify-between text-[11px]">
-                        <span className="text-slate-400">Total attempts</span>
+                    <div className="mt-2">
+                        <div className="text-2xl font-bold text-slate-900">{studentStats.examsTaken}</div>
+                        <p className="text-[11px] text-slate-400">Total attempts</p>
+                    </div>
+                    <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between gap-1 text-[11px]">
+                        <span className="text-slate-400">History</span>
                         <button
                             type="button"
-                            onClick={() => setShowRecentModal(true)}
-                            className="inline-flex items-center gap-0.5 font-bold text-[#364c83] hover:underline"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setShowRecentModal(true);
+                            }}
+                            className="inline-flex items-center gap-0.5 font-bold text-[#364c83] hover:underline shrink-0"
                         >
                             Reveal <ChevronDown size={12} />
                         </button>
@@ -1941,15 +2040,15 @@ function StudentView({
                 </div>
 
                 {/* Card 3: Overall Average */}
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-500">Overall Average</span>
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                <div className="rounded-xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-xs flex flex-col justify-between min-w-0 overflow-hidden">
+                    <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-semibold text-slate-500 truncate">Overall Average</span>
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[#364c83]">
                             <TrendingUp size={14} />
                         </span>
                     </div>
-                    <div>
-                        <div className="mt-2 text-2xl font-bold text-slate-900">
+                    <div className="mt-2">
+                        <div className="text-2xl font-bold text-slate-900">
                             {studentStats.examsTaken > 0 ? `${studentStats.avgScore}%` : '--%'}
                         </div>
                         <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
@@ -1959,12 +2058,15 @@ function StudentView({
                             />
                         </div>
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-[11px]">
+                    <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between gap-1 text-[11px]">
                         <span className="text-slate-400">Score analysis</span>
                         <button
                             type="button"
-                            onClick={() => setShowRecentModal(true)}
-                            className="inline-flex items-center gap-0.5 font-bold text-[#364c83] hover:underline"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setShowRecentModal(true);
+                            }}
+                            className="inline-flex items-center gap-0.5 font-bold text-[#364c83] hover:underline shrink-0"
                         >
                             Reveal <ChevronDown size={12} />
                         </button>
@@ -1972,39 +2074,47 @@ function StudentView({
                 </div>
 
                 {/* Card 4: Question Timer */}
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-500">Question Timer</span>
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                <div className="rounded-xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-xs flex flex-col justify-between min-w-0 overflow-hidden">
+                    <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-semibold text-slate-500 truncate">Question Timer</span>
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
                             <Clock size={14} />
                         </span>
                     </div>
-                    <div className="mt-1 flex items-baseline justify-between gap-1">
-                        <div className="text-2xl font-bold text-emerald-700">
-                            {perQuestionSeconds === 0 ? 'Off' : `${perQuestionSeconds}s`}
+                    <div className="mt-1">
+                        <div className="flex items-baseline justify-between">
+                            <span className="text-2xl font-bold text-emerald-700">
+                                {perQuestionSeconds === 0 ? 'Off' : `${perQuestionSeconds}s`}
+                            </span>
+                            <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                {perQuestionSeconds === 60 ? 'Default' : perQuestionSeconds === 0 ? 'Untimed' : 'Custom'}
+                            </span>
                         </div>
-                        <select
-                            value={String(perQuestionSeconds)}
-                            onChange={(e) => {
-                                const val = Number(e.target.value);
-                                setPerQuestionSeconds(val);
-                                setQuestionSecondsLeft(val);
-                            }}
-                            className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-700 focus:border-[#364c83] focus:outline-hidden"
-                            title="Set timer per question"
-                        >
-                            <option value="30">30s (Rapid)</option>
-                            <option value="45">45s (Fast)</option>
-                            <option value="60">60s (Default)</option>
-                            <option value="90">90s (Standard)</option>
-                            <option value="120">120s (Extended)</option>
-                            <option value="0">Untimed</option>
-                        </select>
+                        {/* 100% width select ensures it never spills outside card border */}
+                        <div className="mt-2">
+                            <select
+                                value={String(perQuestionSeconds)}
+                                onChange={(e) => {
+                                    const val = Number(e.target.value);
+                                    setPerQuestionSeconds(val);
+                                    setQuestionSecondsLeft(val);
+                                }}
+                                className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 focus:border-[#364c83] focus:bg-white focus:outline-hidden"
+                                title="Set pace per question"
+                            >
+                                <option value="30">30s / question</option>
+                                <option value="45">45s / question</option>
+                                <option value="60">60s (Default)</option>
+                                <option value="90">90s / question</option>
+                                <option value="120">120s / question</option>
+                                <option value="0">Untimed (No timer)</option>
+                            </select>
+                        </div>
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-                        <span>Pace per question</span>
+                    <div className="mt-2 pt-1 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Pace</span>
                         <span className="font-semibold text-slate-600">
-                            {perQuestionSeconds === 60 ? 'Default 60s' : 'Adjusted'}
+                            {perQuestionSeconds === 60 ? 'Default 60s' : perQuestionSeconds === 0 ? 'Untimed' : `${perQuestionSeconds}s set`}
                         </span>
                     </div>
                 </div>

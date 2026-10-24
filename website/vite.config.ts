@@ -26,7 +26,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
-  base: './',
+  base: '/',
   build: {
     outDir: process.env.APPDEPLOY_VITE_OUT_DIR || 'dist',
     sourcemap:
