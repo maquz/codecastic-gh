@@ -34,10 +34,13 @@ fs.copyFileSync(path.join(rootDir, 'website', 'app.js'), path.join(stagingDir, '
 // Copy website/package.json
 fs.copyFileSync(path.join(rootDir, 'website', 'package.json'), path.join(stagingDir, 'package.json'));
 
-// Copy data/db.json
+// Copy data/db.json and seed.json
 if (fs.existsSync(path.join(rootDir, 'website', 'data'))) {
     fs.mkdirSync(path.join(stagingDir, 'data'), { recursive: true });
     fs.cpSync(path.join(rootDir, 'website', 'data'), path.join(stagingDir, 'data'), { recursive: true });
+    if (fs.existsSync(path.join(rootDir, 'website', 'data', 'db.json'))) {
+        fs.copyFileSync(path.join(rootDir, 'website', 'data', 'db.json'), path.join(stagingDir, 'data', 'seed.json'));
+    }
 }
 
 // Copy deploy.php

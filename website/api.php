@@ -27,18 +27,25 @@ function getDb() {
     if (!file_exists($dataDir)) {
         @mkdir($dataDir, 0755, true);
     }
+    
+    // Check if db.json exists
     if (!file_exists($dbFile)) {
-        $initial = [
-            'subjects' => [],
-            'questions' => [],
-            'settings' => [],
-            'users' => [],
-            'sessions' => [],
-            'results' => [],
-            'messages' => []
-        ];
-        file_put_contents($dbFile, json_encode($initial, JSON_PRETTY_PRINT));
-        return $initial;
+        $seedFile = $dataDir . '/seed.json';
+        if (file_exists($seedFile)) {
+            copy($seedFile, $dbFile);
+        } else {
+            $initial = [
+                'subjects' => [],
+                'questions' => [],
+                'settings' => [],
+                'users' => [],
+                'sessions' => [],
+                'results' => [],
+                'messages' => []
+            ];
+            file_put_contents($dbFile, json_encode($initial, JSON_PRETTY_PRINT));
+            return $initial;
+        }
     }
     $raw = file_get_contents($dbFile);
     $data = json_decode($raw, true);
@@ -50,10 +57,35 @@ function getDb() {
             $data[$key] = [];
         }
     }
+
+    // Smart-merge newly added questions from seed.json without touching candidates/results
+    $seedFile = $dataDir . '/seed.json';
+    if (file_exists($seedFile)) {
+        $seedRaw = file_get_contents($seedFile);
+        $seedData = json_decode($seedRaw, true);
+        if (is_array($seedData) && !empty($seedData['questions'])) {
+            $existingQIds = [];
+            foreach ($data['questions'] as $eq) {
+                if (!empty($eq['id'])) $existingQIds[$eq['id']] = true;
+            }
+            $added = 0;
+            foreach ($seedData['questions'] as $sq) {
+                if (!empty($sq['id']) && !isset($existingQIds[$sq['id']])) {
+                    $data['questions'][] = $sq;
+                    $existingQIds[$sq['id']] = true;
+                    $added++;
+                }
+            }
+            if ($added > 0) {
+                saveDb($data, false);
+            }
+        }
+    }
+
     return $data;
 }
 
-function saveDb($data) {
+function saveDb($data, $makeBackup = true) {
     global $dataDir, $dbFile;
     if (!file_exists($dataDir)) {
         @mkdir($dataDir, 0755, true);
@@ -61,6 +93,18 @@ function saveDb($data) {
     $tmpFile = $dbFile . '.tmp.' . uniqid();
     file_put_contents($tmpFile, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
     rename($tmpFile, $dbFile);
+
+    // Automatic rolling daily backup to protect candidate records permanently
+    if ($makeBackup) {
+        $backupDir = $dataDir . '/backups';
+        if (!file_exists($backupDir)) {
+            @mkdir($backupDir, 0755, true);
+        }
+        $todayBackup = $backupDir . '/db-backup-' . date('Y-m-d') . '.json';
+        if (!file_exists($todayBackup)) {
+            @copy($dbFile, $todayBackup);
+        }
+    }
 }
 
 function generateUuid() {
@@ -1056,6 +1100,113 @@ if ($route === 'admin/candidates' && $method === 'POST') {
         'totalCandidates' => count($candidateList),
         'totalExams' => $totalExamsOverall,
         'overallAverage' => $overallAvg
+    ]);
+}
+
+// Admin Database Backup Download
+if ($route === 'admin/backup-download' && $method === 'GET') {
+    $code = $_GET['passcode'] ?? '';
+    if (!isAdmin($db, $code)) errorOut('Not authorised', 401);
+    
+    header('Content-Type: application/json; charset=utf-8');
+    header('Content-Disposition: attachment; filename="codecastic-backup-' . date('Y-m-d-His') . '.json"');
+    echo json_encode($db, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// Admin Database Restore / Merge
+if ($route === 'admin/restore-database' && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+    
+    $importData = $b['data'] ?? null;
+    if (!is_array($importData)) errorOut('Invalid backup data supplied', 400);
+
+    $importedUsers = 0;
+    $importedResults = 0;
+
+    // Merge users safely
+    if (!empty($importData['users']) && is_array($importData['users'])) {
+        $existingEmails = [];
+        foreach ($db['users'] as $u) {
+            $em = strtolower(trim((string)($u['email'] ?? '')));
+            if ($em !== '') $existingEmails[$em] = true;
+        }
+        foreach ($importData['users'] as $iu) {
+            $em = strtolower(trim((string)($iu['email'] ?? '')));
+            if ($em !== '' && !isset($existingEmails[$em])) {
+                $db['users'][] = $iu;
+                $existingEmails[$em] = true;
+                $importedUsers++;
+            }
+        }
+    }
+
+    // Merge results safely
+    if (!empty($importData['results']) && is_array($importData['results'])) {
+        $existingResIds = [];
+        foreach ($db['results'] as $r) {
+            if (!empty($r['id'])) $existingResIds[$r['id']] = true;
+        }
+        foreach ($importData['results'] as $ir) {
+            if (!empty($ir['id']) && !isset($existingResIds[$ir['id']])) {
+                $db['results'][] = $ir;
+                $existingResIds[$ir['id']] = true;
+                $importedResults++;
+            }
+        }
+    }
+
+    saveDb($db);
+    jsonOut([
+        'ok' => true,
+        'message' => "Restored successfully: $importedUsers new candidates, $importedResults exam records added.",
+        'totalUsers' => count($db['users']),
+        'totalResults' => count($db['results'])
+    ]);
+}
+
+// Admin Server Storage Scanner (Searches for any other candidate backups on the server)
+if ($route === 'admin/scan-server' && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+
+    $foundFiles = [];
+    $searchDirs = [
+        $dataDir,
+        $dataDir . '/backups',
+        __DIR__,
+        dirname(__DIR__),
+        dirname(__DIR__) . '/.trash',
+        dirname(__DIR__) . '/repositories/codecastic-gh/website/data'
+    ];
+
+    foreach ($searchDirs as $dir) {
+        if (!is_dir($dir)) continue;
+        $files = @scandir($dir);
+        if (!$files) continue;
+        foreach ($files as $f) {
+            if ($f === '.' || $f === '..') continue;
+            $fullPath = $dir . '/' . $f;
+            if (is_file($fullPath) && (substr($f, -5) === '.json' || substr($f, -4) === '.bak')) {
+                $size = filesize($fullPath);
+                $raw = @file_get_contents($fullPath, false, null, 0, 50000);
+                $hasCynthia = (strpos($raw, 'cynthia') !== false || strpos($raw, 'Cynthia') !== false);
+                $hasUsers = (strpos($raw, '"users"') !== false);
+                $foundFiles[] = [
+                    'path' => $fullPath,
+                    'file' => $f,
+                    'size' => $size,
+                    'hasCynthia' => $hasCynthia,
+                    'hasUsers' => $hasUsers
+                ];
+            }
+        }
+    }
+
+    jsonOut([
+        'scannedDirectories' => $searchDirs,
+        'foundFiles' => $foundFiles
     ]);
 }
 
