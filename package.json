@@ -6,6 +6,7 @@
     "install:all": "npm --prefix website install",
     "dev": "npm --prefix website run dev",
     "build": "npm --prefix website run build",
+    "package": "node package-cpanel.mjs",
     "preview": "npm --prefix website run preview"
   }
 }

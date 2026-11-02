@@ -11,9 +11,11 @@ $repo_dir = '/home/codecast/repositories/codecastic-gh';
 $deploy_dir = '/home/codecast/public_html';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
     header('Content-Type: application/json');
-    echo json_encode(['error' => 'Method Not Allowed. Send POST from GitHub Webhook.']);
+    echo json_encode([
+        'status' => 'ready',
+        'message' => 'Codecastic GitHub Webhook Endpoint is active. Send POST with GitHub webhook payload to trigger deployment.'
+    ]);
     exit;
 }
 
@@ -38,8 +40,14 @@ exec("cd {$repo_dir} && git checkout main 2>&1 && git pull origin main 2>&1", $o
 
 // 2. Deploy compiled files to public web directory
 if (file_exists("{$repo_dir}/website/dist")) {
+    // Copy into public_html root so LiteSpeed directly serves index.html and assets
+    exec("cp -r {$repo_dir}/website/dist/* {$deploy_dir}/ 2>&1", $output);
+    // Also copy into public_html/dist/ so Node.js (app.js) can serve from ./dist
     @mkdir("{$deploy_dir}/dist", 0755, true);
     exec("cp -r {$repo_dir}/website/dist/* {$deploy_dir}/dist/ 2>&1", $output);
+}
+if (file_exists("{$repo_dir}/website/.htaccess")) {
+    exec("cp {$repo_dir}/website/.htaccess {$deploy_dir}/.htaccess 2>&1", $output);
 }
 if (file_exists("{$repo_dir}/website/app.js")) {
     exec("cp {$repo_dir}/website/app.js {$deploy_dir}/app.js 2>&1", $output);
