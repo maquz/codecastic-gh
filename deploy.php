@@ -55,6 +55,10 @@ if (file_exists("{$repo_dir}/website/app.js")) {
 if (file_exists("{$repo_dir}/website/package.json")) {
     exec("cp {$repo_dir}/website/package.json {$deploy_dir}/package.json 2>&1", $output);
 }
+if (file_exists("{$repo_dir}/website/data")) {
+    @mkdir("{$deploy_dir}/data", 0755, true);
+    exec("cp -r {$repo_dir}/website/data/* {$deploy_dir}/data/ 2>&1", $output);
+}
 
 // 3. Restart Node.js application via Phusion Passenger restart hook
 @mkdir("{$deploy_dir}/tmp", 0755, true);
