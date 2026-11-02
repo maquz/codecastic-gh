@@ -1,6 +1,16 @@
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+
+  # 1. Route /api/* requests to api.php
+  RewriteRule ^api/(.*)$ api.php?route=$1 [QSA,L]
+  RewriteRule ^api$ api.php [QSA,L]
+
+  # 2. Allow direct access to existing PHP scripts
+  RewriteRule ^deploy\.php$ - [L]
+  RewriteRule ^api\.php$ - [L]
+
+  # 3. Route everything else to index.html for React SPA
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d

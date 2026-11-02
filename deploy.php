@@ -52,6 +52,9 @@ if (file_exists("{$repo_dir}/website/.htaccess")) {
 if (file_exists("{$repo_dir}/website/app.js")) {
     exec("cp {$repo_dir}/website/app.js {$deploy_dir}/app.js 2>&1", $output);
 }
+if (file_exists("{$repo_dir}/website/api.php")) {
+    exec("cp {$repo_dir}/website/api.php {$deploy_dir}/api.php 2>&1", $output);
+}
 if (file_exists("{$repo_dir}/website/package.json")) {
     exec("cp {$repo_dir}/website/package.json {$deploy_dir}/package.json 2>&1", $output);
 }

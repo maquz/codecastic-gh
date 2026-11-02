@@ -45,6 +45,11 @@ if (fs.existsSync(path.join(rootDir, 'deploy.php'))) {
     fs.copyFileSync(path.join(rootDir, 'deploy.php'), path.join(stagingDir, 'deploy.php'));
 }
 
+// Copy api.php
+if (fs.existsSync(path.join(rootDir, 'website', 'api.php'))) {
+    fs.copyFileSync(path.join(rootDir, 'website', 'api.php'), path.join(stagingDir, 'api.php'));
+}
+
 // Create deploy-cpanel.zip
 console.log('Creating deploy-cpanel.zip...');
 const zipFile = path.join(rootDir, 'deploy-cpanel.zip');
