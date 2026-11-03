@@ -1314,8 +1314,9 @@ function AiTutorDialog({
                                 question.chosen !== null && question.chosen !== question.correctIndex
                                     ? 'Why was my selected answer incorrect?'
                                     : null,
-                                'Explain simply with an everyday example',
-                                'Give me a memory tip / mnemonic to remember this',
+                                'Explain with an everyday Ghanaian example',
+                                'Give me a Ghanaian memory tip / mnemonic to remember this',
+                                'What do Ghanaian examiners look for in this question?',
                             ]
                                 .filter(Boolean)
                                 .map((chip, idx) => (
@@ -1557,9 +1558,15 @@ function StudentView({
     }, [loadCatalog, loadStudentStats]);
 
     const availableItems = useMemo(() => {
-        return level === 'GES-PROMO'
-            ? PROMOTION_RANK_ITEMS.filter((r) => !user.promotionRank || r.name === user.promotionRank)
-            : subjects;
+        if (level === 'GES-PROMO') {
+            return PROMOTION_RANK_ITEMS.filter((r) => !user.promotionRank || r.name === user.promotionRank);
+        }
+        if (level === 'GTLE') {
+            // Professional Studies questions are strictly for GTLE only
+            return subjects.filter((s) => s.name.toLowerCase().includes('professional studies'));
+        }
+        // Basic 4-9, BECE, SHS 1-3, and WASSCE must never display Professional Studies
+        return subjects.filter((s) => !s.name.toLowerCase().includes('professional studies'));
     }, [level, user.promotionRank, subjects]);
 
     const totalQuestionsInBank = useMemo(() => {
@@ -2314,7 +2321,7 @@ function StudentView({
                 >
                     <div className="flex items-center justify-between gap-1">
                         <span className="text-xs font-bold text-[#364c83] truncate">
-                            {level === 'GES-PROMO' ? 'Promotion Trial Exam' : 'Trial Practice Exam'}
+                            {level === 'GES-PROMO' ? 'Promotion Trial Exam' : level === 'GTLE' ? 'GTLE Licensure Exam' : 'Trial Practice Exam'}
                         </span>
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100/70 text-[#364c83] group-hover:bg-[#364c83] group-hover:text-white transition">
                             <Sparkles size={14} />
@@ -2322,10 +2329,10 @@ function StudentView({
                     </div>
                     <div className="mt-2">
                         <div className="text-sm font-bold text-slate-900 truncate">
-                            {user.promotionRank || levelLabel(level)}
+                            {level === 'GES-PROMO' ? (user.promotionRank || 'GES Promotion') : level === 'GTLE' ? 'GTLE Professional Studies' : levelLabel(level)}
                         </div>
                         <p className="text-[11px] text-slate-500 mt-0.5">
-                            Standard Syllabus
+                            {level === 'GTLE' ? 'NTC Licensure Syllabus' : 'Standard Syllabus'}
                         </p>
                     </div>
                     <div className="mt-2.5 pt-2 border-t border-indigo-100/60 flex items-center justify-between gap-1 text-[11px]">
@@ -2619,6 +2626,8 @@ function StudentView({
                 <h3 className="text-sm font-semibold text-slate-900">
                     {level === 'GES-PROMO'
                         ? 'Your Registered Promotion Rank Assessment'
+                        : level === 'GTLE'
+                        ? 'Ghana Teacher Licensure Examination (GTLE) Subjects'
                         : `Choose a ${levelLabel(level)} subject to start trial quiz`}
                 </h3>
                 <div className={`mt-3 grid gap-3.5 ${level === 'GES-PROMO' ? 'sm:grid-cols-1' : 'sm:grid-cols-2'}`}>
@@ -4011,7 +4020,12 @@ function QuestionsAdmin({
 
     const activeTrack = TRACKS.find((t) => t.slug === selectedTrackSlug) || null;
     const isGesPromoPortal = activeTrack?.code === 'GES-PROMO';
-    const portalItems = isGesPromoPortal ? PROMOTION_RANK_ITEMS : subjects;
+    const isGtlePortal = activeTrack?.code === 'GTLE';
+    const portalItems = isGesPromoPortal
+        ? PROMOTION_RANK_ITEMS
+        : isGtlePortal
+          ? subjects.filter((s) => s.name.toLowerCase().includes('professional studies'))
+          : subjects.filter((s) => !s.name.toLowerCase().includes('professional studies'));
     const itemSingularLabel = isGesPromoPortal ? 'Promotion Rank' : 'Subject';
     const itemPluralLabel = isGesPromoPortal ? 'Promotion Ranks' : 'Subjects';
     const activeSubject = portalItems.find((s) => s.id === selectedSubjectId) || null;
@@ -4326,12 +4340,16 @@ function QuestionsAdmin({
             flash(false, 'Fill in the question and all four answer options.');
             return;
         }
+        const isProfStudies = activeSubject?.name.toLowerCase().includes('professional studies') ||
+            subjects.find((s) => s.id === targetSubjectId)?.name.toLowerCase().includes('professional studies');
+        const finalLevel = isProfStudies ? 'GTLE' : level;
+
         setSaving(true);
         try {
             await api.post('/api/admin/questions', {
                 passcode: code,
                 subjectId: targetSubjectId,
-                level,
+                level: finalLevel,
                 text: text.trim(),
                 options: options.map((o) => o.trim()),
                 correctIndex: correct,
@@ -4361,19 +4379,22 @@ function QuestionsAdmin({
             flash(false, 'Fill in the question and all four answer options.');
             return;
         }
+        const isProfStudies = subjects.find((s) => s.id === editSubjectId)?.name.toLowerCase().includes('professional studies');
+        const finalEditLevel = isProfStudies ? 'GTLE' : editLevel;
+
         setUpdating(true);
         try {
             await api.post(`/api/admin/questions/${qId}/update`, {
                 passcode: code,
                 subjectId: editSubjectId,
-                level: editLevel,
+                level: finalEditLevel,
                 text: editText.trim(),
                 options: editOptions.map((o) => o.trim()),
                 correctIndex: editCorrect,
                 explanation: editExplanation.trim(),
                 year: editYear.trim() || undefined,
                 category: editCategory.trim() || undefined,
-                rank: editLevel === 'GES-PROMO' ? (PROMOTION_RANK_CODE_BY_ID[editSubjectId] || undefined) : undefined,
+                rank: finalEditLevel === 'GES-PROMO' ? (PROMOTION_RANK_CODE_BY_ID[editSubjectId] || undefined) : undefined,
             });
             setEditingId(null);
             await reload();
@@ -5074,7 +5095,11 @@ Level: ${levelLabel(level)}`}
                 <div className="mt-4 space-y-3">
                     {displayedQuestions.map((q) => {
                         const isEditing = editingId === q.id;
-                        const editItems = editLevel === 'GES-PROMO' ? PROMOTION_RANK_ITEMS : subjects;
+                        const editItems = editLevel === 'GES-PROMO'
+                            ? PROMOTION_RANK_ITEMS
+                            : editLevel === 'GTLE'
+                              ? subjects.filter((s) => s.name.toLowerCase().includes('professional studies'))
+                              : subjects.filter((s) => !s.name.toLowerCase().includes('professional studies'));
                         const issue = getQuestionIssue(q);
 
                         if (isEditing) {
@@ -5102,7 +5127,14 @@ Level: ${levelLabel(level)}`}
                                         <Field label={editLevel === 'GES-PROMO' ? 'Promotion Rank' : 'Subject'}>
                                             <select
                                                 value={editSubjectId}
-                                                onChange={(e) => setEditSubjectId(e.target.value)}
+                                                onChange={(e) => {
+                                                    const nextId = e.target.value;
+                                                    setEditSubjectId(nextId);
+                                                    const match = subjects.find((s) => s.id === nextId);
+                                                    if (match && match.name.toLowerCase().includes('professional studies')) {
+                                                        setEditLevel('GTLE');
+                                                    }
+                                                }}
                                                 className="input bg-white"
                                             >
                                                 {editItems.map((s) => (
@@ -5122,8 +5154,14 @@ Level: ${levelLabel(level)}`}
                                                         if (!PROMOTION_RANK_ITEMS.some((r) => r.id === editSubjectId)) {
                                                             setEditSubjectId(PROMOTION_RANK_ITEMS[0].id);
                                                         }
-                                                    } else if (subjects.length > 0 && !subjects.some((s) => s.id === editSubjectId)) {
-                                                        setEditSubjectId(subjects[0].id);
+                                                    } else if (nextLevel === 'GTLE') {
+                                                        const ps = subjects.find((s) => s.name.toLowerCase().includes('professional studies'));
+                                                        if (ps) setEditSubjectId(ps.id);
+                                                    } else {
+                                                        const nonPs = subjects.filter((s) => !s.name.toLowerCase().includes('professional studies'));
+                                                        if (nonPs.length > 0 && !nonPs.some((s) => s.id === editSubjectId)) {
+                                                            setEditSubjectId(nonPs[0].id);
+                                                        }
                                                     }
                                                 }}
                                                 className="input bg-white"

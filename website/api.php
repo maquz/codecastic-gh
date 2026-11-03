@@ -82,7 +82,41 @@ function getDb() {
         }
     }
 
+    // Ensure all Professional Studies questions are routed to GTLE only
+    $profStudiesSubjectIds = ['62b4e383-5d17-4489-a187-35d7423f2bba'];
+    foreach ($data['subjects'] as $s) {
+        if (stripos($s['name'] ?? '', 'professional studies') !== false) {
+            $profStudiesSubjectIds[] = $s['id'] ?? '';
+        }
+    }
+    $psChanged = false;
+    foreach ($data['questions'] as &$q) {
+        $subjId = $q['subjectId'] ?? '';
+        if (in_array($subjId, $profStudiesSubjectIds, true) && ($q['level'] ?? '') !== 'GTLE') {
+            $q['level'] = 'GTLE';
+            $psChanged = true;
+        }
+    }
+    unset($q);
+    if ($psChanged) {
+        saveDb($data, false);
+    }
+
     return $data;
+}
+
+function isProfessionalStudiesSubject($db, $subjectId) {
+    if (!$subjectId) return false;
+    if ($subjectId === '62b4e383-5d17-4489-a187-35d7423f2bba') return true;
+    if (!empty($db['subjects']) && is_array($db['subjects'])) {
+        foreach ($db['subjects'] as $s) {
+            if (($s['id'] ?? '') === $subjectId) {
+                $name = strtolower(trim((string)($s['name'] ?? '')));
+                return (strpos($name, 'professional studies') !== false);
+            }
+        }
+    }
+    return false;
 }
 
 function saveDb($data, $makeBackup = true) {
@@ -990,6 +1024,11 @@ if ($route === 'admin/questions' && $method === 'POST') {
     if (count($options) !== 4 || in_array('', $options, true)) errorOut('Provide all 4 options', 400);
     if ($correctIndex < 0 || $correctIndex > 3) errorOut('Choose the correct answer', 400);
 
+    // Professional Studies questions are strictly for GTLE only
+    if (isProfessionalStudiesSubject($db, $subjectId)) {
+        $level = 'GTLE';
+    }
+
     $newQ = [
         'id' => generateUuid(),
         'subjectId' => $subjectId,
@@ -1024,6 +1063,11 @@ if (preg_match('#^admin/questions/([^/]+)/update$#', $route, $m) && $method === 
     if ($foundIdx === null) errorOut('Question not found', 404);
 
     $q = $db['questions'][$foundIdx];
+    if (isset($b['subjectId'])) $q['subjectId'] = trim((string)$b['subjectId']);
+    if (isset($b['level'])) $q['level'] = normLevel($b['level']);
+    if (isProfessionalStudiesSubject($db, $q['subjectId'] ?? '')) {
+        $q['level'] = 'GTLE';
+    }
     if (isset($b['text'])) $q['text'] = trim((string)$b['text']);
     if (isset($b['options']) && is_array($b['options'])) $q['options'] = array_map('trim', $b['options']);
     if (isset($b['correctIndex'])) $q['correctIndex'] = (int)$b['correctIndex'];
@@ -1469,6 +1513,11 @@ if ($route === 'admin/questions/bulk' && $method === 'POST') {
         $targetLevel = (!empty($item['level']))
             ? $item['level']
             : $defaultLevel;
+
+        // Professional Studies questions are strictly for GTLE only
+        if (isProfessionalStudiesSubject($db, $targetSubjectId)) {
+            $targetLevel = 'GTLE';
+        }
 
         if (!$targetSubjectId || !$isValidSubjectOrRank($targetSubjectId)) {
             errorOut('Choose a valid subject or promotion rank before uploading.', 400);
@@ -2139,8 +2188,9 @@ if ($route === 'ai/clarify' && $method === 'POST') {
     $reply = '';
 
     if (!empty($ai['apiKey']) && $ai['enabled']) {
-        $prompt = "You are Codecastic AI Tutor, an inspiring, polite, and expert Ghanaian teacher helping a student in Ghana prepare for their exams ({$subjectName}, Level: {$level}).
-Here is the question details:
+        $prompt = "You are Codecastic AI Tutor, an inspiring, polite, and master Ghanaian educator (National Best Teacher standard) helping a Ghanaian candidate excel in their national examination ({$subjectName}, Level: {$level}).
+
+QUESTION DETAILS:
 Question: {$text}
 Options:
 A) {$options[0]}
@@ -2151,9 +2201,27 @@ Official Correct Answer: Option {$correctLetter} ({$correctText})
 Candidate's Selection: {$studentChosenText}
 Official Explanation: {$explanation}
 
-The candidate asks: \"{$studentQuestion}\"
+CANDIDATE'S INQUIRY:
+\"{$studentQuestion}\"
 
-Please reply in a warm, encouraging pedagogical tone in 2 to 3 concise paragraphs. Explain why Option {$correctLetter} is the correct answer, break down the key concept simply, and give a helpful tip for exams.";
+MANDATORY GHANAIAN DOMESTICATION & PEDAGOGY RULES:
+1. GREETING & TONE: Begin with a warm, authentic Ghanaian greeting (e.g., 'Akwaaba, scholar!', 'Ayekoo on your practice!', 'Medaase for asking!'). Use an inspiring, respectful, and crystal-clear Ghanaian pedagogical tone.
+2. 100% DOMESTICATED GHANAIAN EXAMPLES & SCENARIOS:
+   - When using everyday illustrations, analogies, mnemonics, or scenarios, strictly ground them in familiar Ghanaian life, environment, culture, and geography.
+   - Use Ghanaian contexts such as:
+     * Geography & Landmarks: Lake Volta, Akosombo Dam, Kakum canopy walk, Mount Afadjato, Kejetia Market (Kumasi), Makola Market (Accra), Cape Coast Castle, Paga Crocodile Pond, Tamale central, Mole National Park, Gulf of Guinea.
+     * Food, Agriculture & Daily Living: Cocoa pods, plantain, cassava, fufu, banku, hot kenkey and fried fish with shito, jollof, waakye, shea butter, groundnut soup, yam tubers, solar fish-drying at coastal beaches, clay water pots (cooling through evaporation).
+     * Currency & Society: Ghana Cedis (GH₵) and Pesewas, local transport (trotro / 'mate'), school assemblies, Ghanaian school science laboratories.
+     * Cultural Games & Art: Oware, ampe, kente weaving in Bonwire, traditional damba / adowa rhythms.
+3. ABSOLUTELY NO WESTERN OR FOREIGN POP-CULTURE REFERENCES:
+   - NEVER reference Hollywood, American baseball/football, Thanksgiving, winter/snow, foreign celebrities, or distant Western idioms. Keep every single example and memory tip fully rooted in Ghana so any student across Ghana immediately understands and relates.
+4. GHANAIAN CURRICULUM & EXAM RELEVANCE:
+   - Align directly with Ghanaian educational standards (NaCCA syllabus for Basic schools, WAEC Chief Examiner reports for BECE & WASSCE, and NTC standards for GTLE).
+   - Point out why Option {$correctLetter} is the exact answer expected by Ghanaian examiners, and if the student picked an incorrect option, explain the common misconception Ghanaian students make.
+5. FORMAT & BREVITY:
+   - Respond in 2 to 3 well-structured, clear markdown paragraphs.
+   - Use bold text for key Ghanaian terms and scientific/mathematical principles.
+   - End with an encouraging Ghanaian word of motivation (e.g., 'Keep studying hard—you are destined for excellence in your {$subjectName} exam!').";
 
         $aiReply = callGeminiApi($prompt, $ai['apiKey'], $ai['model']);
         if ($aiReply) $reply = $aiReply;
@@ -2161,14 +2229,14 @@ Please reply in a warm, encouraging pedagogical tone in 2 to 3 concise paragraph
 
     // Educational heuristic response if Gemini key is not entered
     if (!$reply) {
-        $reply = "Hello! Here is a breakdown of this question for you:\n\n"
+        $reply = "Akwaaba! Here is your Ghanaian exam breakdown for this question:\n\n"
             . "**Correct Answer:** Option {$correctLetter} ({$correctText})\n\n"
-            . ($explanation ? "**Explanation:** " . $explanation . "\n\n" : "")
-            . "💡 **Key Concept:** Always pay close attention to the specific terms and definitions in your {$subjectName} syllabus. "
+            . ($explanation ? "**Official Curriculum Note:** " . $explanation . "\n\n" : "")
+            . "💡 **Key Ghanaian Exam Tip:** In the Ghanaian {$subjectName} syllabus, examiners specifically reward accurate definitions and real-world understanding. "
             . ($studentChosen !== null && $studentChosen !== $correctIndex
-                ? "You selected Option " . chr(65 + $studentChosen) . ", which is commonly confused with the right answer. Notice how Option {$correctLetter} directly satisfies the question requirement."
-                : "Great job understanding the core principles behind this question!")
-            . "\n\n*(Note: Your administrator can enable full real-time interactive Google Gemini AI in the Admin Panel for customized conversational tutoring!)*";
+                ? "You selected Option " . chr(65 + $studentChosen) . ", which is a common distractor in past WAEC/GES exams. Note that Option {$correctLetter} directly satisfies the syllabus requirements."
+                : "Ayekoo! You have mastered the core Ghanaian curriculum concept behind this question.")
+            . "\n\n*(Note: Your administrator can configure a free Google Gemini AI key in the Admin Panel for live, interactive Ghanaian conversational tutoring!)*";
     }
 
     jsonOut([

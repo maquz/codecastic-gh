@@ -174,9 +174,9 @@ const TRACK_SAMPLES: TrackQ[] = [
     q('Professional Studies', 'GTLE', 'Which of these is a clear learning objective?', ['Pupils will learn about fractions.', 'The teacher will explain fractions.', 'By the end of the lesson, pupils will add two fractions with the same denominator.', 'Fractions will be taught.'], 2, 'A good objective states what learners will be able to do, and can be checked.'),
     q('Professional Studies', 'GTLE', 'Which action best supports an inclusive classroom?', ['Seat struggling learners at the back', 'Use varied activities so all learners can take part', 'Teach only to the fastest learners', 'Excuse some learners from taking part'], 1, 'Varied activities give every learner a way to take part and learn.'),
 
-    q('Professional Studies', 'GES-PROMO', 'A teacher notices that a pupil often comes to school hungry and tired. What is the most professional first step?', ['Punish the pupil', 'Ignore it', 'Speak with the pupil privately and involve the school’s guidance or welfare support', 'Tell the whole class'], 2, 'Handle the matter privately, kindly and through the proper school channels.'),
-    q('Professional Studies', 'GES-PROMO', 'Keeping accurate records of learners’ attendance and progress mainly helps a teacher to:', ['Avoid planning lessons', 'Track progress and support learners who fall behind', 'Reduce the number of lessons', 'Replace assessment'], 1, 'Good records show who needs extra help and whether teaching is working.'),
-    q('Professional Studies', 'GES-PROMO', 'A lesson plan should be prepared:', ['After teaching the lesson', 'Before teaching the lesson', 'Only when inspectors visit', 'Only at the end of term'], 1, 'Planning ahead keeps the lesson focused on its objectives.'),
+    q('Professional Studies', 'GTLE', 'A teacher notices that a pupil often comes to school hungry and tired. What is the most professional first step?', ['Punish the pupil', 'Ignore it', 'Speak with the pupil privately and involve the school’s guidance or welfare support', 'Tell the whole class'], 2, 'Handle the matter privately, kindly and through the proper school channels.'),
+    q('Professional Studies', 'GTLE', 'Keeping accurate records of learners’ attendance and progress mainly helps a teacher to:', ['Avoid planning lessons', 'Track progress and support learners who fall behind', 'Reduce the number of lessons', 'Replace assessment'], 1, 'Good records show who needs extra help and whether teaching is working.'),
+    q('Professional Studies', 'GTLE', 'A lesson plan should be prepared:', ['After teaching the lesson', 'Before teaching the lesson', 'Only when inspectors visit', 'Only at the end of term'], 1, 'Planning ahead keeps the lesson focused on its objectives.'),
 ];
 
 const PROMOTION_RANK_ITEMS = [
@@ -2265,8 +2265,9 @@ Provide the output strictly in valid JSON format:
             let reply = '';
             if (apiKey && aiDoc?.enabled !== false) {
                 try {
-                    const prompt = `You are Codecastic AI Tutor, an inspiring, polite, and expert Ghanaian teacher helping a student in Ghana prepare for their exams (${subjectName}, Level: ${level}).
-Here is the question details:
+                    const prompt = `You are Codecastic AI Tutor, an inspiring, polite, and master Ghanaian educator (National Best Teacher standard) helping a Ghanaian candidate excel in their national examination (${subjectName}, Level: ${level}).
+
+QUESTION DETAILS:
 Question: ${text}
 Options:
 A) ${options[0]}
@@ -2277,9 +2278,27 @@ Official Correct Answer: Option ${correctLetter} (${correctText})
 Candidate's Selection: ${studentChosenText}
 Official Explanation: ${explanation}
 
-The candidate asks: "${studentQuestion}"
+CANDIDATE'S INQUIRY:
+"${studentQuestion}"
 
-Please reply in a warm, encouraging pedagogical tone in 2 to 3 concise paragraphs. Explain why Option ${correctLetter} is the correct answer, break down the key concept simply, and give a helpful tip for exams.`;
+MANDATORY GHANAIAN DOMESTICATION & PEDAGOGY RULES:
+1. GREETING & TONE: Begin with a warm, authentic Ghanaian greeting (e.g., 'Akwaaba, scholar!', 'Ayekoo on your practice!', 'Medaase for asking!'). Use an inspiring, respectful, and crystal-clear Ghanaian pedagogical tone.
+2. 100% DOMESTICATED GHANAIAN EXAMPLES & SCENARIOS:
+   - When using everyday illustrations, analogies, mnemonics, or scenarios, strictly ground them in familiar Ghanaian life, environment, culture, and geography.
+   - Use Ghanaian contexts such as:
+     * Geography & Landmarks: Lake Volta, Akosombo Dam, Kakum canopy walk, Mount Afadjato, Kejetia Market (Kumasi), Makola Market (Accra), Cape Coast Castle, Paga Crocodile Pond, Tamale central, Mole National Park, Gulf of Guinea.
+     * Food, Agriculture & Daily Living: Cocoa pods, plantain, cassava, fufu, banku, hot kenkey and fried fish with shito, jollof, waakye, shea butter, groundnut soup, yam tubers, solar fish-drying at coastal beaches, clay water pots (cooling through evaporation).
+     * Currency & Society: Ghana Cedis (GH₵) and Pesewas, local transport (trotro / 'mate'), school assemblies, Ghanaian school science laboratories.
+     * Cultural Games & Art: Oware, ampe, kente weaving in Bonwire, traditional damba / adowa rhythms.
+3. ABSOLUTELY NO WESTERN OR FOREIGN POP-CULTURE REFERENCES:
+   - NEVER reference Hollywood, American baseball/football, Thanksgiving, winter/snow, foreign celebrities, or distant Western idioms. Keep every single example and memory tip fully rooted in Ghana so any student across Ghana immediately understands and relates.
+4. GHANAIAN CURRICULUM & EXAM RELEVANCE:
+   - Align directly with Ghanaian educational standards (NaCCA syllabus for Basic schools, WAEC Chief Examiner reports for BECE & WASSCE, and NTC standards for GTLE).
+   - Point out why Option ${correctLetter} is the exact answer expected by Ghanaian examiners, and if the student picked an incorrect option, explain the common misconception Ghanaian students make.
+5. FORMAT & BREVITY:
+   - Respond in 2 to 3 well-structured, clear markdown paragraphs.
+   - Use bold text for key Ghanaian terms and scientific/mathematical principles.
+   - End with an encouraging Ghanaian word of motivation (e.g., 'Keep studying hard—you are destined for excellence in your ${subjectName} exam!').`;
 
                     const candidateModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash'];
                     for (const m of candidateModels) {
@@ -2310,13 +2329,13 @@ Please reply in a warm, encouraging pedagogical tone in 2 to 3 concise paragraph
             }
 
             if (!reply) {
-                reply = `Hello! Here is a breakdown of this question for you:
+                reply = `Akwaaba! Here is your Ghanaian exam breakdown for this question:
 
 **Correct Answer:** Option ${correctLetter} (${correctText})
 
-${explanation ? `**Explanation:** ${explanation}\n\n` : ''}💡 **Key Concept:** Always pay close attention to the specific terms and definitions in your ${subjectName} syllabus. ${studentChosen !== null && studentChosen !== correctIndex ? `You selected Option ${String.fromCharCode(65 + studentChosen)}, which is commonly confused with the right answer. Notice how Option ${correctLetter} directly satisfies the question requirement.` : 'Great job understanding the core principles behind this question!'}
+${explanation ? `**Official Curriculum Note:** ${explanation}\n\n` : ''}💡 **Key Ghanaian Exam Tip:** In the Ghanaian ${subjectName} syllabus, examiners specifically reward accurate definitions and real-world understanding. ${studentChosen !== null && studentChosen !== correctIndex ? `You selected Option ${String.fromCharCode(65 + studentChosen)}, which is a common distractor in past WAEC/GES exams. Note that Option ${correctLetter} directly satisfies the syllabus requirements.` : 'Ayekoo! You have mastered the core Ghanaian curriculum concept behind this question!'}
 
-*(Note: Your administrator can enable full real-time interactive Google Gemini AI in the Admin Panel for customized conversational tutoring!)*`;
+*(Note: Your administrator can configure a free Google Gemini AI key in the Admin Panel for live, interactive Ghanaian conversational tutoring!)*`;
             }
 
             return json({ ok: true, reply });
