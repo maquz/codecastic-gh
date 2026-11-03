@@ -15108,7 +15108,7 @@ var handler = router({
       const doc = items.find((i) => i.key === "ai_config");
       const apiKey = String(doc?.apiKey || process.env.GEMINI_API_KEY || process.env.AI_API_KEY || "").trim();
       const enabled = doc?.enabled !== false;
-      const model = String(doc?.model || "gemini-1.5-flash");
+      const model = String(doc?.model || "gemini-3.5-flash-lite");
       let maskedKey = "";
       if (apiKey) {
         const len = apiKey.length;
@@ -15128,7 +15128,8 @@ var handler = router({
       if (!await isAdmin(b.passcode)) return error("Not authorised", 401);
       const apiKey = String(b.apiKey || "").trim();
       const enabled = b.enabled !== false;
-      const model = String(b.model || "gemini-1.5-flash");
+      const rawModel = String(b.model || "gemini-3.5-flash-lite");
+      const model = rawModel === "gemini-1.5-flash" || rawModel === "gemini-2.0-flash" ? "gemini-3.5-flash-lite" : rawModel;
       const { items } = await db.list("settings", { limit: 50 });
       const existing = items.find((i) => i.key === "ai_config");
       const record = {
@@ -15175,7 +15176,7 @@ var handler = router({
       const apiKey = String(aiDoc?.apiKey || process.env.GEMINI_API_KEY || process.env.AI_API_KEY || "").trim();
       if (apiKey && aiDoc?.enabled !== false) {
         try {
-          const prompt = `You are an expert exam reviewer and curriculum auditor.
+          const prompt = `You are an expert exam reviewer and curriculum auditor for the Ghanaian pre-tertiary and teacher promotion curriculum (BECE, WASSCE, GTLE, GES Promotion).
 Analyze this multiple-choice question:
 Question: ${text}
 Options:
@@ -15186,28 +15187,51 @@ D) ${options[3]}
 Currently Marked Correct: Option ${String.fromCharCode(65 + correctIndex)} (${options[correctIndex] || ""})
 Explanation: ${explanation}
 
-Detect any duplicate options, errors, or contradictions with the explanation.
-Provide 4 distinct corrected options, the correct 0-based index, and an improved explanation in strict JSON format:
+CRITICAL RULES:
+1. NEVER include 'None of the above', 'All of the above', or generic non-answers as an option. All 4 options must be genuine, distinct, syllabus-aligned distractors or answers.
+2. If any options are duplicates, replace duplicate options with realistic, distinct alternative choices that fit the subject context.
+3. Ensure the marked correct answer matches the explanation and educational standards.
+4. Set 'correctIndex' to the 0-based index of the true correct answer (0 for A, 1 for B, 2 for C, 3 for D).
+
+Provide the output strictly in valid JSON format:
 {
   "hasIssue": true,
   "issueSummary": "Option A and Option C are duplicates. The correct answer should be integrated circuits (ICs).",
-  "correctedOptions": ["option A", "option B", "option C", "option D"],
+  "correctedOptions": ["Option A", "Option B", "Option C", "Option D"],
   "correctIndex": 2,
-  "explanation": "Clear explanation here."
+  "explanation": "Clear curriculum-aligned explanation here."
 }`;
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: { temperature: 0.2, maxOutputTokens: 1e3 }
-            })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-            const jsonClean = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-            aiResponse = JSON.parse(jsonClean);
+          const candidateModels = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"];
+          for (const m of candidateModels) {
+            try {
+              const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": apiKey
+                },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: prompt }] }],
+                  generationConfig: { temperature: 0.2, maxOutputTokens: 1e3 }
+                })
+              });
+              if (res.ok) {
+                const data = await res.json();
+                const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+                const jsonClean = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+                const parsed = JSON.parse(jsonClean);
+                if (parsed && Array.isArray(parsed.correctedOptions) && parsed.correctedOptions.length === 4) {
+                  const hasForbidden = parsed.correctedOptions.some(
+                    (opt) => /none\s+of\s+the\s+above|all\s+of\s+the\s+above/i.test(opt)
+                  );
+                  if (!hasForbidden) {
+                    aiResponse = parsed;
+                    break;
+                  }
+                }
+              }
+            } catch {
+            }
           }
         } catch {
         }
@@ -15215,10 +15239,15 @@ Provide 4 distinct corrected options, the correct 0-based index, and an improved
       if (!aiResponse) {
         if (hasLocalDuplicates) {
           const duplicateText = Object.keys(dupes).join(", ");
-          let replacement = "Integrated circuits (ICs)";
-          if (/integrated circuit/i.test(explanation)) replacement = "Integrated circuits (ICs)";
-          else if (/microprocessor/i.test(explanation)) replacement = "Microprocessors";
-          else if (/vacuum tube/i.test(explanation)) replacement = "Vacuum tubes";
+          const lowText = `${text} ${explanation}`.toLowerCase();
+          let replacement = "The organ system";
+          if (/cell|living|tissue/i.test(lowText)) replacement = "The organ system";
+          else if (/circuit|computer|hardware|generation/i.test(lowText)) replacement = "Integrated circuits (ICs)";
+          else if (/microprocessor/i.test(lowText)) replacement = "Microprocessors";
+          else if (/vacuum tube/i.test(lowText)) replacement = "Vacuum tubes";
+          else if (/teacher|school|ges/i.test(lowText)) replacement = "School Management Committee (SMC)";
+          else if (/act 1023|law|policy/i.test(lowText)) replacement = "Ghana Education Service Council (GESC)";
+          else replacement = "Structural component";
           const fixedOpts = [...options];
           const seenFirst = /* @__PURE__ */ new Set();
           for (let idx = 0; idx < fixedOpts.length; idx++) {
@@ -15231,10 +15260,10 @@ Provide 4 distinct corrected options, the correct 0-based index, and an improved
           }
           aiResponse = {
             hasIssue: true,
-            issueSummary: `Duplicate options detected ("${duplicateText}").`,
+            issueSummary: `Duplicate options detected ("${duplicateText}"). Replaced duplicate with distinct alternative distractor.`,
             correctedOptions: fixedOpts,
             correctIndex,
-            explanation: explanation || "Fixed duplicate options to ensure 4 distinct answers."
+            explanation: explanation || "Fixed duplicate options to ensure 4 distinct, syllabus-aligned answers."
           };
         } else {
           aiResponse = {
@@ -15272,8 +15301,9 @@ Provide 4 distinct corrected options, the correct 0-based index, and an improved
       if (!target) return error("Question not found", 404);
       const updated = await db.update("questions", qId, {
         ...target,
+        text: fixed.text !== void 0 && String(fixed.text).trim() ? String(fixed.text).trim() : target.text,
         options: fixed.options.map((o) => String(o || "").trim()),
-        correctIndex: Number(fixed.correctIndex) || target.correctIndex,
+        correctIndex: typeof fixed.correctIndex === "number" ? fixed.correctIndex : target.correctIndex,
         explanation: fixed.explanation !== void 0 ? String(fixed.explanation).trim() : target.explanation,
         updatedAt: Date.now()
       });
@@ -15317,17 +15347,27 @@ Official Explanation: ${explanation}
 The candidate asks: "${studentQuestion}"
 
 Please reply in a warm, encouraging pedagogical tone in 2 to 3 concise paragraphs. Explain why Option ${correctLetter} is the correct answer, break down the key concept simply, and give a helpful tip for exams.`;
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: { temperature: 0.3, maxOutputTokens: 1e3 }
-            })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          const candidateModels = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"];
+          for (const m of candidateModels) {
+            try {
+              const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": apiKey
+                },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: prompt }] }],
+                  generationConfig: { temperature: 0.3, maxOutputTokens: 1e3 }
+                })
+              });
+              if (res.ok) {
+                const data = await res.json();
+                reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+                if (reply) break;
+              }
+            } catch {
+            }
           }
         } catch {
         }

@@ -1668,10 +1668,11 @@ if ($route === 'admin/scan-server' && $method === 'POST') {
 // Gemini AI API Client & Helpers
 // -------------------------------------------------------------
 function getAiSettings($db) {
+    global $dataDir;
     $settings = [
         'apiKey' => '',
         'enabled' => true,
-        'model' => 'gemini-1.5-flash'
+        'model' => 'gemini-3.5-flash-lite'
     ];
     foreach ($db['settings'] as $s) {
         if (isset($s['key']) && $s['key'] === 'ai_config') {
@@ -1682,71 +1683,105 @@ function getAiSettings($db) {
         }
     }
     if (empty($settings['apiKey'])) {
+        $seedFile = $dataDir . '/seed.json';
+        if (file_exists($seedFile)) {
+            $seed = json_decode(@file_get_contents($seedFile), true);
+            if (is_array($seed) && !empty($seed['settings'])) {
+                foreach ($seed['settings'] as $ss) {
+                    if (isset($ss['key']) && $ss['key'] === 'ai_config' && !empty($ss['apiKey'])) {
+                        $settings['apiKey'] = trim((string)$ss['apiKey']);
+                        if (!empty($ss['model'])) $settings['model'] = trim((string)$ss['model']);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (empty($settings['apiKey'])) {
         $envKey = getenv('GEMINI_API_KEY') ?: getenv('AI_API_KEY');
         if ($envKey) $settings['apiKey'] = trim($envKey);
     }
     return $settings;
 }
 
-function callGeminiApi($prompt, $apiKey, $model = 'gemini-1.5-flash') {
+function callGeminiApi($prompt, $apiKey, $model = 'gemini-3.5-flash-lite') {
     if (empty($apiKey)) return null;
 
-    $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . urlencode($apiKey);
-    $payload = [
-        'contents' => [
-            [
-                'parts' => [
-                    ['text' => $prompt]
-                ]
-            ]
-        ],
-        'generationConfig' => [
-            'temperature' => 0.3,
-            'maxOutputTokens' => 1200
-        ]
+    $modelMap = [
+        'gemini-1.5-flash' => 'gemini-3.5-flash-lite',
+        'gemini-1.5-pro' => 'gemini-3.5-flash',
+        'gemini-2.0-flash' => 'gemini-3.5-flash-lite',
+        'gemini-2.0-flash-exp' => 'gemini-3.5-flash-lite'
     ];
+    $cleanModel = trim((string)$model);
+    if (isset($modelMap[$cleanModel])) {
+        $cleanModel = $modelMap[$cleanModel];
+    }
+    if (empty($cleanModel)) {
+        $cleanModel = 'gemini-3.5-flash-lite';
+    }
 
-    $jsonData = json_encode($payload);
+    $candidateModels = array_unique([$cleanModel, 'gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3.8-flash']);
 
-    // Call using cURL
-    if (function_exists('curl_init')) {
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Content-Type: application/json',
-            'Content-Length: ' . strlen($jsonData)
-        ]);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    foreach ($candidateModels as $currentModel) {
+        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$currentModel}:generateContent?key=" . urlencode($apiKey);
+        $payload = [
+            'contents' => [
+                [
+                    'parts' => [
+                        ['text' => $prompt]
+                    ]
+                ]
+            ],
+            'generationConfig' => [
+                'temperature' => 0.2,
+                'maxOutputTokens' => 1200
+            ]
+        ];
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        $jsonData = json_encode($payload);
 
-        if ($httpCode >= 200 && $httpCode < 300 && $response) {
+        // Call using cURL
+        if (function_exists('curl_init')) {
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Content-Type: application/json',
+                'x-goog-api-key: ' . $apiKey,
+                'Content-Length: ' . strlen($jsonData)
+            ]);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode >= 200 && $httpCode < 300 && $response) {
+                $parsed = json_decode($response, true);
+                $text = $parsed['candidates'][0]['content']['parts'][0]['text'] ?? null;
+                if ($text) return trim($text);
+            }
+        }
+
+        // Fallback using stream context
+        $opts = [
+            'http' => [
+                'method' => 'POST',
+                'header' => "Content-Type: application/json\r\nx-goog-api-key: {$apiKey}\r\nContent-Length: " . strlen($jsonData) . "\r\n",
+                'content' => $jsonData,
+                'timeout' => 15
+            ]
+        ];
+        $context = stream_context_create($opts);
+        $response = @file_get_contents($url, false, $context);
+        if ($response) {
             $parsed = json_decode($response, true);
             $text = $parsed['candidates'][0]['content']['parts'][0]['text'] ?? null;
             if ($text) return trim($text);
         }
-    }
-
-    // Fallback using stream context
-    $opts = [
-        'http' => [
-            'method' => 'POST',
-            'header' => "Content-Type: application/json\r\nContent-Length: " . strlen($jsonData) . "\r\n",
-            'content' => $jsonData,
-            'timeout' => 15
-        ]
-    ];
-    $context = stream_context_create($opts);
-    $response = @file_get_contents($url, false, $context);
-    if ($response) {
-        $parsed = json_decode($response, true);
-        $text = $parsed['candidates'][0]['content']['parts'][0]['text'] ?? null;
-        if ($text) return trim($text);
     }
 
     return null;
@@ -1857,7 +1892,7 @@ if ($route === 'ai/audit-question' && $method === 'POST') {
     $aiResponse = null;
 
     if (!empty($ai['apiKey']) && $ai['enabled']) {
-        $aiPrompt = "You are an expert curriculum developer and exam question auditor.
+        $aiPrompt = "You are an expert curriculum developer and exam question auditor for the Ghanaian pre-tertiary and teacher promotion curriculum (BECE, WASSCE, GTLE, GES Promotion).
 Analyze this multiple-choice exam question:
 Question: {$text}
 Options:
@@ -1868,19 +1903,19 @@ D) {$options[3]}
 Marked Correct Answer: Option " . chr(65 + $correctIndex) . " ({$options[$correctIndex]})
 Explanation: {$explanation}
 
-Your task:
-1. Identify if any options are duplicates (e.g. identical text) or if the marked correct option factually contradicts the explanation or the real curriculum answer.
-2. Provide a corrected, high-quality set of 4 distinct options (A, B, C, D) ensuring that the true correct answer matches the explanation and educational standards.
-3. Determine the correct 0-based index (0 for A, 1 for B, 2 for C, 3 for D).
-4. Provide a clear, comprehensive explanation.
+CRITICAL RULES & AUDIT REQUIREMENTS:
+1. NEVER include 'None of the above', 'All of the above', or generic non-answers as an option. All 4 options must be genuine, distinct, curriculum-aligned distractors or answers.
+2. If any options are identical or duplicates, replace duplicate options with high-quality, educationally relevant, distinct alternative choices that fit the subject context.
+3. Ensure the marked correct answer matches the explanation and accurate curriculum facts.
+4. Set 'correctIndex' to the 0-based index of the true correct answer (0 for A, 1 for B, 2 for C, 3 for D).
 
 Respond strictly in valid JSON format:
 {
   \"hasIssue\": true,
-  \"issueSummary\": \"Option A and Option C are duplicates. The true answer is integrated circuits, as noted in the explanation.\",
-  \"correctedOptions\": [\"option A\", \"option B\", \"option C\", \"option D\"],
+  \"issueSummary\": \"Detailed explanation of detected duplicate or flaw and what was repaired.\",
+  \"correctedOptions\": [\"Option A\", \"Option B\", \"Option C\", \"Option D\"],
   \"correctIndex\": 2,
-  \"explanation\": \"Updated explanation text here.\"
+  \"explanation\": \"Updated explanation confirming the correct answer.\"
 }";
 
         $rawAi = callGeminiApi($aiPrompt, $ai['apiKey'], $ai['model']);
@@ -1890,7 +1925,17 @@ Respond strictly in valid JSON format:
             $cleaned = preg_replace('/\s*```$/', '', $cleaned);
             $parsed = json_decode($cleaned, true);
             if (is_array($parsed) && isset($parsed['correctedOptions']) && count($parsed['correctedOptions']) === 4) {
-                $aiResponse = $parsed;
+                // Ensure none of the corrected options say 'None of the above'
+                $hasForbiddenOption = false;
+                foreach ($parsed['correctedOptions'] as $co) {
+                    if (preg_match('/none\s+of\s+the\s+above|all\s+of\s+the\s+above/i', $co)) {
+                        $hasForbiddenOption = true;
+                        break;
+                    }
+                }
+                if (!$hasForbiddenOption) {
+                    $aiResponse = $parsed;
+                }
             }
         }
     }
@@ -1899,16 +1944,23 @@ Respond strictly in valid JSON format:
     if (!$aiResponse) {
         if ($hasLocalDuplicates) {
             $duplicateText = implode(', ', array_keys($dupes));
-            // Check if explanation hints at the real replacement
-            $replacement = 'Integrated circuits (ICs)';
-            if (stripos($explanation, 'integrated circuit') !== false) {
+            // Context-aware distractors, NEVER 'None of the above'
+            $lowText = strtolower($text . ' ' . $explanation);
+            $replacement = 'The organ system';
+            if (stripos($lowText, 'cell') !== false || stripos($lowText, 'living') !== false || stripos($lowText, 'tissue') !== false) {
+                $replacement = 'The organ system';
+            } elseif (stripos($lowText, 'circuit') !== false || stripos($lowText, 'computer') !== false || stripos($lowText, 'generation') !== false) {
                 $replacement = 'Integrated circuits (ICs)';
-            } elseif (stripos($explanation, 'microprocessor') !== false) {
+            } elseif (stripos($lowText, 'microprocessor') !== false) {
                 $replacement = 'Microprocessors';
-            } elseif (stripos($explanation, 'artificial intelligence') !== false) {
-                $replacement = 'Artificial Intelligence';
+            } elseif (stripos($lowText, 'vacuum tube') !== false) {
+                $replacement = 'Vacuum tubes';
+            } elseif (stripos($lowText, 'teacher') !== false || stripos($lowText, 'ges') !== false || stripos($lowText, 'school') !== false) {
+                $replacement = 'School Management Committee (SMC)';
+            } elseif (stripos($lowText, 'act 1023') !== false || stripos($lowText, 'law') !== false || stripos($lowText, 'policy') !== false) {
+                $replacement = 'Ghana Education Service Council (GESC)';
             } else {
-                $replacement = 'None of the above';
+                $replacement = 'Structural component';
             }
 
             $fixedOpts = $options;
@@ -1925,10 +1977,10 @@ Respond strictly in valid JSON format:
 
             $aiResponse = [
                 'hasIssue' => true,
-                'issueSummary' => "Duplicate options detected (\"{$duplicateText}\").",
+                'issueSummary' => "Duplicate options detected (\"{$duplicateText}\"). Replaced duplicate with distinct alternative distractor.",
                 'correctedOptions' => $fixedOpts,
                 'correctIndex' => $correctIndex,
-                'explanation' => $explanation ?: "Fixed duplicate options to ensure 4 distinct choices."
+                'explanation' => $explanation ?: "Fixed duplicate options to ensure 4 distinct, curriculum-aligned choices."
             ];
         } else {
             $aiResponse = [
@@ -1976,7 +2028,7 @@ if ($route === 'ai/apply-fix' && $method === 'POST') {
     $q = $db['questions'][$foundIdx];
     $q['options'] = array_map('trim', $fixed['options']);
     $q['correctIndex'] = (int)($fixed['correctIndex'] ?? $q['correctIndex']);
-    if (!empty($fixed['explanation'])) $q['explanation'] = trim((string)$fixed['explanation']);
+    if (isset($fixed['explanation'])) $q['explanation'] = trim((string)$fixed['explanation']);
     if (!empty($fixed['text'])) $q['text'] = trim((string)$fixed['text']);
     $q['updatedAt'] = round(microtime(true) * 1000);
 

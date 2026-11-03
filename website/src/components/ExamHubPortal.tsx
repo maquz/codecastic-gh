@@ -3345,7 +3345,7 @@ function AdminAiSettings({
     flash: Flash;
 }) {
     const [apiKey, setApiKey] = useState('');
-    const [model, setModel] = useState('gemini-1.5-flash');
+    const [model, setModel] = useState('gemini-3.5-flash-lite');
     const [configured, setConfigured] = useState(false);
     const [enabled, setEnabled] = useState(true);
     const [maskedKey, setMaskedKey] = useState('');
@@ -3549,7 +3549,7 @@ function AdminAiSettings({
                                         Click the blue <strong>"Get API key"</strong> button in the left sidebar or top right.
                                     </li>
                                     <li>
-                                        Click <strong>"Create API key"</strong> &rarr; select or create a free project &rarr; copy the generated key (starts with <code className="bg-white/80 px-1 py-0.5 rounded font-mono text-[11px]">AIzaSy...</code>).
+                                        Click <strong>"Create API key"</strong> &rarr; select or create a free project &rarr; copy the generated key (starts with <code className="bg-white/80 px-1 py-0.5 rounded font-mono text-[11px]">AQ...</code> or <code className="bg-white/80 px-1 py-0.5 rounded font-mono text-[11px]">AIzaSy...</code>).
                                     </li>
                                     <li>
                                         Paste the key below and click <strong>"Save &amp; Test Connection"</strong>.
@@ -3575,7 +3575,7 @@ function AdminAiSettings({
                                 placeholder={
                                     configured
                                         ? `Leave blank to keep existing key (${maskedKey})`
-                                        : 'Paste your Gemini API key here (e.g. AIzaSy...)'
+                                        : 'Paste your Gemini API key here (e.g. AQ... or AIzaSy...)'
                                 }
                                 className="input font-mono text-xs pr-20"
                             />
@@ -3588,13 +3588,13 @@ function AdminAiSettings({
                                 {showKeyInput ? <EyeOff size={15} /> : <Eye size={15} />}
                             </button>
                         </div>
-                        {apiKey.trim() && !apiKey.trim().startsWith('AIzaSy') && (
+                        {apiKey.trim() && !apiKey.trim().startsWith('AIzaSy') && !apiKey.trim().startsWith('AQ.') && (
                             <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-800 bg-amber-50 p-2.5 rounded-lg border border-amber-200">
                                 <AlertCircle size={15} className="shrink-0 text-amber-600 mt-0.5" />
                                 <div>
                                     <strong className="font-semibold">Notice regarding Google API Key format:</strong>
                                     <p className="mt-0.5 leading-relaxed text-[11px]">
-                                        Google Gemini API keys generated from <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="underline font-bold text-[#364c83]">Google AI Studio</a> typically begin with <code className="font-mono font-bold bg-white px-1 py-0.5 rounded">AIzaSy...</code>. If you copied a token starting with another prefix (such as an OAuth or session code), please ensure you copy the <strong>API Key</strong> from the <em>"Get API key"</em> section in Google AI Studio.
+                                        Google Gemini API keys generated from <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="underline font-bold text-[#364c83]">Google AI Studio</a> typically begin with <code className="font-mono font-bold bg-white px-1 py-0.5 rounded">AQ...</code> or <code className="font-mono font-bold bg-white px-1 py-0.5 rounded">AIzaSy...</code>. Please ensure you copied the key from the <em>"Get API key"</em> section in Google AI Studio.
                                     </p>
                                 </div>
                             </div>
@@ -3617,14 +3617,14 @@ function AdminAiSettings({
                                 onChange={(e) => setModel(e.target.value)}
                                 className="input text-xs"
                             >
-                                <option value="gemini-1.5-flash">
-                                    Gemini 1.5 Flash (Recommended: ultrafast, free, 1M context)
+                                <option value="gemini-3.5-flash-lite">
+                                    Gemini 3.5 Flash Lite (Recommended: ultrafast, free tier, latest 2026 model)
                                 </option>
-                                <option value="gemini-2.0-flash">
-                                    Gemini 2.0 Flash (Next-gen speed & reasoning)
+                                <option value="gemini-3.5-flash">
+                                    Gemini 3.5 Flash (Balanced speed &amp; advanced reasoning)
                                 </option>
-                                <option value="gemini-1.5-pro">
-                                    Gemini 1.5 Pro (Deep complex analysis)
+                                <option value="gemini-3.8-flash">
+                                    Gemini 3.8 Flash (High capacity &amp; deep analysis)
                                 </option>
                             </select>
                         </div>
@@ -3913,16 +3913,50 @@ function QuestionsAdmin({
         }
     };
 
+    const resetToOriginal = () => {
+        if (!auditingQuestion) return;
+        setAuditEditableText(auditingQuestion.text);
+        setAuditEditableOptions([...auditingQuestion.options]);
+        setAuditEditableCorrect(auditingQuestion.correctIndex);
+        setAuditEditableExplanation(auditingQuestion.explanation || '');
+        flash(true, 'Restored original question text and options.');
+    };
+
     const applyAuditFix = async () => {
         if (!auditingQuestion) return;
+
+        const trimmedText = auditEditableText.trim();
+        if (!trimmedText) {
+            flash(false, 'Question text cannot be blank.');
+            return;
+        }
+
+        const trimmedOpts = auditEditableOptions.map((o) => o.trim());
+        if (trimmedOpts.length !== 4 || trimmedOpts.some((o) => !o)) {
+            flash(false, 'All 4 options must be filled in with non-empty text.');
+            return;
+        }
+
+        const lowerOpts = trimmedOpts.map((o) => o.toLowerCase());
+        const unique = new Set(lowerOpts);
+        if (unique.size < lowerOpts.length) {
+            flash(false, 'Duplicate options detected. All 4 choices must be distinct.');
+            return;
+        }
+
+        if (lowerOpts.some((o) => /none\s+of\s+the\s+above|all\s+of\s+the\s+above/i.test(o))) {
+            flash(false, "Syllabus standards require 4 realistic, distinct distractors. Please replace 'None of the above' or 'All of the above' before saving.");
+            return;
+        }
+
         setApplyingFix(true);
         try {
             const res = await api.post('/api/ai/apply-fix', {
                 passcode: code,
                 questionId: auditingQuestion.id,
                 fixed: {
-                    text: auditEditableText.trim(),
-                    options: auditEditableOptions.map((o) => o.trim()),
+                    text: trimmedText,
+                    options: trimmedOpts,
                     correctIndex: auditEditableCorrect,
                     explanation: auditEditableExplanation.trim(),
                 },
@@ -5261,9 +5295,9 @@ Level: ${levelLabel(level)}`}
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
                     <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200">
                         {/* Header */}
-                        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-linear-to-r from-indigo-50/80 to-purple-50/80 rounded-t-2xl">
+                        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-gradient-to-r from-indigo-50/80 to-purple-50/80 rounded-t-2xl">
                             <div className="flex items-center gap-2.5">
-                                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-linear-to-br from-indigo-600 to-purple-600 text-white shadow-xs">
+                                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 text-white shadow-xs">
                                     <Sparkles size={18} />
                                 </span>
                                 <div>
@@ -5271,7 +5305,7 @@ Level: ${levelLabel(level)}`}
                                         AI Question Audit &amp; Auto-Fix
                                     </h3>
                                     <p className="text-[11px] text-slate-500">
-                                        Detects duplicate options, resolves answer key mismatches, and corrects questions
+                                        Detects duplicate options, resolves answer key mismatches, and allows direct editing
                                     </p>
                                 </div>
                             </div>
@@ -5324,16 +5358,30 @@ Level: ${levelLabel(level)}`}
                                         </div>
                                     </div>
 
+                                    {/* Admin Direct Manual Edit Notice */}
+                                    <div className="rounded-lg bg-indigo-50/70 border border-indigo-100 p-3 text-xs text-indigo-900 flex items-start gap-2">
+                                        <Pencil size={15} className="text-[#364c83] shrink-0 mt-0.5" />
+                                        <div>
+                                            <span className="font-bold text-[#364c83]">Admin Direct Editing:</span>
+                                            <p className="mt-0.5 text-slate-600 leading-relaxed text-[11px]">
+                                                If you are not satisfied with the AI suggestion, you can type your own corrections directly into any box below, change the correct answer radio button, and save.
+                                            </p>
+                                        </div>
+                                    </div>
+
                                     {/* Question Text */}
                                     <div>
-                                        <label className="block text-xs font-bold text-slate-700 mb-1">
-                                            Question Text
-                                        </label>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <label className="block text-xs font-bold text-slate-700">
+                                                Question Text
+                                            </label>
+                                            <span className="text-[11px] text-slate-400">Directly editable</span>
+                                        </div>
                                         <textarea
                                             value={auditEditableText}
                                             onChange={(e) => setAuditEditableText(e.target.value)}
                                             rows={2}
-                                            className="input text-xs bg-white font-medium"
+                                            className="input text-xs bg-white font-medium border border-slate-200 focus:border-[#364c83]"
                                         />
                                     </div>
 
@@ -5341,53 +5389,81 @@ Level: ${levelLabel(level)}`}
                                     <div>
                                         <div className="flex items-center justify-between mb-1.5">
                                             <label className="block text-xs font-bold text-slate-700">
-                                                Resolved Answer Options (Select the correct option):
+                                                Answer Options (Select the correct choice below):
                                             </label>
-                                            <span className="text-[11px] text-slate-400">Editable before saving</span>
+                                            <button
+                                                type="button"
+                                                onClick={resetToOriginal}
+                                                className="text-[11px] text-[#364c83] hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                                                title="Restore original choices from question before audit"
+                                            >
+                                                <RotateCcw size={11} /> Reset to Original
+                                            </button>
                                         </div>
-                                        <div className="space-y-2">
-                                            {auditEditableOptions.map((opt, i) => (
-                                                <div key={i} className="flex items-center gap-2">
-                                                    <input
-                                                        type="radio"
-                                                        name="audit-correct-choice"
-                                                        checked={auditEditableCorrect === i}
-                                                        onChange={() => setAuditEditableCorrect(i)}
-                                                        className="h-4 w-4 accent-[#364c83]"
-                                                    />
-                                                    <span className="w-5 text-xs font-bold text-slate-600">
-                                                        {LETTERS[i]}.
-                                                    </span>
-                                                    <input
-                                                        type="text"
-                                                        value={opt}
-                                                        onChange={(e) =>
-                                                            setAuditEditableOptions((prev) =>
-                                                                prev.map((p, idx) => (idx === i ? e.target.value : p))
-                                                            )
-                                                        }
-                                                        className="input text-xs bg-white flex-1"
-                                                    />
-                                                    {auditEditableCorrect === i && (
-                                                        <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                                                            Correct Answer
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            ))}
+                                        <div className="space-y-2.5">
+                                            {auditEditableOptions.map((opt, i) => {
+                                                const isCorrect = auditEditableCorrect === i;
+                                                return (
+                                                    <div
+                                                        key={i}
+                                                        className={`flex items-center gap-2.5 rounded-xl border p-2 transition ${
+                                                            isCorrect
+                                                                ? 'border-emerald-300 bg-emerald-50/40 ring-1 ring-emerald-300'
+                                                                : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+                                                        }`}
+                                                    >
+                                                        <label className="flex items-center gap-2 cursor-pointer shrink-0 pl-1">
+                                                            <input
+                                                                type="radio"
+                                                                name="audit-correct-choice"
+                                                                checked={isCorrect}
+                                                                onChange={() => setAuditEditableCorrect(i)}
+                                                                className="h-4 w-4 accent-[#364c83] cursor-pointer"
+                                                            />
+                                                            <span className={`w-5 text-xs font-bold ${isCorrect ? 'text-emerald-800' : 'text-slate-600'}`}>
+                                                                {LETTERS[i]}.
+                                                            </span>
+                                                        </label>
+                                                        <input
+                                                            type="text"
+                                                            value={opt}
+                                                            onChange={(e) =>
+                                                                setAuditEditableOptions((prev) =>
+                                                                    prev.map((p, idx) => (idx === i ? e.target.value : p))
+                                                                )
+                                                            }
+                                                            placeholder={`Option ${LETTERS[i]} text...`}
+                                                            className="input text-xs bg-white flex-1 border border-slate-200 focus:border-[#364c83] font-medium"
+                                                        />
+                                                        {isCorrect ? (
+                                                            <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-bold text-emerald-800 flex items-center gap-1">
+                                                                <CheckCircle2 size={11} /> Correct
+                                                            </span>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setAuditEditableCorrect(i)}
+                                                                className="shrink-0 text-[11px] font-medium text-slate-400 hover:text-emerald-700 px-1 cursor-pointer"
+                                                            >
+                                                                Mark Correct
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </div>
 
                                     {/* Explanation */}
                                     <div>
                                         <label className="block text-xs font-bold text-slate-700 mb-1">
-                                            Explanation
+                                            Explanation (Shown to candidate after completing exam)
                                         </label>
                                         <textarea
                                             value={auditEditableExplanation}
                                             onChange={(e) => setAuditEditableExplanation(e.target.value)}
                                             rows={2}
-                                            className="input text-xs bg-white"
+                                            className="input text-xs bg-white border border-slate-200 focus:border-[#364c83]"
                                         />
                                     </div>
                                 </>
@@ -5402,30 +5478,42 @@ Level: ${levelLabel(level)}`}
                                     setAuditingQuestion(null);
                                     setAuditResult(null);
                                 }}
-                                className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+                                className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer"
                             >
                                 Cancel
                             </button>
 
                             {auditResult && (
-                                <button
-                                    type="button"
-                                    onClick={applyAuditFix}
-                                    disabled={applyingFix}
-                                    className="inline-flex items-center gap-1.5 rounded-lg bg-linear-to-r from-[#364c83] to-purple-800 hover:from-[#1f2d57] hover:to-purple-900 text-white px-4 py-2 text-xs font-bold transition shadow-xs disabled:opacity-50"
-                                >
-                                    {applyingFix ? (
-                                        <>
-                                            <Loader2 size={13} className="animate-spin" />
-                                            <span>Saving Fix...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <CheckCircle2 size={13} />
-                                            <span>Apply Fix &amp; Save Question</span>
-                                        </>
-                                    )}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => auditingQuestion && handleAuditQuestion(auditingQuestion)}
+                                        disabled={applyingFix || auditLoading}
+                                        className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-[#364c83] hover:bg-indigo-100 transition disabled:opacity-50 cursor-pointer"
+                                    >
+                                        <Sparkles size={13} className="text-purple-600" />
+                                        <span>Re-run AI</span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={applyAuditFix}
+                                        disabled={applyingFix}
+                                        className="inline-flex items-center gap-2 rounded-lg bg-[#364c83] hover:bg-[#1f2d57] text-white px-5 py-2 text-xs font-bold transition shadow-md disabled:opacity-50 cursor-pointer"
+                                    >
+                                        {applyingFix ? (
+                                            <>
+                                                <Loader2 size={13} className="animate-spin" />
+                                                <span>Saving Fix to Database...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <CheckCircle2 size={13} />
+                                                <span>Apply Fix &amp; Save Question</span>
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
                             )}
                         </div>
                     </div>
