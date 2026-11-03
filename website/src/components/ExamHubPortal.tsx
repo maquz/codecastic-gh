@@ -1220,6 +1220,186 @@ function StudentAuthView({
 }
 
 /* ------------------------------------------------------------------ */
+/* Candidate AI Tutor Dialog                                           */
+/* ------------------------------------------------------------------ */
+
+function AiTutorDialog({
+    question,
+    loading,
+    reply,
+    customPrompt,
+    onCustomPromptChange,
+    onAsk,
+    onClose,
+}: {
+    question: {
+        text: string;
+        options: string[];
+        correctIndex: number;
+        explanation?: string;
+        chosen: number | null;
+    };
+    loading: boolean;
+    reply: string | null;
+    customPrompt: string;
+    onCustomPromptChange: (val: string) => void;
+    onAsk: (prompt: string) => void;
+    onClose: () => void;
+}) {
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+            <div className="relative flex max-h-[90vh] w-full max-w-xl flex-col rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200">
+                {/* Header */}
+                <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-linear-to-r from-indigo-50/80 to-purple-50/80 rounded-t-2xl">
+                    <div className="flex items-center gap-2.5">
+                        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-linear-to-br from-indigo-600 to-purple-600 text-white shadow-xs">
+                            <Sparkles size={18} />
+                        </span>
+                        <div>
+                            <h3 className="text-sm font-bold text-slate-900">Codecastic AI Tutor</h3>
+                            <p className="text-[11px] text-slate-500">Interactive question clarifications &amp; memory tips</p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="rounded-lg p-1.5 text-slate-400 hover:bg-white hover:text-slate-600 transition"
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+
+                {/* Content body */}
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                    {/* Question snapshot */}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 text-xs">
+                        <p className="font-semibold text-slate-900 leading-snug">{question.text}</p>
+                        <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+                            {question.options.map((opt, i) => {
+                                const isCorrect = i === question.correctIndex;
+                                const isChosen = i === question.chosen;
+                                return (
+                                    <div
+                                        key={i}
+                                        className={`rounded-lg px-2.5 py-1.5 font-medium transition ${
+                                            isCorrect
+                                                ? 'bg-emerald-100/80 text-emerald-950 ring-1 ring-emerald-300 font-semibold'
+                                                : isChosen
+                                                ? 'bg-rose-100/80 text-rose-950 ring-1 ring-rose-300 font-semibold'
+                                                : 'bg-white text-slate-600 border border-slate-200'
+                                        }`}
+                                    >
+                                        <span className="font-bold mr-1">{LETTERS[i]}.</span> {opt}
+                                        {isCorrect && ' ✓ (Correct)'}
+                                        {isChosen && !isCorrect && ' ✗ (Your Answer)'}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        {question.explanation && (
+                            <p className="mt-2 pt-2 border-t border-slate-200/60 text-[11px] text-slate-600">
+                                <strong className="font-semibold text-slate-700">Official Note:</strong> {question.explanation}
+                            </p>
+                        )}
+                    </div>
+
+                    {/* Quick prompt chips */}
+                    <div>
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
+                            What would you like the AI Tutor to explain?
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                            {[
+                                'Why is the correct answer right?',
+                                question.chosen !== null && question.chosen !== question.correctIndex
+                                    ? 'Why was my selected answer incorrect?'
+                                    : null,
+                                'Explain simply with an everyday example',
+                                'Give me a memory tip / mnemonic to remember this',
+                            ]
+                                .filter(Boolean)
+                                .map((chip, idx) => (
+                                    <button
+                                        key={idx}
+                                        type="button"
+                                        onClick={() => onAsk(chip!)}
+                                        disabled={loading}
+                                        className="rounded-full border border-indigo-200 bg-indigo-50/60 hover:bg-indigo-100 hover:border-indigo-300 px-3 py-1 text-xs font-semibold text-[#364c83] transition disabled:opacity-50"
+                                    >
+                                        {chip}
+                                    </button>
+                                ))}
+                        </div>
+                    </div>
+
+                    {/* Custom input */}
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="text"
+                            value={customPrompt}
+                            onChange={(e) => onCustomPromptChange(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && customPrompt.trim() && !loading) {
+                                    onAsk(customPrompt.trim());
+                                }
+                            }}
+                            placeholder="Or type your own question to the tutor..."
+                            className="input text-xs flex-1 bg-white"
+                            disabled={loading}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (customPrompt.trim() && !loading) {
+                                    onAsk(customPrompt.trim());
+                                }
+                            }}
+                            disabled={!customPrompt.trim() || loading}
+                            className="rounded-lg bg-linear-to-r from-[#364c83] to-purple-800 hover:from-[#1f2d57] hover:to-purple-900 text-white px-3.5 py-2 text-xs font-bold transition disabled:opacity-50 inline-flex items-center gap-1.5 shrink-0 shadow-xs"
+                        >
+                            {loading ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                            <span>Ask Tutor</span>
+                        </button>
+                    </div>
+
+                    {/* Tutor response */}
+                    {loading && (
+                        <div className="flex items-center justify-center gap-2.5 rounded-xl border border-indigo-100 bg-indigo-50/40 p-6 text-xs font-medium text-[#364c83]">
+                            <Loader2 className="animate-spin text-purple-600" size={18} />
+                            <span>AI Tutor is reviewing the curriculum and preparing clarification...</span>
+                        </div>
+                    )}
+
+                    {reply && !loading && (
+                        <div className="rounded-xl border border-indigo-200 bg-linear-to-b from-indigo-50/40 to-purple-50/30 p-4 text-xs">
+                            <div className="flex items-center gap-2 font-bold text-[#364c83] mb-2 border-b border-indigo-100/80 pb-2">
+                                <Sparkles size={14} className="text-purple-600" />
+                                <span>Codecastic AI Tutor Response:</span>
+                            </div>
+                            <div className="whitespace-pre-line leading-relaxed text-slate-800 font-normal">
+                                {reply}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Footer */}
+                <div className="border-t border-slate-100 px-5 py-3 flex items-center justify-between text-[11px] text-slate-400 bg-slate-50/50 rounded-b-2xl">
+                    <span>Powered by Google Gemini &middot; ExamHub AI</span>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="font-semibold text-slate-600 hover:text-slate-900"
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+/* ------------------------------------------------------------------ */
 /* Student Exam Interface                                              */
 /* ------------------------------------------------------------------ */
 
@@ -1273,6 +1453,59 @@ function StudentView({
     const [index, setIndex] = useState(0);
     const [submitting, setSubmitting] = useState(false);
     const [result, setResult] = useState<{ score: number; total: number; percent: number; review: ReviewItem[] } | null>(null);
+
+    // Candidate AI Tutor State
+    const [tutorQuestion, setTutorQuestion] = useState<{
+        text: string;
+        options: string[];
+        correctIndex: number;
+        explanation?: string;
+        chosen: number | null;
+    } | null>(null);
+    const [tutorReply, setTutorReply] = useState<string | null>(null);
+    const [tutorLoading, setTutorLoading] = useState<boolean>(false);
+    const [tutorCustomPrompt, setTutorCustomPrompt] = useState<string>('');
+
+    const openAiTutor = (q: { text: string; options: string[]; correctIndex?: number; explanation?: string }, chosen: number | null) => {
+        setTutorQuestion({
+            text: q.text,
+            options: q.options,
+            correctIndex: q.correctIndex ?? 0,
+            explanation: q.explanation || '',
+            chosen,
+        });
+        setTutorReply(null);
+        setTutorCustomPrompt('');
+    };
+
+    const askAiTutor = async (promptText: string) => {
+        if (!tutorQuestion) return;
+        setTutorLoading(true);
+        setTutorReply(null);
+        try {
+            const res = await api.post('/api/ai/clarify', {
+                question: {
+                    text: tutorQuestion.text,
+                    options: tutorQuestion.options,
+                },
+                correctIndex: tutorQuestion.correctIndex,
+                studentChosen: tutorQuestion.chosen,
+                explanation: tutorQuestion.explanation,
+                studentQuestion: promptText,
+                level: levelLabel(level),
+                subjectName: subject?.name || (level === 'GES-PROMO' ? (user.promotionRank || 'GES Promotion') : 'General Studies'),
+            });
+            if (res.data?.reply) {
+                setTutorReply(res.data.reply);
+            } else {
+                setTutorReply('Unable to get an answer from AI Tutor right now. Please try again.');
+            }
+        } catch (e: any) {
+            setTutorReply(errMsg(e, 'Unable to connect to AI Tutor. Please try again later.'));
+        } finally {
+            setTutorLoading(false);
+        }
+    };
 
     const loadCatalog = useCallback(async () => {
         const s = await api.get('/api/subjects');
@@ -1746,9 +1979,19 @@ function StudentView({
                             </div>
 
                             <div className="mt-3">
-                                <span className="block text-xs font-bold uppercase tracking-wider text-slate-500">
-                                    Explanation:
-                                </span>
+                                <div className="flex items-center justify-between">
+                                    <span className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                                        Explanation:
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => openAiTutor(q, selectedOption ?? null)}
+                                        className="inline-flex items-center gap-1.5 rounded-full bg-linear-to-r from-indigo-50 to-purple-50 border border-indigo-200/80 px-2.5 py-0.5 text-[11px] font-bold text-[#364c83] hover:from-indigo-100 hover:to-purple-100 transition shadow-2xs"
+                                    >
+                                        <Sparkles size={11} className="text-purple-600 animate-pulse" />
+                                        <span>Ask AI Tutor</span>
+                                    </button>
+                                </div>
                                 <p className="mt-1 text-xs leading-relaxed text-slate-700">
                                     {q.explanation || 'No additional explanation provided for this question.'}
                                 </p>
@@ -1860,6 +2103,19 @@ function StudentView({
                         </div>
                     </div>
                 )}
+
+                {/* Candidate AI Tutor Modal in Exam */}
+                {tutorQuestion && (
+                    <AiTutorDialog
+                        question={tutorQuestion}
+                        loading={tutorLoading}
+                        reply={tutorReply}
+                        customPrompt={tutorCustomPrompt}
+                        onCustomPromptChange={setTutorCustomPrompt}
+                        onAsk={askAiTutor}
+                        onClose={() => setTutorQuestion(null)}
+                    />
+                )}
             </div>
         );
     }
@@ -1956,11 +2212,34 @@ function StudentView({
                                     })}
                                     {r.chosen === null && <p className="text-xs text-amber-600">Not answered</p>}
                                     {r.explanation && <p className="pt-1 text-xs text-slate-500">{r.explanation}</p>}
+                                    <div className="pt-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => openAiTutor(q, r.chosen)}
+                                            className="inline-flex items-center gap-1.5 rounded-full bg-linear-to-r from-indigo-50 to-purple-50 border border-indigo-200/80 px-2.5 py-1 text-[11px] font-bold text-[#364c83] hover:from-indigo-100 hover:to-purple-100 transition shadow-2xs"
+                                        >
+                                            <Sparkles size={11} className="text-purple-600" />
+                                            <span>Ask AI Tutor to explain why</span>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         );
                     })}
                 </div>
+
+                {/* Candidate AI Tutor Modal in Result */}
+                {tutorQuestion && (
+                    <AiTutorDialog
+                        question={tutorQuestion}
+                        loading={tutorLoading}
+                        reply={tutorReply}
+                        customPrompt={tutorCustomPrompt}
+                        onCustomPromptChange={setTutorCustomPrompt}
+                        onAsk={askAiTutor}
+                        onClose={() => setTutorQuestion(null)}
+                    />
+                )}
             </div>
         );
     }
@@ -2688,7 +2967,7 @@ function AdminView() {
     );
 }
 
-type AdminTab = 'candidates' | 'questions' | 'subjects' | 'results' | 'messages' | 'timers';
+type AdminTab = 'candidates' | 'questions' | 'subjects' | 'results' | 'messages' | 'timers' | 'ai';
 
 function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) {
     const [tab, setTab] = useState<AdminTab>('candidates');
@@ -2761,6 +3040,7 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
         { id: 'results', label: 'Exam Results', icon: Trophy },
         { id: 'messages', label: 'Contact Messages', icon: Mail, count: messages.length },
         { id: 'timers', label: 'ExamHub Timers', icon: Clock },
+        { id: 'ai', label: 'AI & Settings', icon: Sparkles },
     ];
 
     return (
@@ -2863,6 +3143,7 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
                     />
                 )}
                 {tab === 'timers' && <AdminTimers code={code} flash={flash} />}
+                {tab === 'ai' && <AdminAiSettings code={code} flash={flash} />}
             </div>
         </div>
     );
@@ -3056,6 +3337,329 @@ function AdminTimers({
     );
 }
 
+function AdminAiSettings({
+    code,
+    flash,
+}: {
+    code: string;
+    flash: Flash;
+}) {
+    const [apiKey, setApiKey] = useState('');
+    const [model, setModel] = useState('gemini-1.5-flash');
+    const [configured, setConfigured] = useState(false);
+    const [enabled, setEnabled] = useState(true);
+    const [maskedKey, setMaskedKey] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [showKeyInput, setShowKeyInput] = useState(false);
+    const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+    const loadConfig = async () => {
+        setLoading(true);
+        try {
+            const res = await api.get(`/api/admin/ai-settings?passcode=${encodeURIComponent(code)}`);
+            if (res.data) {
+                setConfigured(!!res.data.configured);
+                setEnabled(res.data.enabled !== false);
+                setMaskedKey(res.data.maskedKey || '');
+                if (res.data.model) setModel(res.data.model);
+            }
+        } catch {
+            // ignore
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadConfig();
+    }, [code]);
+
+    const handleSave = async (e: FormEvent) => {
+        e.preventDefault();
+        setSaving(true);
+        setTestResult(null);
+        try {
+            const res = await api.post('/api/admin/ai-settings', {
+                passcode: code,
+                apiKey: apiKey.trim(),
+                enabled,
+                model,
+            });
+            if (res.data?.ok) {
+                flash(true, 'Google Gemini AI settings saved and verified successfully!');
+                setTestResult({
+                    ok: true,
+                    msg: res.data.message || 'Successfully connected to Google Gemini API!',
+                });
+                setApiKey('');
+                await loadConfig();
+            } else {
+                flash(false, res.data?.error || 'Could not save AI settings.');
+                setTestResult({
+                    ok: false,
+                    msg: res.data?.error || 'Failed to verify API key with Google.',
+                });
+            }
+        } catch (err: any) {
+            const m = errMsg(err, 'Failed to connect to Google Gemini. Please check your API key.');
+            flash(false, m);
+            setTestResult({ ok: false, msg: m });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center gap-2 py-16 text-slate-400">
+                <Loader2 className="animate-spin" size={18} />
+                Loading AI configuration...
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-6">
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                    <div className="flex items-center gap-3">
+                        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-br from-indigo-500 to-purple-600 text-white shadow-sm">
+                            <Sparkles size={20} />
+                        </span>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <h2 className="text-base font-bold text-slate-900">
+                                    AI Exam Assistant &amp; Tutor Settings
+                                </h2>
+                                <span
+                                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                        configured
+                                            ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                                            : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
+                                    }`}
+                                >
+                                    {configured ? (
+                                        <>
+                                            <CheckCircle2 size={11} /> Active &amp; Connected
+                                        </>
+                                    ) : (
+                                        <>
+                                            <AlertCircle size={11} /> API Key Not Set (Using Fallback Mode)
+                                        </>
+                                    )}
+                                </span>
+                            </div>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                                Powered by <strong>Google Gemini API</strong> (100% Free Tier: 15 req/min, 1,500 req/day). Audits questions for duplicates/flaws and provides interactive AI explanations for students.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <form onSubmit={handleSave} className="mt-5 space-y-5">
+                    {/* Status Alert Banner */}
+                    <div
+                        className={`rounded-xl border p-4 ${
+                            configured
+                                ? 'border-emerald-100 bg-emerald-50/50'
+                                : 'border-amber-200 bg-amber-50/60'
+                        }`}
+                    >
+                        <div className="flex items-start gap-3">
+                            <div className="mt-0.5">
+                                {configured ? (
+                                    <CheckCircle2 size={18} className="text-emerald-600" />
+                                ) : (
+                                    <AlertCircle size={18} className="text-amber-600" />
+                                )}
+                            </div>
+                            <div className="flex-1 text-xs">
+                                <h3
+                                    className={`font-bold ${
+                                        configured ? 'text-emerald-900' : 'text-amber-900'
+                                    }`}
+                                >
+                                    {configured
+                                        ? 'Google Gemini API is Connected'
+                                        : 'Connect Google Gemini to Unlock Full AI Superpowers'}
+                                </h3>
+                                <p
+                                    className={`mt-1 leading-relaxed ${
+                                        configured ? 'text-emerald-700' : 'text-amber-800'
+                                    }`}
+                                >
+                                    {configured ? (
+                                        <>
+                                            Current Key: <code className="font-mono font-semibold">{maskedKey}</code> &middot; Model: <code className="font-mono font-semibold">{model}</code>. All AI question audits and candidate tutoring queries will run through Gemini.
+                                        </>
+                                    ) : (
+                                        <>
+                                            The system currently operates in <strong>local heuristic fallback mode</strong> (basic duplicate option detection). Adding a free Gemini API key enables intelligent curriculum-aware question repair, generation of missing options, and conversational student tutoring.
+                                        </>
+                                    )}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* How to get free API key guide */}
+                    <div className="rounded-xl border border-indigo-100 bg-linear-to-r from-indigo-50/60 to-purple-50/60 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#364c83]">
+                                    <Sparkles size={14} className="text-purple-600" />
+                                    How to get your 100% Free Google Gemini API Key:
+                                </span>
+                                <ol className="mt-2 list-inside list-decimal space-y-1 text-xs text-slate-700">
+                                    <li>
+                                        Visit{' '}
+                                        <a
+                                            href="https://aistudio.google.com/"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="font-bold text-[#364c83] underline hover:text-[#1f2d57]"
+                                        >
+                                            Google AI Studio (aistudio.google.com)
+                                            <ExternalLink size={11} className="inline ml-1" />
+                                        </a>{' '}
+                                        and sign in with your regular Google / Gmail account.
+                                    </li>
+                                    <li>
+                                        Click the blue <strong>"Get API key"</strong> button in the left sidebar or top right.
+                                    </li>
+                                    <li>
+                                        Click <strong>"Create API key"</strong> &rarr; select or create a free project &rarr; copy the generated key (starts with <code className="bg-white/80 px-1 py-0.5 rounded font-mono text-[11px]">AIzaSy...</code>).
+                                    </li>
+                                    <li>
+                                        Paste the key below and click <strong>"Save &amp; Test Connection"</strong>.
+                                    </li>
+                                </ol>
+                                <p className="mt-2 text-[11px] font-semibold text-slate-500">
+                                    &bull; Zero credit card needed &bull; Completely free forever &bull; Up to 1,500 questions/explanations daily
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* API Key Input */}
+                    <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                            Google Gemini API Key
+                        </label>
+                        <div className="relative">
+                            <input
+                                type={showKeyInput ? 'text' : 'password'}
+                                value={apiKey}
+                                onChange={(e) => setApiKey(e.target.value)}
+                                placeholder={
+                                    configured
+                                        ? `Leave blank to keep existing key (${maskedKey})`
+                                        : 'Paste your Gemini API key here (e.g. AIzaSy...)'
+                                }
+                                className="input font-mono text-xs pr-20"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowKeyInput((s) => !s)}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:text-slate-600"
+                                title={showKeyInput ? 'Hide API key' : 'Show API key'}
+                            >
+                                {showKeyInput ? <EyeOff size={15} /> : <Eye size={15} />}
+                            </button>
+                        </div>
+                        {configured && (
+                            <p className="mt-1 text-[11px] text-slate-500">
+                                Current active key is saved securely on your server. Enter a new key above only if you wish to change it.
+                            </p>
+                        )}
+                    </div>
+
+                    {/* AI Model Selection */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                                Gemini AI Model
+                            </label>
+                            <select
+                                value={model}
+                                onChange={(e) => setModel(e.target.value)}
+                                className="input text-xs"
+                            >
+                                <option value="gemini-1.5-flash">
+                                    Gemini 1.5 Flash (Recommended: ultrafast, free, 1M context)
+                                </option>
+                                <option value="gemini-2.0-flash">
+                                    Gemini 2.0 Flash (Next-gen speed & reasoning)
+                                </option>
+                                <option value="gemini-1.5-pro">
+                                    Gemini 1.5 Pro (Deep complex analysis)
+                                </option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                                AI Features Status
+                            </label>
+                            <div className="flex items-center gap-3 pt-2">
+                                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700">
+                                    <input
+                                        type="checkbox"
+                                        checked={enabled}
+                                        onChange={(e) => setEnabled(e.target.checked)}
+                                        className="h-4 w-4 rounded text-[#364c83] focus:ring-[#364c83]"
+                                    />
+                                    Enable AI Question Audits &amp; Candidate Tutor
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    {testResult && (
+                        <div
+                            className={`flex items-start gap-2.5 rounded-xl border p-3.5 text-xs ${
+                                testResult.ok
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                    : 'border-rose-200 bg-rose-50 text-rose-800'
+                            }`}
+                        >
+                            {testResult.ok ? (
+                                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-600" />
+                            ) : (
+                                <AlertCircle size={16} className="mt-0.5 shrink-0 text-rose-600" />
+                            )}
+                            <div className="flex-1 font-medium leading-relaxed">
+                                {testResult.msg}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                        <button
+                            type="submit"
+                            disabled={saving}
+                            className="inline-flex items-center gap-2 rounded-lg bg-linear-to-r from-[#364c83] to-purple-800 px-5 py-2.5 text-xs font-bold text-white shadow-xs hover:from-[#1f2d57] hover:to-purple-900 transition disabled:opacity-50"
+                        >
+                            {saving ? (
+                                <>
+                                    <Loader2 size={14} className="animate-spin" />
+                                    <span>Verifying &amp; Saving...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles size={14} />
+                                    <span>Save &amp; Test Connection</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 type Flash = (ok: boolean, text: string) => void;
 
 function SubjectsAdmin({
@@ -3208,6 +3812,103 @@ function QuestionsAdmin({
     const [uploadingBulk, setUploadingBulk] = useState(false);
     const [dragOverBulk, setDragOverBulk] = useState(false);
     const [bulkNotice, setBulkNotice] = useState<{ ok: boolean; msg: string } | null>(null);
+
+    // AI Question Audit & Fix state
+    const [auditingQuestion, setAuditingQuestion] = useState<AdminQ | null>(null);
+    const [auditLoading, setAuditLoading] = useState(false);
+    const [auditResult, setAuditResult] = useState<{
+        hasIssue: boolean;
+        issueSummary: string;
+        fix: {
+            correctedOptions: string[];
+            correctIndex: number;
+            explanation: string;
+        };
+    } | null>(null);
+    const [auditEditableText, setAuditEditableText] = useState('');
+    const [auditEditableOptions, setAuditEditableOptions] = useState<string[]>(['', '', '', '']);
+    const [auditEditableCorrect, setAuditEditableCorrect] = useState(0);
+    const [auditEditableExplanation, setAuditEditableExplanation] = useState('');
+    const [applyingFix, setApplyingFix] = useState(false);
+    const [filterIssuesOnly, setFilterIssuesOnly] = useState(false);
+
+    const getQuestionIssue = (q: AdminQ) => {
+        const opts = (q.options || []).map((o) => (o || '').trim().toLowerCase()).filter(Boolean);
+        const set = new Set(opts);
+        if (set.size < opts.length) {
+            return 'Duplicate options detected';
+        }
+        if ((q.options || []).some((o) => !o || !o.trim())) {
+            return 'Blank option(s)';
+        }
+        return null;
+    };
+
+    const handleAuditQuestion = async (q: AdminQ) => {
+        setAuditingQuestion(q);
+        setAuditLoading(true);
+        setAuditResult(null);
+        setAuditEditableText(q.text);
+        setAuditEditableOptions([...q.options]);
+        setAuditEditableCorrect(q.correctIndex);
+        setAuditEditableExplanation(q.explanation || '');
+
+        try {
+            const res = await api.post('/api/ai/audit-question', {
+                passcode: code,
+                question: q,
+            });
+            if (res.data?.ok) {
+                setAuditResult(res.data);
+                if (res.data.fix) {
+                    if (res.data.fix.correctedOptions && res.data.fix.correctedOptions.length === 4) {
+                        setAuditEditableOptions([...res.data.fix.correctedOptions]);
+                    }
+                    if (typeof res.data.fix.correctIndex === 'number') {
+                        setAuditEditableCorrect(res.data.fix.correctIndex);
+                    }
+                    if (res.data.fix.explanation) {
+                        setAuditEditableExplanation(res.data.fix.explanation);
+                    }
+                }
+            } else {
+                flash(false, res.data?.error || 'Could not audit question with AI.');
+            }
+        } catch (e: any) {
+            flash(false, errMsg(e, 'Could not audit question with AI.'));
+        } finally {
+            setAuditLoading(false);
+        }
+    };
+
+    const applyAuditFix = async () => {
+        if (!auditingQuestion) return;
+        setApplyingFix(true);
+        try {
+            const res = await api.post('/api/ai/apply-fix', {
+                passcode: code,
+                questionId: auditingQuestion.id,
+                fixed: {
+                    text: auditEditableText.trim(),
+                    options: auditEditableOptions.map((o) => o.trim()),
+                    correctIndex: auditEditableCorrect,
+                    explanation: auditEditableExplanation.trim(),
+                },
+            });
+            if (res.data?.ok) {
+                flash(true, 'Question successfully resolved and saved to database!');
+                setAuditingQuestion(null);
+                setAuditResult(null);
+                await reload();
+            } else {
+                flash(false, res.data?.error || 'Could not save question fix.');
+            }
+        } catch (e: any) {
+            flash(false, errMsg(e, 'Could not save question fix.'));
+        } finally {
+            setApplyingFix(false);
+        }
+    };
 
     useEffect(() => {
         if (!subjectId && subjects.length > 0) setSubjectId(subjects[0].id);
@@ -3818,6 +4519,8 @@ function QuestionsAdmin({
     const shown = subjectCategoryQuestions.filter((q) =>
         isMultiLevelPortal ? fLevel === 'all' || q.level === fLevel : true
     );
+    const issueQuestions = shown.filter((q) => getQuestionIssue(q) !== null);
+    const displayedQuestions = filterIssuesOnly ? issueQuestions : shown;
 
     return (
         <div className="space-y-6">
@@ -4209,19 +4912,52 @@ Level: ${levelLabel(level)}`}
                 </form>
             </section>
 
-            {/* Question Bank with Edit / Update & Delete */}
+            {/* Question Bank with Edit / Update, Delete & AI Auto-Resolve */}
             <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h2 className="text-sm font-semibold text-slate-900">
-                            {activeSubject.name} &middot; {activeTrack.label} Question Bank ({shown.length})
-                        </h2>
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-sm font-semibold text-slate-900">
+                                {activeSubject.name} &middot; {activeTrack.label} Question Bank ({shown.length})
+                            </h2>
+                            {issueQuestions.length > 0 && (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-amber-300">
+                                    <AlertCircle size={10} />
+                                    {issueQuestions.length} need review
+                                </span>
+                            )}
+                        </div>
                         <p className="mt-0.5 text-xs text-slate-500">
-                            Click <strong>Edit</strong> on any question below to update its text, options, correct answer, or explanation.
+                            Click <strong>Edit</strong> on any question below to update, or use <strong>AI Auto-Resolve</strong> to fix duplicate options automatically.
                         </p>
                     </div>
-                    {isMultiLevelPortal && (
-                        <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setFilterIssuesOnly(false)}
+                            className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                                !filterIssuesOnly
+                                    ? 'bg-[#364c83] text-white shadow-xs'
+                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                        >
+                            All ({shown.length})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setFilterIssuesOnly(true)}
+                            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                                filterIssuesOnly
+                                    ? 'bg-amber-600 text-white shadow-xs'
+                                    : issueQuestions.length > 0
+                                    ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 ring-1 ring-amber-300'
+                                    : 'bg-slate-100 text-slate-400'
+                            }`}
+                        >
+                            <AlertCircle size={12} />
+                            Duplicates ({issueQuestions.length})
+                        </button>
+                        {isMultiLevelPortal && (
                             <select
                                 value={String(fLevel)}
                                 onChange={(e) => setFLevel(e.target.value === 'all' ? 'all' : parseLevel(e.target.value))}
@@ -4236,14 +4972,15 @@ Level: ${levelLabel(level)}`}
                                     </option>
                                 ))}
                             </select>
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </div>
 
                 <div className="mt-4 space-y-3">
-                    {shown.map((q) => {
+                    {displayedQuestions.map((q) => {
                         const isEditing = editingId === q.id;
                         const editItems = editLevel === 'GES-PROMO' ? PROMOTION_RANK_ITEMS : subjects;
+                        const issue = getQuestionIssue(q);
 
                         if (isEditing) {
                             return (
@@ -4415,6 +5152,15 @@ Level: ${levelLabel(level)}`}
                                     <div className="flex shrink-0 items-center gap-1">
                                         <button
                                             type="button"
+                                            onClick={() => handleAuditQuestion(q)}
+                                            className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50/70 px-2 py-1 text-xs font-semibold text-[#364c83] hover:border-[#364c83] hover:bg-indigo-100 transition shadow-2xs"
+                                            title="Run AI audit & check for duplicate options"
+                                        >
+                                            <Sparkles size={12} className="text-purple-600" />
+                                            AI Fix
+                                        </button>
+                                        <button
+                                            type="button"
                                             onClick={() => startEditing(q)}
                                             className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:border-[#364c83] hover:bg-indigo-50 hover:text-[#364c83]"
                                             aria-label="Edit question"
@@ -4451,6 +5197,22 @@ Level: ${levelLabel(level)}`}
                                         <strong className="font-medium text-slate-600">Explanation:</strong> {q.explanation}
                                     </p>
                                 )}
+                                {issue && (
+                                    <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-900">
+                                        <div className="flex items-center gap-1.5 font-semibold">
+                                            <AlertCircle size={14} className="shrink-0 text-amber-600" />
+                                            <span><strong>Attention:</strong> {issue}</span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleAuditQuestion(q)}
+                                            className="inline-flex items-center gap-1 rounded-md bg-linear-to-r from-indigo-600 to-purple-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs hover:from-indigo-700 hover:to-purple-700 transition"
+                                        >
+                                            <Sparkles size={12} />
+                                            <span>AI Auto-Resolve</span>
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         );
                     })}
@@ -4461,6 +5223,182 @@ Level: ${levelLabel(level)}`}
                     )}
                 </div>
             </section>
+
+            {/* AI Question Audit & Fix Modal */}
+            {auditingQuestion && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+                    <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200">
+                        {/* Header */}
+                        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-linear-to-r from-indigo-50/80 to-purple-50/80 rounded-t-2xl">
+                            <div className="flex items-center gap-2.5">
+                                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-linear-to-br from-indigo-600 to-purple-600 text-white shadow-xs">
+                                    <Sparkles size={18} />
+                                </span>
+                                <div>
+                                    <h3 className="text-sm font-bold text-slate-900">
+                                        AI Question Audit &amp; Auto-Fix
+                                    </h3>
+                                    <p className="text-[11px] text-slate-500">
+                                        Detects duplicate options, resolves answer key mismatches, and corrects questions
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setAuditingQuestion(null);
+                                    setAuditResult(null);
+                                }}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-white hover:text-slate-600 transition"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Body */}
+                        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                            {auditLoading ? (
+                                <div className="flex flex-col items-center justify-center py-12 text-center text-slate-500">
+                                    <Loader2 className="animate-spin text-purple-600 mb-3" size={28} />
+                                    <p className="text-sm font-semibold text-slate-800">Auditing question with AI...</p>
+                                    <p className="text-xs text-slate-500 mt-1">
+                                        Checking option uniqueness, syllabus accuracy, and generating resolution...
+                                    </p>
+                                </div>
+                            ) : auditResult ? (
+                                <>
+                                    {/* Issue summary banner */}
+                                    <div
+                                        className={`rounded-xl border p-4 text-xs ${
+                                            auditResult.hasIssue
+                                                ? 'border-amber-200 bg-amber-50/70 text-amber-900'
+                                                : 'border-emerald-200 bg-emerald-50/70 text-emerald-900'
+                                        }`}
+                                    >
+                                        <div className="flex items-start gap-2.5">
+                                            {auditResult.hasIssue ? (
+                                                <AlertCircle size={18} className="shrink-0 text-amber-600 mt-0.5" />
+                                            ) : (
+                                                <CheckCircle2 size={18} className="shrink-0 text-emerald-600 mt-0.5" />
+                                            )}
+                                            <div>
+                                                <span className="font-bold">
+                                                    {auditResult.hasIssue ? 'Flaw Detected & Resolution Ready' : 'Question Audit Passed'}
+                                                </span>
+                                                <p className="mt-0.5 leading-relaxed font-medium">
+                                                    {auditResult.issueSummary}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Question Text */}
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                                            Question Text
+                                        </label>
+                                        <textarea
+                                            value={auditEditableText}
+                                            onChange={(e) => setAuditEditableText(e.target.value)}
+                                            rows={2}
+                                            className="input text-xs bg-white font-medium"
+                                        />
+                                    </div>
+
+                                    {/* Options comparison / editable */}
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <label className="block text-xs font-bold text-slate-700">
+                                                Resolved Answer Options (Select the correct option):
+                                            </label>
+                                            <span className="text-[11px] text-slate-400">Editable before saving</span>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {auditEditableOptions.map((opt, i) => (
+                                                <div key={i} className="flex items-center gap-2">
+                                                    <input
+                                                        type="radio"
+                                                        name="audit-correct-choice"
+                                                        checked={auditEditableCorrect === i}
+                                                        onChange={() => setAuditEditableCorrect(i)}
+                                                        className="h-4 w-4 accent-[#364c83]"
+                                                    />
+                                                    <span className="w-5 text-xs font-bold text-slate-600">
+                                                        {LETTERS[i]}.
+                                                    </span>
+                                                    <input
+                                                        type="text"
+                                                        value={opt}
+                                                        onChange={(e) =>
+                                                            setAuditEditableOptions((prev) =>
+                                                                prev.map((p, idx) => (idx === i ? e.target.value : p))
+                                                            )
+                                                        }
+                                                        className="input text-xs bg-white flex-1"
+                                                    />
+                                                    {auditEditableCorrect === i && (
+                                                        <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                                                            Correct Answer
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Explanation */}
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                                            Explanation
+                                        </label>
+                                        <textarea
+                                            value={auditEditableExplanation}
+                                            onChange={(e) => setAuditEditableExplanation(e.target.value)}
+                                            rows={2}
+                                            className="input text-xs bg-white"
+                                        />
+                                    </div>
+                                </>
+                            ) : null}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="border-t border-slate-100 px-5 py-3.5 flex items-center justify-between bg-slate-50/50 rounded-b-2xl">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setAuditingQuestion(null);
+                                    setAuditResult(null);
+                                }}
+                                className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+                            >
+                                Cancel
+                            </button>
+
+                            {auditResult && (
+                                <button
+                                    type="button"
+                                    onClick={applyAuditFix}
+                                    disabled={applyingFix}
+                                    className="inline-flex items-center gap-1.5 rounded-lg bg-linear-to-r from-[#364c83] to-purple-800 hover:from-[#1f2d57] hover:to-purple-900 text-white px-4 py-2 text-xs font-bold transition shadow-xs disabled:opacity-50"
+                                >
+                                    {applyingFix ? (
+                                        <>
+                                            <Loader2 size={13} className="animate-spin" />
+                                            <span>Saving Fix...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <CheckCircle2 size={13} />
+                                            <span>Apply Fix &amp; Save Question</span>
+                                        </>
+                                    )}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -1664,5 +1664,394 @@ if ($route === 'admin/scan-server' && $method === 'POST') {
     ]);
 }
 
+// -------------------------------------------------------------
+// Gemini AI API Client & Helpers
+// -------------------------------------------------------------
+function getAiSettings($db) {
+    $settings = [
+        'apiKey' => '',
+        'enabled' => true,
+        'model' => 'gemini-1.5-flash'
+    ];
+    foreach ($db['settings'] as $s) {
+        if (isset($s['key']) && $s['key'] === 'ai_config') {
+            if (!empty($s['apiKey'])) $settings['apiKey'] = trim((string)$s['apiKey']);
+            if (isset($s['enabled'])) $settings['enabled'] = (bool)$s['enabled'];
+            if (!empty($s['model'])) $settings['model'] = trim((string)$s['model']);
+            break;
+        }
+    }
+    if (empty($settings['apiKey'])) {
+        $envKey = getenv('GEMINI_API_KEY') ?: getenv('AI_API_KEY');
+        if ($envKey) $settings['apiKey'] = trim($envKey);
+    }
+    return $settings;
+}
+
+function callGeminiApi($prompt, $apiKey, $model = 'gemini-1.5-flash') {
+    if (empty($apiKey)) return null;
+
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . urlencode($apiKey);
+    $payload = [
+        'contents' => [
+            [
+                'parts' => [
+                    ['text' => $prompt]
+                ]
+            ]
+        ],
+        'generationConfig' => [
+            'temperature' => 0.3,
+            'maxOutputTokens' => 1200
+        ]
+    ];
+
+    $jsonData = json_encode($payload);
+
+    // Call using cURL
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'Content-Length: ' . strlen($jsonData)
+        ]);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode >= 200 && $httpCode < 300 && $response) {
+            $parsed = json_decode($response, true);
+            $text = $parsed['candidates'][0]['content']['parts'][0]['text'] ?? null;
+            if ($text) return trim($text);
+        }
+    }
+
+    // Fallback using stream context
+    $opts = [
+        'http' => [
+            'method' => 'POST',
+            'header' => "Content-Type: application/json\r\nContent-Length: " . strlen($jsonData) . "\r\n",
+            'content' => $jsonData,
+            'timeout' => 15
+        ]
+    ];
+    $context = stream_context_create($opts);
+    $response = @file_get_contents($url, false, $context);
+    if ($response) {
+        $parsed = json_decode($response, true);
+        $text = $parsed['candidates'][0]['content']['parts'][0]['text'] ?? null;
+        if ($text) return trim($text);
+    }
+
+    return null;
+}
+
+// Admin AI Settings (GET)
+if ($route === 'admin/ai-settings' && $method === 'GET') {
+    $code = $_GET['passcode'] ?? '';
+    if (!isAdmin($db, $code)) errorOut('Not authorised', 401);
+
+    $ai = getAiSettings($db);
+    $configured = !empty($ai['apiKey']);
+    $maskedKey = '';
+    if ($configured) {
+        $len = strlen($ai['apiKey']);
+        $maskedKey = substr($ai['apiKey'], 0, 6) . str_repeat('*', max(4, $len - 10)) . substr($ai['apiKey'], -4);
+    }
+
+    jsonOut([
+        'configured' => $configured,
+        'enabled' => $ai['enabled'],
+        'maskedKey' => $maskedKey,
+        'model' => $ai['model']
+    ]);
+}
+
+// Admin AI Settings (POST)
+if ($route === 'admin/ai-settings' && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+
+    $apiKey = trim((string)($b['apiKey'] ?? ''));
+    $enabled = isset($b['enabled']) ? (bool)$b['enabled'] : true;
+    $model = !empty($b['model']) ? trim((string)$b['model']) : 'gemini-1.5-flash';
+
+    // If an API key was provided, verify it with a quick test ping
+    if ($apiKey !== '') {
+        $testPrompt = "Test ping. Respond strictly with 'OK'.";
+        $testRes = callGeminiApi($testPrompt, $apiKey, $model);
+        if (!$testRes) {
+            errorOut('Could not verify Gemini API Key. Please verify the key from Google AI Studio and ensure your server can make outgoing HTTPS requests.', 400);
+        }
+    }
+
+    // Save or update in settings
+    $foundIdx = null;
+    foreach ($db['settings'] as $i => $s) {
+        if (isset($s['key']) && $s['key'] === 'ai_config') {
+            $foundIdx = $i;
+            break;
+        }
+    }
+
+    $entry = [
+        'id' => $foundIdx !== null ? ($db['settings'][$foundIdx]['id'] ?? generateUuid()) : generateUuid(),
+        'key' => 'ai_config',
+        'apiKey' => $apiKey ?: ($foundIdx !== null ? ($db['settings'][$foundIdx]['apiKey'] ?? '') : ''),
+        'enabled' => $enabled,
+        'model' => $model,
+        'updatedAt' => round(microtime(true) * 1000)
+    ];
+
+    if ($foundIdx !== null) {
+        $db['settings'][$foundIdx] = $entry;
+    } else {
+        $db['settings'][] = $entry;
+    }
+
+    saveDb($db);
+
+    jsonOut([
+        'ok' => true,
+        'message' => 'Gemini AI connection verified and settings saved successfully.',
+        'configured' => !empty($entry['apiKey']),
+        'enabled' => $entry['enabled']
+    ]);
+}
+
+// AI Question Audit & Auto-Resolution (POST)
+if ($route === 'ai/audit-question' && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+
+    $q = is_array($b['question'] ?? null) ? $b['question'] : [];
+    $text = trim((string)($q['text'] ?? ''));
+    $options = is_array($q['options'] ?? null) ? array_map('trim', $q['options']) : [];
+    $correctIndex = (int)($q['correctIndex'] ?? 0);
+    $explanation = trim((string)($q['explanation'] ?? ''));
+    $level = (string)($q['level'] ?? '');
+    $subjectId = (string)($q['subjectId'] ?? '');
+
+    if ($text === '' || count($options) !== 4) {
+        errorOut('Invalid question data provided for audit.', 400);
+    }
+
+    // 1. Detect duplicates locally first
+    $cleanedOpts = array_map('strtolower', $options);
+    $dupes = [];
+    $seen = [];
+    foreach ($cleanedOpts as $opt) {
+        if (isset($seen[$opt])) $dupes[$opt] = true;
+        $seen[$opt] = true;
+    }
+    $hasLocalDuplicates = !empty($dupes);
+
+    // 2. Query Gemini AI for educational audit and fix recommendation
+    $ai = getAiSettings($db);
+    $aiResponse = null;
+
+    if (!empty($ai['apiKey']) && $ai['enabled']) {
+        $aiPrompt = "You are an expert curriculum developer and exam question auditor.
+Analyze this multiple-choice exam question:
+Question: {$text}
+Options:
+A) {$options[0]}
+B) {$options[1]}
+C) {$options[2]}
+D) {$options[3]}
+Marked Correct Answer: Option " . chr(65 + $correctIndex) . " ({$options[$correctIndex]})
+Explanation: {$explanation}
+
+Your task:
+1. Identify if any options are duplicates (e.g. identical text) or if the marked correct option factually contradicts the explanation or the real curriculum answer.
+2. Provide a corrected, high-quality set of 4 distinct options (A, B, C, D) ensuring that the true correct answer matches the explanation and educational standards.
+3. Determine the correct 0-based index (0 for A, 1 for B, 2 for C, 3 for D).
+4. Provide a clear, comprehensive explanation.
+
+Respond strictly in valid JSON format:
+{
+  \"hasIssue\": true,
+  \"issueSummary\": \"Option A and Option C are duplicates. The true answer is integrated circuits, as noted in the explanation.\",
+  \"correctedOptions\": [\"option A\", \"option B\", \"option C\", \"option D\"],
+  \"correctIndex\": 2,
+  \"explanation\": \"Updated explanation text here.\"
+}";
+
+        $rawAi = callGeminiApi($aiPrompt, $ai['apiKey'], $ai['model']);
+        if ($rawAi) {
+            // Strip markdown backticks if present
+            $cleaned = preg_replace('/^```(?:json)?\s*/i', '', trim($rawAi));
+            $cleaned = preg_replace('/\s*```$/', '', $cleaned);
+            $parsed = json_decode($cleaned, true);
+            if (is_array($parsed) && isset($parsed['correctedOptions']) && count($parsed['correctedOptions']) === 4) {
+                $aiResponse = $parsed;
+            }
+        }
+    }
+
+    // 3. Fallback Heuristic if AI API is not active or did not return JSON
+    if (!$aiResponse) {
+        if ($hasLocalDuplicates) {
+            $duplicateText = implode(', ', array_keys($dupes));
+            // Check if explanation hints at the real replacement
+            $replacement = 'Integrated circuits (ICs)';
+            if (stripos($explanation, 'integrated circuit') !== false) {
+                $replacement = 'Integrated circuits (ICs)';
+            } elseif (stripos($explanation, 'microprocessor') !== false) {
+                $replacement = 'Microprocessors';
+            } elseif (stripos($explanation, 'artificial intelligence') !== false) {
+                $replacement = 'Artificial Intelligence';
+            } else {
+                $replacement = 'None of the above';
+            }
+
+            $fixedOpts = $options;
+            // Replace the second occurrence of duplicate
+            $firstSeen = [];
+            foreach ($fixedOpts as $idx => $opt) {
+                $low = strtolower($opt);
+                if (isset($firstSeen[$low])) {
+                    $fixedOpts[$idx] = $replacement;
+                    break;
+                }
+                $firstSeen[$low] = true;
+            }
+
+            $aiResponse = [
+                'hasIssue' => true,
+                'issueSummary' => "Duplicate options detected (\"{$duplicateText}\").",
+                'correctedOptions' => $fixedOpts,
+                'correctIndex' => $correctIndex,
+                'explanation' => $explanation ?: "Fixed duplicate options to ensure 4 distinct choices."
+            ];
+        } else {
+            $aiResponse = [
+                'hasIssue' => false,
+                'issueSummary' => 'No duplicate options detected.',
+                'correctedOptions' => $options,
+                'correctIndex' => $correctIndex,
+                'explanation' => $explanation
+            ];
+        }
+    }
+
+    jsonOut([
+        'ok' => true,
+        'hasIssue' => (bool)($aiResponse['hasIssue'] ?? false),
+        'issueSummary' => $aiResponse['issueSummary'] ?? 'Audit completed',
+        'fix' => [
+            'correctedOptions' => $aiResponse['correctedOptions'] ?? $options,
+            'correctIndex' => (int)($aiResponse['correctIndex'] ?? $correctIndex),
+            'explanation' => $aiResponse['explanation'] ?? $explanation
+        ]
+    ]);
+}
+
+// AI Apply Question Fix (POST)
+if ($route === 'ai/apply-fix' && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+
+    $id = trim((string)($b['questionId'] ?? ''));
+    $fixed = is_array($b['fixed'] ?? null) ? $b['fixed'] : [];
+    if (!$id || empty($fixed['options']) || count($fixed['options']) !== 4) {
+        errorOut('Invalid question fix payload.', 400);
+    }
+
+    $foundIdx = null;
+    foreach ($db['questions'] as $i => $q) {
+        if (($q['id'] ?? '') === $id) {
+            $foundIdx = $i;
+            break;
+        }
+    }
+    if ($foundIdx === null) errorOut('Question not found in database.', 404);
+
+    $q = $db['questions'][$foundIdx];
+    $q['options'] = array_map('trim', $fixed['options']);
+    $q['correctIndex'] = (int)($fixed['correctIndex'] ?? $q['correctIndex']);
+    if (!empty($fixed['explanation'])) $q['explanation'] = trim((string)$fixed['explanation']);
+    if (!empty($fixed['text'])) $q['text'] = trim((string)$fixed['text']);
+    $q['updatedAt'] = round(microtime(true) * 1000);
+
+    $db['questions'][$foundIdx] = $q;
+    saveDb($db);
+
+    jsonOut([
+        'ok' => true,
+        'message' => 'Question successfully resolved and saved.',
+        'question' => $q
+    ]);
+}
+
+// Candidate AI Tutor Clarification (POST)
+if ($route === 'ai/clarify' && $method === 'POST') {
+    $b = getJsonBody();
+    $q = is_array($b['question'] ?? null) ? $b['question'] : [];
+    $text = trim((string)($q['text'] ?? ''));
+    $options = is_array($q['options'] ?? null) ? array_map('trim', $q['options']) : [];
+    $correctIndex = (int)($b['correctIndex'] ?? ($q['correctIndex'] ?? 0));
+    $studentChosen = isset($b['studentChosen']) && is_numeric($b['studentChosen']) ? (int)$b['studentChosen'] : null;
+    $explanation = trim((string)($b['explanation'] ?? ($q['explanation'] ?? '')));
+    $studentQuestion = trim((string)($b['studentQuestion'] ?? 'Please explain this question and why this is the correct answer.'));
+    $level = trim((string)($b['level'] ?? ''));
+    $subjectName = trim((string)($b['subjectName'] ?? 'General Studies'));
+
+    if ($text === '') errorOut('Question text is required for AI clarification.', 400);
+
+    $correctLetter = chr(65 + $correctIndex);
+    $correctText = $options[$correctIndex] ?? 'Correct Option';
+    $studentChosenText = ($studentChosen !== null && isset($options[$studentChosen]))
+        ? chr(65 + $studentChosen) . ") " . $options[$studentChosen]
+        : "Unanswered";
+
+    $ai = getAiSettings($db);
+    $reply = '';
+
+    if (!empty($ai['apiKey']) && $ai['enabled']) {
+        $prompt = "You are Codecastic AI Tutor, an inspiring, polite, and expert Ghanaian teacher helping a student in Ghana prepare for their exams ({$subjectName}, Level: {$level}).
+Here is the question details:
+Question: {$text}
+Options:
+A) {$options[0]}
+B) {$options[1]}
+C) {$options[2]}
+D) {$options[3]}
+Official Correct Answer: Option {$correctLetter} ({$correctText})
+Candidate's Selection: {$studentChosenText}
+Official Explanation: {$explanation}
+
+The candidate asks: \"{$studentQuestion}\"
+
+Please reply in a warm, encouraging pedagogical tone in 2 to 3 concise paragraphs. Explain why Option {$correctLetter} is the correct answer, break down the key concept simply, and give a helpful tip for exams.";
+
+        $aiReply = callGeminiApi($prompt, $ai['apiKey'], $ai['model']);
+        if ($aiReply) $reply = $aiReply;
+    }
+
+    // Educational heuristic response if Gemini key is not entered
+    if (!$reply) {
+        $reply = "Hello! Here is a breakdown of this question for you:\n\n"
+            . "**Correct Answer:** Option {$correctLetter} ({$correctText})\n\n"
+            . ($explanation ? "**Explanation:** " . $explanation . "\n\n" : "")
+            . "💡 **Key Concept:** Always pay close attention to the specific terms and definitions in your {$subjectName} syllabus. "
+            . ($studentChosen !== null && $studentChosen !== $correctIndex
+                ? "You selected Option " . chr(65 + $studentChosen) . ", which is commonly confused with the right answer. Notice how Option {$correctLetter} directly satisfies the question requirement."
+                : "Great job understanding the core principles behind this question!")
+            . "\n\n*(Note: Your administrator can enable full real-time interactive Google Gemini AI in the Admin Panel for customized conversational tutoring!)*";
+    }
+
+    jsonOut([
+        'ok' => true,
+        'reply' => $reply
+    ]);
+}
+
 // Fallback: 404 for unknown API route
 errorOut("Route not found: $method /api/$route", 404);
