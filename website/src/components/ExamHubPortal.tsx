@@ -3165,6 +3165,7 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
                         code={code}
                         subjects={subjects}
                         questions={questions}
+                        setSubjects={setSubjects}
                         reloadSubjects={loadSubjects}
                         reloadQuestions={loadQuestions}
                         flash={flash}
@@ -3736,6 +3737,7 @@ function SubjectsAdmin({
     code,
     subjects,
     questions,
+    setSubjects,
     reloadSubjects,
     reloadQuestions,
     flash,
@@ -3743,6 +3745,7 @@ function SubjectsAdmin({
     code: string;
     subjects: Subject[];
     questions: AdminQ[];
+    setSubjects: React.Dispatch<React.SetStateAction<Subject[]>>;
     reloadSubjects: () => Promise<void>;
     reloadQuestions: () => Promise<void>;
     flash: Flash;
@@ -3758,6 +3761,11 @@ function SubjectsAdmin({
         try {
             const res = await api.post('/api/admin/subjects', { passcode: code, name: n });
             setName('');
+            const addedSub: Subject = res.data && res.data.id ? res.data : { id: 'subj-' + Date.now(), name: n };
+            setSubjects((prev) => {
+                const filtered = prev.filter((s) => s.id !== addedSub.id && s.name.toLowerCase() !== addedSub.name.toLowerCase());
+                return [...filtered, addedSub].sort((a, b) => a.name.localeCompare(b.name));
+            });
             await reloadSubjects();
             if (res.data?.id) {
                 reloadQuestions();
@@ -3774,10 +3782,12 @@ function SubjectsAdmin({
         const n = questions.filter((q) => q.subjectId === s.id).length;
         if (!window.confirm(`Delete "${s.name}" and its ${n} question(s)? This cannot be undone.`)) return;
         try {
+            setSubjects((prev) => prev.filter((item) => item.id !== s.id));
             await api.post(`/api/admin/subjects/${s.id}/delete`, { passcode: code });
             await Promise.all([reloadSubjects(), reloadQuestions()]);
             flash(true, `"${s.name}" deleted.`);
         } catch (e2) {
+            await reloadSubjects();
             flash(false, errMsg(e2, 'Could not delete subject.'));
         }
     };

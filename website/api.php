@@ -146,51 +146,89 @@ function isProfessionalStudiesSubject($db, $subjectId) {
 function saveDb($data, $makeBackup = true) {
     global $dataDir, $dbFile;
     if (!file_exists($dataDir)) {
-        @mkdir($dataDir, 0755, true);
+        @mkdir($dataDir, 0777, true);
     }
+    @chmod($dataDir, 0777);
+
+    // Encode JSON with fallback for malformed UTF-8 characters
     $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        $json = json_encode($data, JSON_PARTIAL_OUTPUT_ON_ERROR | JSON_UNESCAPED_UNICODE);
+    }
     if ($json === false) {
         return false;
     }
 
+    if (file_exists($dbFile)) {
+        @chmod($dbFile, 0666);
+    }
+
     $saved = false;
-    // Direct write with LOCK_EX ensures cross-platform reliability on Windows & cPanel
+
+    // 1. Try direct write with LOCK_EX
     $bytes = @file_put_contents($dbFile, $json, LOCK_EX);
     if ($bytes !== false) {
         $saved = true;
-    } else {
-        // Fallback: temp file write + rename/replace
-        $tmpFile = $dbFile . '.tmp.' . uniqid();
-        if (@file_put_contents($tmpFile, $json, LOCK_EX) !== false) {
-            @unlink($dbFile);
-            if (@rename($tmpFile, $dbFile)) {
+    }
+
+    // 2. Try direct write WITHOUT lock (crucial on cPanel shared hosts / CageFS / NFS)
+    if (!$saved) {
+        $bytes = @file_put_contents($dbFile, $json);
+        if ($bytes !== false) {
+            $saved = true;
+        }
+    }
+
+    // 3. Try standard fopen/fwrite with flush
+    if (!$saved) {
+        $fp = @fopen($dbFile, 'wb');
+        if ($fp) {
+            $written = @fwrite($fp, $json);
+            @fflush($fp);
+            @fclose($fp);
+            if ($written !== false) {
                 $saved = true;
-            } else {
-                @unlink($tmpFile);
             }
         }
     }
 
-    // Keep seed.json synced with subjects so newly added subjects are never lost across seed updates
-    $seedFile = $dataDir . '/seed.json';
-    if (file_exists($seedFile) && !empty($data['subjects'])) {
-        $seedRaw = @file_get_contents($seedFile);
-        $seedData = json_decode($seedRaw, true);
-        if (is_array($seedData)) {
-            $seedData['subjects'] = $data['subjects'];
-            @file_put_contents($seedFile, json_encode($seedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+    // 4. Fallback: temp file write and copy/rename
+    if (!$saved) {
+        $tmpFile = $dataDir . '/temp_' . uniqid() . '.json';
+        if (@file_put_contents($tmpFile, $json) !== false) {
+            @chmod($tmpFile, 0666);
+            if (@copy($tmpFile, $dbFile) || @rename($tmpFile, $dbFile)) {
+                $saved = true;
+            }
+            @unlink($tmpFile);
         }
     }
 
-    // Automatic rolling daily backup to protect candidate records permanently
-    if ($makeBackup && $saved) {
-        $backupDir = $dataDir . '/backups';
-        if (!file_exists($backupDir)) {
-            @mkdir($backupDir, 0755, true);
+    if ($saved) {
+        @chmod($dbFile, 0666);
+
+        // Keep seed.json synced with subjects so newly added subjects are never lost across seed updates
+        $seedFile = $dataDir . '/seed.json';
+        if (file_exists($seedFile) && !empty($data['subjects'])) {
+            @chmod($seedFile, 0666);
+            $seedRaw = @file_get_contents($seedFile);
+            $seedData = json_decode($seedRaw, true);
+            if (is_array($seedData)) {
+                $seedData['subjects'] = $data['subjects'];
+                @file_put_contents($seedFile, json_encode($seedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            }
         }
-        $todayBackup = $backupDir . '/db-backup-' . date('Y-m-d') . '.json';
-        if (!file_exists($todayBackup)) {
-            @copy($dbFile, $todayBackup);
+
+        // Automatic rolling daily backup to protect candidate records permanently
+        if ($makeBackup) {
+            $backupDir = $dataDir . '/backups';
+            if (!file_exists($backupDir)) {
+                @mkdir($backupDir, 0777, true);
+            }
+            $todayBackup = $backupDir . '/db-backup-' . date('Y-m-d') . '.json';
+            if (!file_exists($todayBackup)) {
+                @copy($dbFile, $todayBackup);
+            }
         }
     }
 
@@ -1059,7 +1097,10 @@ if ($route === 'admin/subjects' && $method === 'POST') {
     $id = generateUuid();
     $sub = ['id' => $id, 'name' => $name];
     $db['subjects'][] = $sub;
-    saveDb($db);
+    $saved = saveDb($db);
+    if (!$saved) {
+        errorOut('Server database write failed: Please ensure "data/db.json" and "data" folder have write permissions in cPanel File Manager (chmod 666 db.json, chmod 777 data).', 500);
+    }
     jsonOut($sub, 201);
 }
 
