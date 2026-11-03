@@ -979,6 +979,460 @@ if (preg_match('#^admin/questions/([^/]+)/delete$#', $route, $m) && $method === 
     jsonOut(['deleted' => true]);
 }
 
+// -------------------------------------------------------------
+// Admin Bulk Questions File Parser & Importer
+// -------------------------------------------------------------
+function resolvePromotionRankId($rawRank) {
+    $s = trim((string)$rawRank);
+    if ($s === '') return null;
+    $norm = strtoupper(preg_replace('/[\s\-()]+/', '_', $s));
+    $norm = trim($norm, '_');
+    if ($norm === 'AD_II' || $norm === 'AD2' || $norm === 'RANK_AD_II' || strpos($norm, 'ASSISTANT_DIRECTOR_II') !== false || substr($norm, -6) === '_AD_II') {
+        return 'rank-ad-ii';
+    }
+    if ($norm === 'AD_I' || $norm === 'AD1' || $norm === 'RANK_AD_I' || strpos($norm, 'ASSISTANT_DIRECTOR_I') !== false || substr($norm, -5) === '_AD_I') {
+        return 'rank-ad-i';
+    }
+    if ($norm === 'DD' || $norm === 'RANK_DD' || strpos($norm, 'DEPUTY_DIRECTOR') !== false || substr($norm, -3) === '_DD') {
+        return 'rank-dd';
+    }
+    if ($norm === 'DIR_II' || $norm === 'DIR2' || $norm === 'RANK_DIR_II' || strpos($norm, 'DIRECTOR_II') !== false || substr($norm, -7) === '_DIR_II') {
+        return 'rank-dir-ii';
+    }
+    if ($norm === 'DIR_I' || $norm === 'DIR1' || $norm === 'RANK_DIR_I' || strpos($norm, 'DIRECTOR_I') !== false || substr($norm, -6) === '_DIR_I') {
+        return 'rank-dir-i';
+    }
+    return null;
+}
+
+function resolveCorrectIndex($rawAns, $options) {
+    if (is_int($rawAns)) {
+        if ($rawAns >= 0 && $rawAns <= 3) return $rawAns;
+        if ($rawAns >= 1 && $rawAns <= 4) return $rawAns - 1;
+    }
+    $s = trim((string)$rawAns);
+    if ($s === '') return -1;
+    if (preg_match('/^(?:option\s*)?\(?([A-Da-d])\)?(?:\s*[:.)-].*)?$/i', $s, $m)) {
+        return ord(strtoupper($m[1])) - 65;
+    }
+    if (preg_match('/^[1-4]$/', $s)) {
+        return (int)$s - 1;
+    }
+    foreach ($options as $idx => $opt) {
+        if (strcasecmp(trim($opt), $s) === 0) return $idx;
+    }
+    return -1;
+}
+
+function parseCsvRows($rawText) {
+    $cleaned = preg_replace('/^\xEF\xBB\xBF/', '', $rawText);
+    $lines = preg_split('/\r?\n/', $cleaned);
+    $firstLine = $lines[0] ?? '';
+    $delimiter = (strpos($firstLine, "\t") !== false && strpos($firstLine, ',') === false)
+        ? "\t"
+        : (substr_count($firstLine, ';') > substr_count($firstLine, ',') ? ';' : ',');
+    
+    $rows = [];
+    $fp = fopen('php://temp', 'r+');
+    fwrite($fp, $cleaned);
+    rewind($fp);
+    while (($row = fgetcsv($fp, 0, $delimiter)) !== false) {
+        if (!empty(array_filter($row, function($c) { return trim($c) !== ''; }))) {
+            $rows[] = array_map('trim', $row);
+        }
+    }
+    fclose($fp);
+    return $rows;
+}
+
+function parseTableRowsToItems($rows) {
+    if (empty($rows)) return [];
+    $first = array_map(function($h) {
+        return preg_replace('/[^a-z0-9]/', '', strtolower($h));
+    }, $rows[0]);
+
+    $hasHeader = false;
+    foreach ($first as $h) {
+        if (strpos($h, 'question') !== false || $h === 'text' || $h === 'prompt') {
+            $hasHeader = true;
+            break;
+        }
+    }
+
+    $qIdx = 0; $aIdx = 1; $bIdx = 2; $cIdx = 3; $dIdx = 4;
+    $ansIdx = 5; $expIdx = 6; $lvlIdx = 7; $yearIdx = -1; $rankIdx = -1; $catIdx = -1;
+
+    if ($hasHeader) {
+        foreach ($first as $i => $h) {
+            if ($yearIdx === -1 && ($h === 'year' || strpos($h, 'examyear') !== false)) $yearIdx = $i;
+            if ($rankIdx === -1 && ($h === 'rank' || strpos($h, 'promotionrank') !== false)) $rankIdx = $i;
+            if ($catIdx === -1 && ($h === 'category' || $h === 'topic' || $h === 'domain')) $catIdx = $i;
+            if (strpos($h, 'question') !== false || $h === 'text' || $h === 'prompt') $qIdx = $i;
+            if ($h === 'optiona' || $h === 'a' || $h === 'choicea') $aIdx = $i;
+            if ($h === 'optionb' || $h === 'b' || $h === 'choiceb') $bIdx = $i;
+            if ($h === 'optionc' || $h === 'c' || $h === 'choicec') $cIdx = $i;
+            if ($h === 'optiond' || $h === 'd' || $h === 'choiced') $dIdx = $i;
+            if (strpos($h, 'correct') !== false || strpos($h, 'answer') !== false || $h === 'key') $ansIdx = $i;
+            if (strpos($h, 'explanation') !== false || strpos($h, 'rationale') !== false || strpos($h, 'note') !== false) $expIdx = $i;
+            if (strpos($h, 'level') !== false || strpos($h, 'grade') !== false || strpos($h, 'section') !== false) $lvlIdx = $i;
+        }
+    }
+
+    $startRow = $hasHeader ? 1 : 0;
+    $out = [];
+    for ($r = $startRow; $r < count($rows); $r++) {
+        $row = $rows[$r];
+        $text = trim((string)($row[$qIdx] ?? ''));
+        if ($text === '') continue;
+        if (strtolower($text) === 'question' && strpos(strtolower($row[$aIdx] ?? ''), 'option') !== false) continue;
+        $opts = [
+            trim((string)($row[$aIdx] ?? '')),
+            trim((string)($row[$bIdx] ?? '')),
+            trim((string)($row[$cIdx] ?? '')),
+            trim((string)($row[$dIdx] ?? ''))
+        ];
+        if (in_array('', $opts, true)) continue;
+        $cIdx = resolveCorrectIndex($row[$ansIdx] ?? null, $opts);
+        if ($cIdx < 0 || $cIdx > 3) continue;
+
+        $exp = ($expIdx >= 0 && isset($row[$expIdx])) ? trim((string)$row[$expIdx]) : '';
+        $rawLvl = ($lvlIdx >= 0 && isset($row[$lvlIdx])) ? $row[$lvlIdx] : null;
+        $year = ($yearIdx >= 0 && isset($row[$yearIdx])) ? trim((string)$row[$yearIdx]) : null;
+        $cat = ($catIdx >= 0 && isset($row[$catIdx])) ? trim((string)$row[$catIdx]) : null;
+        $rawRank = ($rankIdx >= 0 && isset($row[$rankIdx])) ? trim((string)$row[$rankIdx]) : null;
+        $rankId = resolvePromotionRankId($rawRank);
+
+        $out[] = [
+            'text' => $text,
+            'options' => $opts,
+            'correctIndex' => $cIdx,
+            'explanation' => $exp,
+            'level' => $rankId ? 'GES-PROMO' : ($rawLvl ? normLevel($rawLvl) : null),
+            'subjectId' => $rankId ?: null,
+            'year' => $year ?: null,
+            'category' => $cat ?: null,
+            'rank' => $rawRank ?: null
+        ];
+    }
+    return $out;
+}
+
+function parseWordOrTextBlocks($rawText) {
+    if (stripos($rawText, '<tr') !== false && stripos($rawText, '<td') !== false) {
+        if (preg_match_all('/<tr[\s\S]*?<\/tr>/i', $rawText, $trMatches)) {
+            $tableRows = [];
+            foreach ($trMatches[0] as $tr) {
+                if (preg_match_all('/<t[dh][\s\S]*?<\/t[dh]>/i', $tr, $cellMatches)) {
+                    if (count($cellMatches[0]) >= 6) {
+                        $cells = array_map(function($c) {
+                            return trim(html_entity_decode(strip_tags($c), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+                        }, $cellMatches[0]);
+                        $tableRows[] = $cells;
+                    }
+                }
+            }
+            $fromTable = parseTableRowsToItems($tableRows);
+            if (!empty($fromTable)) return $fromTable;
+        }
+    }
+
+    $plain = preg_replace('/<\/(p|div|tr|li|h[1-6]|br\s*\/?)>/i', "\n", $rawText);
+    $plain = preg_replace('/<br\s*\/?>/i', "\n", $plain);
+    $plain = html_entity_decode(strip_tags($plain), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+    $lines = array_filter(array_map('trim', preg_split('/\r?\n/', $plain)));
+    $items = [];
+    $curQ = '';
+    $curOpts = ['', '', '', ''];
+    $curAns = '';
+    $curExp = '';
+    $curYear = '';
+    $curCat = '';
+    $curRank = '';
+    $curLvl = null;
+
+    $flush = function() use (&$items, &$curQ, &$curOpts, &$curAns, &$curExp, &$curYear, &$curCat, &$curRank, &$curLvl) {
+        if ($curQ !== '' && count(array_filter($curOpts)) === 4) {
+            $cIdx = resolveCorrectIndex($curAns, $curOpts);
+            if ($cIdx >= 0 && $cIdx <= 3) {
+                $rankId = resolvePromotionRankId($curRank);
+                $items[] = [
+                    'text' => $curQ,
+                    'options' => $curOpts,
+                    'correctIndex' => $cIdx,
+                    'explanation' => $curExp,
+                    'level' => $rankId ? 'GES-PROMO' : ($curLvl ?: null),
+                    'subjectId' => $rankId ?: null,
+                    'year' => $curYear ?: null,
+                    'category' => $curCat ?: null,
+                    'rank' => $curRank ?: null
+                ];
+            }
+        }
+        $curQ = '';
+        $curOpts = ['', '', '', ''];
+        $curAns = '';
+        $curExp = '';
+        $curYear = '';
+        $curCat = '';
+        $curRank = '';
+        $curLvl = null;
+    };
+
+    foreach ($lines as $line) {
+        if (preg_match('/^---+$/', $line)) {
+            $flush();
+            continue;
+        }
+        if (preg_match('/^(?:year|exam\s*year)\s*[:=\-]\s*(.+)$/i', $line, $m)) {
+            if ($curQ !== '' && count(array_filter($curOpts)) === 4) $flush();
+            $curYear = trim($m[1]);
+            continue;
+        }
+        if (preg_match('/^(?:rank|promotion\s*rank)\s*[:=\-]\s*(.+)$/i', $line, $m)) {
+            if ($curQ !== '' && count(array_filter($curOpts)) === 4) $flush();
+            $curRank = trim($m[1]);
+            continue;
+        }
+        if (preg_match('/^(?:category|topic|domain)\s*[:=\-]\s*(.+)$/i', $line, $m)) {
+            if ($curQ !== '' && count(array_filter($curOpts)) === 4) $flush();
+            $curCat = trim($m[1]);
+            continue;
+        }
+        if (preg_match('/^(?:level|grade|class|section)\s*[:=\-]\s*(.+)$/i', $line, $m)) {
+            $lvl = normLevel(trim($m[1]));
+            if ($curQ !== '' && count(array_filter($curOpts)) === 4 && !$curLvl) {
+                $curLvl = $lvl;
+            } else {
+                if ($curQ !== '' && count(array_filter($curOpts)) === 4) $flush();
+                $curLvl = $lvl;
+            }
+            continue;
+        }
+        if (preg_match('/^(\*)?(?:option\s*)?\(?([A-Da-d])\)?\s*[:.)\-]\s*(.+)$/i', $line, $m)) {
+            if ($curQ !== '') {
+                $starred = !empty($m[1]);
+                $idx = ord(strtoupper($m[2])) - 65;
+                $curOpts[$idx] = trim($m[3]);
+                if ($starred && $curAns === '') $curAns = strtoupper($m[2]);
+                continue;
+            }
+        }
+        if (preg_match('/^(?:correct\s*answer|correct\s*choice|answer|correct|ans|key)\s*[:=\-]\s*(.+)$/i', $line, $m)) {
+            if ($curQ !== '') {
+                $curAns = trim($m[1]);
+                continue;
+            }
+        }
+        if (preg_match('/^(?:explanation|rationale|note)\s*[:=\-]\s*(.*)$/i', $line, $m)) {
+            if ($curQ !== '') {
+                $curExp = trim($m[1]);
+                continue;
+            }
+        }
+        if (preg_match('/^(?:question\s*\d*|q\d+|\d+)\s*[:.)\-]\s*(.+)$/i', $line, $m)) {
+            if ($curQ !== '') $flush();
+            $curQ = trim($m[1]);
+            continue;
+        }
+    }
+    $flush();
+    return $items;
+}
+
+function normalizeJsonItems($rawList) {
+    $out = [];
+    foreach ($rawList as $item) {
+        if (!is_array($item)) continue;
+        $text = trim((string)($item['question'] ?? $item['Question'] ?? $item['text'] ?? ''));
+        if ($text === '') continue;
+        $opts = [];
+        if (!empty($item['options']) && is_array($item['options'])) {
+            $opts = array_slice(array_map('trim', $item['options']), 0, 4);
+        } else {
+            $opts = [
+                trim((string)($item['optionA'] ?? $item['a'] ?? $item['A'] ?? '')),
+                trim((string)($item['optionB'] ?? $item['b'] ?? $item['B'] ?? '')),
+                trim((string)($item['optionC'] ?? $item['c'] ?? $item['C'] ?? '')),
+                trim((string)($item['optionD'] ?? $item['d'] ?? $item['D'] ?? ''))
+            ];
+        }
+        if (count($opts) !== 4 || in_array('', $opts, true)) continue;
+        $rawAns = $item['correctIndex'] ?? $item['correctAnswer'] ?? $item['answer'] ?? $item['correct'] ?? $item['Correct'] ?? null;
+        $cIdx = resolveCorrectIndex($rawAns, $opts);
+        if ($cIdx < 0 || $cIdx > 3) continue;
+
+        $rawRank = $item['rank'] ?? $item['Rank'] ?? $item['promotionRank'] ?? null;
+        $rankId = resolvePromotionRankId($rawRank);
+        $level = $rankId ? 'GES-PROMO' : (isset($item['level']) ? normLevel($item['level']) : (isset($item['Level']) ? normLevel($item['Level']) : null));
+
+        $out[] = [
+            'text' => $text,
+            'options' => $opts,
+            'correctIndex' => $cIdx,
+            'explanation' => trim((string)($item['explanation'] ?? $item['Explanation'] ?? '')),
+            'level' => $level,
+            'subjectId' => $rankId ?: (!empty($item['subjectId']) ? trim((string)$item['subjectId']) : null),
+            'year' => !empty($item['year']) ? trim((string)$item['year']) : (!empty($item['Year']) ? trim((string)$item['Year']) : null),
+            'category' => !empty($item['category']) ? trim((string)$item['category']) : (!empty($item['Category']) ? trim((string)$item['Category']) : null),
+            'rank' => $rawRank ? trim((string)$rawRank) : null
+        ];
+    }
+    return $out;
+}
+
+function parseBulkQuestionsPayload($b) {
+    if (!empty($b['questions']) && is_array($b['questions'])) {
+        return normalizeJsonItems($b['questions']);
+    }
+    $fileName = strtolower(trim((string)($b['fileName'] ?? '')));
+    $fileBase64 = (string)($b['fileBase64'] ?? '');
+    if ($fileBase64 === '') return [];
+
+    $raw = base64_decode($fileBase64);
+    if ($raw === false) return [];
+
+    $isZip = (strlen($raw) >= 4 && substr($raw, 0, 4) === "PK\x03\x04");
+    if ($isZip && class_exists('ZipArchive')) {
+        $tmp = tempnam(sys_get_temp_dir(), 'codecastic_zip_');
+        file_put_contents($tmp, $raw);
+        $zip = new ZipArchive();
+        if ($zip->open($tmp) === true) {
+            $docXml = $zip->getFromName('word/document.xml');
+            if ($docXml !== false) {
+                $zip->close();
+                @unlink($tmp);
+                return parseWordOrTextBlocks($docXml);
+            }
+            $sheetXml = $zip->getFromName('xl/worksheets/sheet1.xml');
+            $sharedXml = $zip->getFromName('xl/sharedStrings.xml');
+            if ($sheetXml !== false) {
+                $sharedStrings = [];
+                if ($sharedXml !== false) {
+                    if (preg_match_all('/<si[\s>][\s\S]*?<\/si>/i', $sharedXml, $siMatches)) {
+                        foreach ($siMatches[0] as $si) {
+                            if (preg_match_all('/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/i', $si, $tMatches)) {
+                                $sharedStrings[] = html_entity_decode(implode('', $tMatches[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                            } else {
+                                $sharedStrings[] = '';
+                            }
+                        }
+                    }
+                }
+                $rows = [];
+                if (preg_match_all('/<row[\s>][\s\S]*?<\/row>/i', $sheetXml, $rowMatches)) {
+                    foreach ($rowMatches[0] as $rXml) {
+                        $cells = [];
+                        if (preg_match_all('/<c[\s>][\s\S]*?<\/c>/i', $rXml, $cMatches)) {
+                            foreach ($cMatches[0] as $cXml) {
+                                $isStr = (strpos($cXml, 't="s"') !== false);
+                                if (preg_match('/<v>([\s\S]*?)<\/v>/i', $cXml, $vMatch)) {
+                                    $val = trim($vMatch[1]);
+                                    $cells[] = $isStr ? ($sharedStrings[(int)$val] ?? '') : $val;
+                                } elseif (preg_match('/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/i', $cXml, $tMatch)) {
+                                    $cells[] = html_entity_decode($tMatch[1], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                                }
+                            }
+                        }
+                        if (!empty(array_filter($cells))) $rows[] = $cells;
+                    }
+                }
+                $zip->close();
+                @unlink($tmp);
+                $fromTable = parseTableRowsToItems($rows);
+                if (!empty($fromTable)) return $fromTable;
+            }
+            $zip->close();
+        }
+        @unlink($tmp);
+    }
+
+    if (substr($fileName, -5) === '.json') {
+        $parsed = json_decode(preg_replace('/^\xEF\xBB\xBF/', '', $raw), true);
+        if (is_array($parsed)) {
+            $arr = isset($parsed['questions']) && is_array($parsed['questions']) ? $parsed['questions'] : $parsed;
+            return normalizeJsonItems($arr);
+        }
+    }
+
+    if (substr($fileName, -4) === '.csv' || substr($fileName, -4) === '.tsv') {
+        return parseTableRowsToItems(parseCsvRows($raw));
+    }
+
+    $fromBlocks = parseWordOrTextBlocks($raw);
+    if (!empty($fromBlocks)) return $fromBlocks;
+
+    return parseTableRowsToItems(parseCsvRows($raw));
+}
+
+// Admin Bulk Upload Questions
+if ($route === 'admin/questions/bulk' && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+
+    global $PROMOTION_RANK_ITEMS;
+    $defaultSubjectId = trim((string)($b['subjectId'] ?? ''));
+    $defaultLevel = normLevel($b['level'] ?? null);
+
+    $subjects = $db['subjects'] ?? [];
+    $isValidSubjectOrRank = function($id) use ($subjects, $PROMOTION_RANK_ITEMS) {
+        foreach ($subjects as $s) {
+            if (($s['id'] ?? '') === $id) return true;
+        }
+        foreach ($PROMOTION_RANK_ITEMS as $r) {
+            if ($r['id'] === $id) return true;
+        }
+        return false;
+    };
+
+    $parsedItems = parseBulkQuestionsPayload($b);
+    if (empty($parsedItems)) {
+        errorOut('No valid questions found in the uploaded file. Please make sure each question has question text, 4 answer options (A–D), and a correct answer (A, B, C, or D).', 400);
+    }
+
+    $now = round(microtime(true) * 1000);
+    $addedRecords = [];
+    foreach ($parsedItems as $i => $item) {
+        $targetSubjectId = (!empty($item['subjectId']) && $isValidSubjectOrRank($item['subjectId']))
+            ? $item['subjectId']
+            : $defaultSubjectId;
+        $targetLevel = (!empty($item['level']))
+            ? $item['level']
+            : $defaultLevel;
+
+        if (!$targetSubjectId || !$isValidSubjectOrRank($targetSubjectId)) {
+            errorOut('Choose a valid subject or promotion rank before uploading.', 400);
+        }
+        if ($targetLevel === null) {
+            errorOut('Choose a valid class level or exam section before uploading.', 400);
+        }
+
+        $newQ = [
+            'id' => generateUuid(),
+            'subjectId' => $targetSubjectId,
+            'level' => $targetLevel,
+            'text' => $item['text'],
+            'options' => $item['options'],
+            'correctIndex' => $item['correctIndex'],
+            'explanation' => $item['explanation'] ?? '',
+            'year' => $item['year'] ?? null,
+            'category' => $item['category'] ?? null,
+            'rank' => $item['rank'] ?? null,
+            'createdAt' => $now + $i
+        ];
+
+        $db['questions'][] = $newQ;
+        $addedRecords[] = $newQ;
+    }
+
+    saveDb($db);
+
+    jsonOut([
+        'imported' => count($addedRecords),
+        'questions' => $addedRecords
+    ], 201);
+}
+
 // Admin Results
 if ($route === 'admin/results' && $method === 'POST') {
     $b = getJsonBody();
