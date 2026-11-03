@@ -3420,11 +3420,12 @@ function AdminAiSettings({
     }
 
     return (
-        <div className="space-y-6">
+        <form onSubmit={handleSave} className="space-y-6">
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                {/* Card Header with Top Save Button */}
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
                     <div className="flex items-center gap-3">
-                        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-br from-indigo-500 to-purple-600 text-white shadow-sm">
+                        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-sm">
                             <Sparkles size={20} />
                         </span>
                         <div>
@@ -3455,9 +3456,28 @@ function AdminAiSettings({
                             </p>
                         </div>
                     </div>
+
+                    {/* TOP ACTION BUTTON - Always visible without scrolling */}
+                    <button
+                        type="submit"
+                        disabled={saving}
+                        className="inline-flex items-center gap-2 rounded-lg bg-[#364c83] hover:bg-[#1f2d57] text-white px-4 py-2.5 text-xs font-bold transition shadow-sm disabled:opacity-50"
+                    >
+                        {saving ? (
+                            <>
+                                <Loader2 size={14} className="animate-spin" />
+                                <span>Verifying...</span>
+                            </>
+                        ) : (
+                            <>
+                                <Sparkles size={14} />
+                                <span>Save &amp; Test Connection</span>
+                            </>
+                        )}
+                    </button>
                 </div>
 
-                <form onSubmit={handleSave} className="mt-5 space-y-5">
+                <div className="mt-5 space-y-5">
                     {/* Status Alert Banner */}
                     <div
                         className={`rounded-xl border p-4 ${
@@ -3504,7 +3524,7 @@ function AdminAiSettings({
                     </div>
 
                     {/* How to get free API key guide */}
-                    <div className="rounded-xl border border-indigo-100 bg-linear-to-r from-indigo-50/60 to-purple-50/60 p-4">
+                    <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/60 to-purple-50/60 p-4">
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#364c83]">
@@ -3568,6 +3588,17 @@ function AdminAiSettings({
                                 {showKeyInput ? <EyeOff size={15} /> : <Eye size={15} />}
                             </button>
                         </div>
+                        {apiKey.trim() && !apiKey.trim().startsWith('AIzaSy') && (
+                            <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-800 bg-amber-50 p-2.5 rounded-lg border border-amber-200">
+                                <AlertCircle size={15} className="shrink-0 text-amber-600 mt-0.5" />
+                                <div>
+                                    <strong className="font-semibold">Notice regarding Google API Key format:</strong>
+                                    <p className="mt-0.5 leading-relaxed text-[11px]">
+                                        Google Gemini API keys generated from <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="underline font-bold text-[#364c83]">Google AI Studio</a> typically begin with <code className="font-mono font-bold bg-white px-1 py-0.5 rounded">AIzaSy...</code>. If you copied a token starting with another prefix (such as an OAuth or session code), please ensure you copy the <strong>API Key</strong> from the <em>"Get API key"</em> section in Google AI Studio.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
                         {configured && (
                             <p className="mt-1 text-[11px] text-slate-500">
                                 Current active key is saved securely on your server. Enter a new key above only if you wish to change it.
@@ -3635,11 +3666,12 @@ function AdminAiSettings({
                         </div>
                     )}
 
-                    <div className="flex items-center justify-end gap-3 pt-2">
+                    {/* Bottom Action Button */}
+                    <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
                         <button
                             type="submit"
                             disabled={saving}
-                            className="inline-flex items-center gap-2 rounded-lg bg-linear-to-r from-[#364c83] to-purple-800 px-5 py-2.5 text-xs font-bold text-white shadow-xs hover:from-[#1f2d57] hover:to-purple-900 transition disabled:opacity-50"
+                            className="inline-flex items-center gap-2 rounded-lg bg-[#364c83] hover:bg-[#1f2d57] px-5 py-2.5 text-xs font-bold text-white shadow-sm transition disabled:opacity-50"
                         >
                             {saving ? (
                                 <>
@@ -3654,9 +3686,9 @@ function AdminAiSettings({
                             )}
                         </button>
                     </div>
-                </form>
+                </div>
             </div>
-        </div>
+        </form>
     );
 }
 
