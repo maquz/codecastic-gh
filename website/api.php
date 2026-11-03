@@ -58,11 +58,33 @@ function getDb() {
         }
     }
 
-    // Smart-merge newly added questions from seed.json without touching candidates/results
+    // Smart-merge newly added questions and subjects from seed.json without touching candidates/results
     $seedFile = $dataDir . '/seed.json';
     if (file_exists($seedFile)) {
-        $seedRaw = file_get_contents($seedFile);
+        $seedRaw = @file_get_contents($seedFile);
         $seedData = json_decode($seedRaw, true);
+        $needsSave = false;
+
+        // Smart-merge subjects
+        if (is_array($seedData) && !empty($seedData['subjects'])) {
+            $existingSubMap = [];
+            foreach ($data['subjects'] as $es) {
+                if (!empty($es['name'])) $existingSubMap[strtolower(trim($es['name']))] = true;
+                if (!empty($es['id'])) $existingSubMap[$es['id']] = true;
+            }
+            foreach ($seedData['subjects'] as $ss) {
+                $sName = strtolower(trim((string)($ss['name'] ?? '')));
+                $sId = (string)($ss['id'] ?? '');
+                if ($sName !== '' && !isset($existingSubMap[$sName]) && !isset($existingSubMap[$sId])) {
+                    $data['subjects'][] = $ss;
+                    $existingSubMap[$sName] = true;
+                    $existingSubMap[$sId] = true;
+                    $needsSave = true;
+                }
+            }
+        }
+
+        // Smart-merge questions
         if (is_array($seedData) && !empty($seedData['questions'])) {
             $existingQIds = [];
             foreach ($data['questions'] as $eq) {
@@ -74,11 +96,13 @@ function getDb() {
                     $data['questions'][] = $sq;
                     $existingQIds[$sq['id']] = true;
                     $added++;
+                    $needsSave = true;
                 }
             }
-            if ($added > 0) {
-                saveDb($data, false);
-            }
+        }
+
+        if ($needsSave) {
+            saveDb($data, false);
         }
     }
 
@@ -124,12 +148,42 @@ function saveDb($data, $makeBackup = true) {
     if (!file_exists($dataDir)) {
         @mkdir($dataDir, 0755, true);
     }
-    $tmpFile = $dbFile . '.tmp.' . uniqid();
-    file_put_contents($tmpFile, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
-    rename($tmpFile, $dbFile);
+    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        return false;
+    }
+
+    $saved = false;
+    // Direct write with LOCK_EX ensures cross-platform reliability on Windows & cPanel
+    $bytes = @file_put_contents($dbFile, $json, LOCK_EX);
+    if ($bytes !== false) {
+        $saved = true;
+    } else {
+        // Fallback: temp file write + rename/replace
+        $tmpFile = $dbFile . '.tmp.' . uniqid();
+        if (@file_put_contents($tmpFile, $json, LOCK_EX) !== false) {
+            @unlink($dbFile);
+            if (@rename($tmpFile, $dbFile)) {
+                $saved = true;
+            } else {
+                @unlink($tmpFile);
+            }
+        }
+    }
+
+    // Keep seed.json synced with subjects so newly added subjects are never lost across seed updates
+    $seedFile = $dataDir . '/seed.json';
+    if (file_exists($seedFile) && !empty($data['subjects'])) {
+        $seedRaw = @file_get_contents($seedFile);
+        $seedData = json_decode($seedRaw, true);
+        if (is_array($seedData)) {
+            $seedData['subjects'] = $data['subjects'];
+            @file_put_contents($seedFile, json_encode($seedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+        }
+    }
 
     // Automatic rolling daily backup to protect candidate records permanently
-    if ($makeBackup) {
+    if ($makeBackup && $saved) {
         $backupDir = $dataDir . '/backups';
         if (!file_exists($backupDir)) {
             @mkdir($backupDir, 0755, true);
@@ -139,6 +193,8 @@ function saveDb($data, $makeBackup = true) {
             @copy($dbFile, $todayBackup);
         }
     }
+
+    return $saved;
 }
 
 function generateUuid() {
@@ -155,6 +211,9 @@ function generateUuid() {
 function jsonOut($data, $code = 200) {
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -162,6 +221,9 @@ function jsonOut($data, $code = 200) {
 function errorOut($message, $code = 400) {
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
     echo json_encode(['error' => $message], JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -980,18 +1042,43 @@ if ($route === 'admin/login' && $method === 'POST') {
     jsonOut(['ok' => true]);
 }
 
-// Admin Subjects
+// Admin Subjects - Add
 if ($route === 'admin/subjects' && $method === 'POST') {
     $b = getJsonBody();
     if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
     $name = trim((string)($b['name'] ?? ''));
     if ($name === '') errorOut('Subject name is required', 400);
 
+    // Check if subject already exists (case-insensitive)
+    foreach ($db['subjects'] as $existingSub) {
+        if (strcasecmp(trim((string)($existingSub['name'] ?? '')), $name) === 0) {
+            jsonOut($existingSub, 200);
+        }
+    }
+
     $id = generateUuid();
     $sub = ['id' => $id, 'name' => $name];
     $db['subjects'][] = $sub;
     saveDb($db);
-    jsonOut(['id' => $id, 'name' => $name], 201);
+    jsonOut($sub, 201);
+}
+
+// Admin Subjects - Delete
+if (preg_match('#^admin/subjects/([^/]+)/delete$#', $route, $m) && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+    $subId = $m[1];
+
+    $db['questions'] = array_values(array_filter($db['questions'], function($q) use ($subId) {
+        return ($q['subjectId'] ?? '') !== $subId;
+    }));
+
+    $db['subjects'] = array_values(array_filter($db['subjects'], function($s) use ($subId) {
+        return ($s['id'] ?? '') !== $subId;
+    }));
+
+    saveDb($db);
+    jsonOut(['ok' => true]);
 }
 
 // Admin Questions List
@@ -1793,7 +1880,7 @@ function getAiSettings($db) {
     $settings = [
         'apiKey' => '',
         'enabled' => true,
-        'model' => 'gemini-3.5-flash-lite'
+        'model' => 'gemini-1.5-flash'
     ];
     foreach ($db['settings'] as $s) {
         if (isset($s['key']) && $s['key'] === 'ai_config') {
@@ -1825,24 +1912,26 @@ function getAiSettings($db) {
     return $settings;
 }
 
-function callGeminiApi($prompt, $apiKey, $model = 'gemini-3.5-flash-lite') {
+function callGeminiApi($prompt, $apiKey, $model = 'gemini-1.5-flash') {
     if (empty($apiKey)) return null;
 
     $modelMap = [
-        'gemini-1.5-flash' => 'gemini-3.5-flash-lite',
-        'gemini-1.5-pro' => 'gemini-3.5-flash',
-        'gemini-2.0-flash' => 'gemini-3.5-flash-lite',
-        'gemini-2.0-flash-exp' => 'gemini-3.5-flash-lite'
+        'gemini-3.5-flash-lite' => 'gemini-1.5-flash',
+        'gemini-3.5-flash' => 'gemini-1.5-flash',
+        'gemini-3.8-flash' => 'gemini-1.5-pro',
+        'gemini-2.5-flash' => 'gemini-2.0-flash',
+        'gemini-2.0-flash-exp' => 'gemini-2.0-flash',
+        'gemini-2.0-flash-lite' => 'gemini-2.0-flash-lite'
     ];
     $cleanModel = trim((string)$model);
     if (isset($modelMap[$cleanModel])) {
         $cleanModel = $modelMap[$cleanModel];
     }
     if (empty($cleanModel)) {
-        $cleanModel = 'gemini-3.5-flash-lite';
+        $cleanModel = 'gemini-1.5-flash';
     }
 
-    $candidateModels = array_unique([$cleanModel, 'gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3.8-flash']);
+    $candidateModels = array_unique([$cleanModel, 'gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro']);
 
     foreach ($candidateModels as $currentModel) {
         $url = "https://generativelanguage.googleapis.com/v1beta/models/{$currentModel}:generateContent?key=" . urlencode($apiKey);
@@ -1874,7 +1963,8 @@ function callGeminiApi($prompt, $apiKey, $model = 'gemini-3.5-flash-lite') {
                 'Content-Length: ' . strlen($jsonData)
             ]);
             curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
 
             $response = curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -1893,7 +1983,12 @@ function callGeminiApi($prompt, $apiKey, $model = 'gemini-3.5-flash-lite') {
                 'method' => 'POST',
                 'header' => "Content-Type: application/json\r\nx-goog-api-key: {$apiKey}\r\nContent-Length: " . strlen($jsonData) . "\r\n",
                 'content' => $jsonData,
-                'timeout' => 15
+                'timeout' => 15,
+                'ignore_errors' => true
+            ],
+            'ssl' => [
+                'verify_peer' => false,
+                'verify_peer_name' => false
             ]
         ];
         $context = stream_context_create($opts);
@@ -1943,7 +2038,7 @@ if ($route === 'admin/ai-settings' && $method === 'POST') {
         $testPrompt = "Test ping. Respond strictly with 'OK'.";
         $testRes = callGeminiApi($testPrompt, $apiKey, $model);
         if (!$testRes) {
-            errorOut('Could not verify Gemini API Key. Please verify the key from Google AI Studio and ensure your server can make outgoing HTTPS requests.', 400);
+            errorOut('Could not verify Gemini API Key with Google. Please ensure you copied a valid API key from Google AI Studio (starts with AIzaSy... or AQ...) and that your hosting allows outgoing HTTPS requests.', 400);
         }
     }
 

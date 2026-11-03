@@ -1623,8 +1623,9 @@ export const handler = router({
             const name = String(b.name || '').trim();
             if (!name) return error('Subject name is required', 400);
             const { items } = await db.list('subjects', { limit: 100 });
-            if (items.some((s: any) => String(s.name).toLowerCase() === name.toLowerCase())) {
-                return error('That subject already exists', 409);
+            const existing = items.find((s: any) => String(s.name).toLowerCase() === name.toLowerCase());
+            if (existing) {
+                return json({ id: existing.id, name: existing.name }, 200);
             }
             const [id] = await db.add('subjects', [{ name }]);
             if (!id) return error('Failed to add subject', 500);
@@ -2007,7 +2008,7 @@ export const handler = router({
             const doc: any = items.find((i: any) => i.key === 'ai_config');
             const apiKey = String(doc?.apiKey || process.env.GEMINI_API_KEY || process.env.AI_API_KEY || '').trim();
             const enabled = doc?.enabled !== false;
-            const model = String(doc?.model || 'gemini-3.5-flash-lite');
+            const model = String(doc?.model || 'gemini-1.5-flash');
 
             let maskedKey = '';
             if (apiKey) {
@@ -2031,8 +2032,7 @@ export const handler = router({
 
             const apiKey = String(b.apiKey || '').trim();
             const enabled = b.enabled !== false;
-            const rawModel = String(b.model || 'gemini-3.5-flash-lite');
-            const model = rawModel === 'gemini-1.5-flash' || rawModel === 'gemini-2.0-flash' ? 'gemini-3.5-flash-lite' : rawModel;
+            const model = String(b.model || 'gemini-1.5-flash');
 
             // Save to settings
             const { items } = await db.list('settings', { limit: 50 });
@@ -2116,7 +2116,7 @@ Provide the output strictly in valid JSON format:
   "explanation": "Clear curriculum-aligned explanation here."
 }`;
 
-                    const candidateModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash'];
+                    const candidateModels = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
                     for (const m of candidateModels) {
                         try {
                             const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(apiKey)}`, {
@@ -2300,7 +2300,7 @@ MANDATORY GHANAIAN DOMESTICATION & PEDAGOGY RULES:
    - Use bold text for key Ghanaian terms and scientific/mathematical principles.
    - End with an encouraging Ghanaian word of motivation (e.g., 'Keep studying hard—you are destined for excellence in your ${subjectName} exam!').`;
 
-                    const candidateModels = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash'];
+                    const candidateModels = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
                     for (const m of candidateModels) {
                         try {
                             const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(apiKey)}`, {

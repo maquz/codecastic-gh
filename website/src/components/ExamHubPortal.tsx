@@ -3024,8 +3024,8 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
     }, []);
 
     const loadSubjects = useCallback(async () => {
-        const r = await api.get('/api/subjects');
-        setSubjects(r.data.subjects);
+        const r = await api.get('/api/subjects', { params: { _t: Date.now() } });
+        setSubjects(r.data.subjects || []);
     }, []);
 
     const loadQuestions = useCallback(async () => {
@@ -3383,7 +3383,7 @@ function AdminAiSettings({
     flash: Flash;
 }) {
     const [apiKey, setApiKey] = useState('');
-    const [model, setModel] = useState('gemini-3.5-flash-lite');
+    const [model, setModel] = useState('gemini-1.5-flash');
     const [configured, setConfigured] = useState(false);
     const [enabled, setEnabled] = useState(true);
     const [maskedKey, setMaskedKey] = useState('');
@@ -3655,14 +3655,14 @@ function AdminAiSettings({
                                 onChange={(e) => setModel(e.target.value)}
                                 className="input text-xs"
                             >
-                                <option value="gemini-3.5-flash-lite">
-                                    Gemini 3.5 Flash Lite (Recommended: ultrafast, free tier, latest 2026 model)
+                                <option value="gemini-1.5-flash">
+                                    Gemini 1.5 Flash (Recommended: ultrafast, free tier, Google official)
                                 </option>
-                                <option value="gemini-3.5-flash">
-                                    Gemini 3.5 Flash (Balanced speed &amp; advanced reasoning)
+                                <option value="gemini-2.0-flash">
+                                    Gemini 2.0 Flash (Next-Gen: high speed, advanced reasoning &amp; multimodal)
                                 </option>
-                                <option value="gemini-3.8-flash">
-                                    Gemini 3.8 Flash (High capacity &amp; deep analysis)
+                                <option value="gemini-1.5-pro">
+                                    Gemini 1.5 Pro (Deep reasoning &amp; comprehensive tutoring)
                                 </option>
                             </select>
                         </div>
@@ -3756,10 +3756,13 @@ function SubjectsAdmin({
         if (!n) return;
         setAdding(true);
         try {
-            await api.post('/api/admin/subjects', { passcode: code, name: n });
+            const res = await api.post('/api/admin/subjects', { passcode: code, name: n });
             setName('');
             await reloadSubjects();
-            flash(true, `"${n}" added.`);
+            if (res.data?.id) {
+                reloadQuestions();
+            }
+            flash(true, `"${n}" added successfully.`);
         } catch (e2) {
             flash(false, errMsg(e2, 'Could not add subject.'));
         } finally {
