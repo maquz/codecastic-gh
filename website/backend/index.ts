@@ -1527,7 +1527,7 @@ export const handler = router({
                 },
             ]);
 
-            return json({ score, total, percent, review });
+            return json({ score, total, totalQuestions: total, percent, review, details: review });
         },
     ],
 

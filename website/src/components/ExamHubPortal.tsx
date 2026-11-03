@@ -1526,7 +1526,19 @@ function StudentView({
                 studentName: user.name,
                 userId: user.id,
             });
-            if (res.data) setStudentStats(res.data);
+            if (res.data) {
+                const d = res.data;
+                const examsTaken = Number(d.examsTaken ?? d.stats?.examsTaken ?? (Array.isArray(d.results) ? d.results.length : 0)) || 0;
+                const avgScore = Number(d.avgScore ?? d.stats?.avgPercent ?? 0) || 0;
+                const passRate = Number(d.passRate ?? 0) || 0;
+                const recentResults = Array.isArray(d.recentResults) ? d.recentResults : (Array.isArray(d.results) ? d.results : []);
+                setStudentStats({
+                    examsTaken,
+                    avgScore,
+                    passRate,
+                    recentResults,
+                });
+            }
         } catch {
             // ignore
         }
@@ -1672,11 +1684,13 @@ function StudentView({
 
             const res = await api.post('/api/exam/submit', {
                 token,
+                userId: user.id,
                 studentName: user.name,
                 schoolName: user.schoolName,
                 studentEmail: user.email,
                 level,
                 subjectId: subject.id,
+                subjectName: subject.name,
                 answers,
                 questionIds: finalQuestions.map((q) => q.id),
             });
@@ -2122,9 +2136,24 @@ function StudentView({
 
     /* ---------------- Result ---------------- */
     if (stage === 'result' && result && subject && level !== null) {
+        const displayScore = Number(result.score) || 0;
+        const displayTotal = Number(result.total ?? result.totalQuestions) || questions.length || 1;
+        const displayPercent = typeof result.percent === 'number' ? result.percent : Math.round((displayScore / displayTotal) * 100);
         const msg =
-            result.percent >= 70 ? 'Excellent work!' : result.percent >= 50 ? 'Good effort, keep going!' : 'Keep practising, you will improve.';
-        const reviewById = new Map(result.review.map((r) => [r.id, r]));
+            displayPercent >= 70 ? 'Excellent work!' : displayPercent >= 50 ? 'Good effort, keep going!' : 'Keep practising, you will improve.';
+
+        const reviewList: any[] = Array.isArray(result.review)
+            ? result.review
+            : Array.isArray(result.details)
+            ? result.details.map((d: any) => ({
+                  id: d.questionId || d.id,
+                  correctIndex: d.correctIndex,
+                  chosen: d.selected ?? d.chosen,
+                  correct: d.isCorrect ?? d.correct,
+                  explanation: d.explanation || '',
+              }))
+            : [];
+        const reviewById = new Map(reviewList.map((r: any) => [r.id, r]));
         return (
             <div className="mx-auto max-w-2xl">
                 <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
@@ -2136,9 +2165,9 @@ function StudentView({
                         {user.schoolName ? ` (${user.schoolName})` : ''} &middot; {subject.name} &middot; {levelLabel(level)}
                     </p>
                     <p className="mt-1 text-4xl font-bold text-slate-900">
-                        {result.score}/{result.total}
+                        {displayScore}/{displayTotal}
                     </p>
-                    <p className="mt-1 text-lg font-semibold text-[#364c83]">{result.percent}%</p>
+                    <p className="mt-1 text-lg font-semibold text-[#364c83]">{displayPercent}%</p>
                     <p className="mt-2 text-sm text-slate-600">{msg}</p>
                     <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                         <button

@@ -14701,7 +14701,7 @@ var handler = router({
           createdAt: Date.now()
         }
       ]);
-      return json({ score, total, percent, review });
+      return json({ score, total, totalQuestions: total, percent, review, details: review });
     }
   ],
   "POST /api/student/history": [

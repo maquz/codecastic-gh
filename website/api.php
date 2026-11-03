@@ -435,7 +435,7 @@ if (preg_match('#^exam/([^/]+)/([^/]+)$#', $route, $matches) && $method === 'GET
         $filtered = array_slice($filtered, 0, $limitParam);
     }
 
-    // Sanitize for client (remove correctIndex & explanation during quiz)
+    // Return questions with correctIndex & explanation so interactive client can grade and explain
     $safeQuestions = [];
     foreach ($filtered as $q) {
         $safeQuestions[] = [
@@ -444,6 +444,8 @@ if (preg_match('#^exam/([^/]+)/([^/]+)$#', $route, $matches) && $method === 'GET
             'level' => $q['level'] ?? '',
             'text' => $q['text'] ?? '',
             'options' => $q['options'] ?? [],
+            'correctIndex' => isset($q['correctIndex']) ? (int)$q['correctIndex'] : 0,
+            'explanation' => (string)($q['explanation'] ?? ''),
             'year' => $q['year'] ?? null,
             'category' => $q['category'] ?? null
         ];
@@ -459,6 +461,24 @@ if ($route === 'exam/submit' && $method === 'POST') {
     $level = normLevel($rawLevel);
     if ($level === null) errorOut('Invalid level', 400);
 
+    // Resolve user from token or payload
+    $u = getUserByToken($db, $b['token'] ?? null);
+    $userId = $u ? (string)$u['id'] : trim((string)($b['userId'] ?? ''));
+    $studentName = $u ? (string)$u['name'] : trim((string)($b['studentName'] ?? 'Candidate'));
+    $studentEmail = $u ? (string)$u['email'] : trim((string)($b['studentEmail'] ?? ''));
+    $schoolName = $u ? (string)($u['schoolName'] ?? '') : trim((string)($b['schoolName'] ?? ''));
+
+    $subjId = (string)($b['subjectId'] ?? '');
+    $subjectName = trim((string)($b['subjectName'] ?? ''));
+    if ($subjectName === '' && $subjId !== '') {
+        foreach ($db['subjects'] as $s) {
+            if (($s['id'] ?? '') === $subjId) {
+                $subjectName = (string)($s['name'] ?? '');
+                break;
+            }
+        }
+    }
+
     $answers = is_array($b['answers'] ?? null) ? $b['answers'] : [];
     $allQsMap = [];
     foreach ($db['questions'] as $q) {
@@ -467,46 +487,65 @@ if ($route === 'exam/submit' && $method === 'POST') {
         }
     }
 
-    $qIds = array_keys($answers);
-    $totalQuestions = count($qIds);
+    $questionIds = is_array($b['questionIds'] ?? null) ? $b['questionIds'] : array_keys($answers);
+    if (empty($questionIds)) {
+        $questionIds = array_keys($answers);
+    }
+
     $score = 0;
     $details = [];
+    $review = [];
 
-    foreach ($qIds as $qid) {
+    foreach ($questionIds as $qid) {
         if (!isset($allQsMap[$qid])) continue;
         $q = $allQsMap[$qid];
-        $selected = $answers[$qid];
+        $selected = isset($answers[$qid]) ? $answers[$qid] : null;
         $correct = (int)($q['correctIndex'] ?? 0);
         $isCorrect = ($selected !== null && (int)$selected === $correct);
         if ($isCorrect) $score++;
 
-        $details[] = [
+        $detailItem = [
             'questionId' => $qid,
+            'id' => $qid,
             'text' => $q['text'] ?? '',
             'options' => $q['options'] ?? [],
             'selected' => $selected,
+            'chosen' => $selected,
             'correctIndex' => $correct,
             'isCorrect' => $isCorrect,
+            'correct' => $isCorrect,
             'explanation' => $q['explanation'] ?? '',
             'year' => $q['year'] ?? null,
             'category' => $q['category'] ?? null
         ];
+        $details[] = $detailItem;
+        $review[] = [
+            'id' => $qid,
+            'correctIndex' => $correct,
+            'chosen' => $selected,
+            'correct' => $isCorrect,
+            'explanation' => $q['explanation'] ?? '',
+            'text' => $q['text'] ?? '',
+            'options' => $q['options'] ?? []
+        ];
     }
 
+    $totalQuestions = count($questionIds) > 0 ? count($questionIds) : count($details);
     $percent = $totalQuestions > 0 ? round(($score / $totalQuestions) * 100) : 0;
     $passed = $percent >= 50;
 
     $now = round(microtime(true) * 1000);
     $resultRecord = [
         'id' => generateUuid(),
-        'userId' => (string)($b['userId'] ?? ''),
-        'studentName' => (string)($b['studentName'] ?? 'Candidate'),
-        'studentEmail' => (string)($b['studentEmail'] ?? ''),
-        'schoolName' => (string)($b['schoolName'] ?? ''),
+        'userId' => $userId,
+        'studentName' => $studentName,
+        'studentEmail' => $studentEmail,
+        'schoolName' => $schoolName,
         'level' => $level,
-        'subjectId' => (string)($b['subjectId'] ?? ''),
-        'subjectName' => (string)($b['subjectName'] ?? ''),
+        'subjectId' => $subjId,
+        'subjectName' => $subjectName,
         'score' => $score,
+        'total' => $totalQuestions,
         'totalQuestions' => $totalQuestions,
         'percent' => $percent,
         'passed' => $passed,
@@ -520,9 +559,11 @@ if ($route === 'exam/submit' && $method === 'POST') {
     jsonOut([
         'result' => $resultRecord,
         'score' => $score,
+        'total' => $totalQuestions,
         'totalQuestions' => $totalQuestions,
         'percent' => $percent,
         'passed' => $passed,
+        'review' => $review,
         'details' => $details
     ]);
 }
@@ -530,14 +571,21 @@ if ($route === 'exam/submit' && $method === 'POST') {
 // Student Exam History
 if ($route === 'student/history' && $method === 'POST') {
     $b = getJsonBody();
-    $userId = trim((string)($b['userId'] ?? ''));
-    $email = strtolower(trim((string)($b['studentEmail'] ?? '')));
+    $tokenUser = getUserByToken($db, $b['token'] ?? null);
+    $userId = $tokenUser ? (string)$tokenUser['id'] : trim((string)($b['userId'] ?? ''));
+    $email = strtolower(trim((string)($tokenUser ? $tokenUser['email'] : ($b['studentEmail'] ?? ''))));
+    $name = strtolower(trim((string)($tokenUser ? $tokenUser['name'] : ($b['studentName'] ?? ''))));
 
     $matched = [];
     foreach ($db['results'] as $r) {
         $rUserId = trim((string)($r['userId'] ?? ''));
         $rEmail = strtolower(trim((string)($r['studentEmail'] ?? '')));
-        if (($userId !== '' && $rUserId === $userId) || ($email !== '' && $rEmail === $email)) {
+        $rName = strtolower(trim((string)($r['studentName'] ?? '')));
+        $isMatch = false;
+        if ($userId !== '' && $rUserId === $userId) $isMatch = true;
+        if ($email !== '' && $rEmail === $email) $isMatch = true;
+        if ($name !== '' && $rName === $name) $isMatch = true;
+        if ($isMatch) {
             $matched[] = $r;
         }
     }
@@ -548,15 +596,37 @@ if ($route === 'student/history' && $method === 'POST') {
 
     $count = count($matched);
     $totalScore = 0;
+    $passedCount = 0;
     $bestPercent = 0;
     foreach ($matched as $m) {
         $p = (int)($m['percent'] ?? 0);
         $totalScore += $p;
         if ($p > $bestPercent) $bestPercent = $p;
+        if ($p >= 50) $passedCount++;
     }
     $avgPercent = $count > 0 ? round($totalScore / $count) : 0;
+    $passRate = $count > 0 ? round(($passedCount / $count) * 100) : 0;
+
+    $recentResults = array_slice($matched, 0, 25);
+    $mappedRecent = [];
+    foreach ($recentResults as $r) {
+        $mappedRecent[] = [
+            'id' => $r['id'] ?? '',
+            'subjectName' => !empty($r['subjectName']) ? $r['subjectName'] : 'Trial Quiz',
+            'score' => (int)($r['score'] ?? 0),
+            'total' => (int)($r['total'] ?? ($r['totalQuestions'] ?? 0)),
+            'totalQuestions' => (int)($r['totalQuestions'] ?? ($r['total'] ?? 0)),
+            'percent' => (int)($r['percent'] ?? 0),
+            'submittedAt' => $r['createdAt'] ?? ($r['submittedAt'] ?? round(microtime(true) * 1000)),
+            'createdAt' => $r['createdAt'] ?? ($r['submittedAt'] ?? round(microtime(true) * 1000))
+        ];
+    }
 
     jsonOut([
+        'examsTaken' => $count,
+        'avgScore' => $avgPercent,
+        'passRate' => $passRate,
+        'recentResults' => $mappedRecent,
         'results' => $matched,
         'stats' => [
             'examsTaken' => $count,
@@ -1490,12 +1560,14 @@ if ($route === 'admin/candidates' && $method === 'POST') {
     foreach ($allCandidates as $u) {
         $uEmail = strtolower(trim((string)($u['email'] ?? '')));
         $uId = trim((string)($u['id'] ?? ''));
+        $uName = strtolower(trim((string)($u['name'] ?? '')));
 
         $userResults = [];
         foreach ($rawResults as $r) {
             $rUserId = trim((string)($r['userId'] ?? ''));
             $rEmail = strtolower(trim((string)($r['studentEmail'] ?? '')));
-            if (($uId !== '' && $rUserId === $uId) || ($uEmail !== '' && $rEmail === $uEmail)) {
+            $rName = strtolower(trim((string)($r['studentName'] ?? '')));
+            if (($uId !== '' && $rUserId === $uId) || ($uEmail !== '' && $rEmail === $uEmail) || ($uName !== '' && $rName === $uName)) {
                 $userResults[] = $r;
             }
         }
