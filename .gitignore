@@ -10,6 +10,8 @@ dist/
 
 # Local runtime databases
 **/data/*.json
+!**/data/seed.json
+!website/data/seed.json
 
 # Environment files
 .env

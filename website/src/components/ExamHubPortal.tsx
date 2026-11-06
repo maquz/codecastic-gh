@@ -3752,6 +3752,20 @@ function SubjectsAdmin({
 }) {
     const [name, setName] = useState('');
     const [adding, setAdding] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
+    const [search, setSearch] = useState('');
+
+    const handleRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await reloadSubjects();
+            flash(true, 'Subjects reloaded from server.');
+        } catch (err) {
+            flash(false, errMsg(err, 'Failed to reload subjects.'));
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     const add = async (e: FormEvent) => {
         e.preventDefault();
@@ -3766,11 +3780,11 @@ function SubjectsAdmin({
                 const filtered = prev.filter((s) => s.id !== addedSub.id && s.name.toLowerCase() !== addedSub.name.toLowerCase());
                 return [...filtered, addedSub].sort((a, b) => a.name.localeCompare(b.name));
             });
+            flash(true, `"${n}" added successfully.`);
             await reloadSubjects();
             if (res.data?.id) {
                 reloadQuestions();
             }
-            flash(true, `"${n}" added successfully.`);
         } catch (e2) {
             flash(false, errMsg(e2, 'Could not add subject.'));
         } finally {
@@ -3792,9 +3806,32 @@ function SubjectsAdmin({
         }
     };
 
+    const filteredSubjects = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        if (!q) return subjects;
+        return subjects.filter((s) => s.name.toLowerCase().includes(q));
+    }, [subjects, search]);
+
     return (
         <section className="rounded-xl border border-slate-200 bg-white p-5">
-            <h2 className="text-sm font-semibold text-slate-900">Subjects</h2>
+            <div className="flex items-center justify-between">
+                <div>
+                    <h2 className="text-sm font-semibold text-slate-900">
+                        Subjects ({subjects.length})
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Manage available subjects for all exams and tracks.</p>
+                </div>
+                <button
+                    type="button"
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50 transition"
+                    title="Reload subjects from server"
+                >
+                    <RotateCcw size={12} className={refreshing ? 'animate-spin text-[#364c83]' : ''} />
+                    {refreshing ? 'Refreshing...' : 'Refresh'}
+                </button>
+            </div>
             <form onSubmit={add} className="mt-3 flex gap-2">
                 <input
                     value={name}
@@ -3805,14 +3842,26 @@ function SubjectsAdmin({
                 <button
                     type="submit"
                     disabled={adding || !name.trim()}
-                    className="flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3.5 text-sm font-medium text-white hover:bg-[#1f2d57] disabled:opacity-50"
+                    className="flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3.5 text-sm font-medium text-white hover:bg-[#1f2d57] disabled:opacity-50 transition"
                 >
-                    <Plus size={15} />
+                    {adding ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
                     Add
                 </button>
             </form>
+            {subjects.length > 5 && (
+                <div className="relative mt-3">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                        type="text"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Filter subjects..."
+                        className="input pl-8 py-1.5 text-xs w-full"
+                    />
+                </div>
+            )}
             <div className="mt-4 divide-y divide-slate-100">
-                {subjects.map((s) => (
+                {filteredSubjects.map((s) => (
                     <div key={s.id} className="flex items-center justify-between py-2.5">
                         <span className="flex items-center gap-2.5 text-sm font-medium text-slate-900">
                             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
@@ -3833,7 +3882,11 @@ function SubjectsAdmin({
                         </button>
                     </div>
                 ))}
-                {subjects.length === 0 && <p className="py-3 text-sm text-slate-400">No subjects yet.</p>}
+                {filteredSubjects.length === 0 && (
+                    <p className="py-3 text-sm text-slate-400">
+                        {subjects.length === 0 ? 'No subjects yet.' : 'No matching subjects.'}
+                    </p>
+                )}
             </div>
         </section>
     );

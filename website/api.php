@@ -106,6 +106,44 @@ function getDb() {
         }
     }
 
+    // Deduplicate subjects by normalized name (case-insensitive)
+    $cleanSubjects = [];
+    $seenSubNames = [];
+    $idRemap = [];
+    $hasDupes = false;
+
+    foreach ($data['subjects'] as $s) {
+        $subId = (string)($s['id'] ?? '');
+        $subName = trim((string)($s['name'] ?? ''));
+        if ($subName === '') continue;
+        $norm = strtolower($subName);
+
+        if (!isset($seenSubNames[$norm])) {
+            $seenSubNames[$norm] = $subId;
+            $cleanSubjects[] = ['id' => $subId, 'name' => $subName];
+        } else {
+            $hasDupes = true;
+            $primaryId = $seenSubNames[$norm];
+            if ($subId !== $primaryId && $subId !== '') {
+                $idRemap[$subId] = $primaryId;
+            }
+        }
+    }
+
+    if ($hasDupes) {
+        $data['subjects'] = $cleanSubjects;
+        if (!empty($idRemap) && !empty($data['questions'])) {
+            foreach ($data['questions'] as &$q) {
+                $qSubj = $q['subjectId'] ?? '';
+                if (isset($idRemap[$qSubj])) {
+                    $q['subjectId'] = $idRemap[$qSubj];
+                }
+            }
+            unset($q);
+        }
+        saveDb($data, false);
+    }
+
     // Ensure all Professional Studies questions are routed to GTLE only
     $profStudiesSubjectIds = ['62b4e383-5d17-4489-a187-35d7423f2bba'];
     foreach ($data['subjects'] as $s) {
