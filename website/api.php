@@ -52,7 +52,7 @@ function getDb() {
     if (!is_array($data)) {
         $data = [];
     }
-    foreach (['subjects', 'questions', 'settings', 'users', 'sessions', 'results', 'messages'] as $key) {
+    foreach (['subjects', 'questions', 'settings', 'users', 'sessions', 'results', 'messages', 'schools'] as $key) {
         if (!isset($data[$key]) || !is_array($data[$key])) {
             $data[$key] = [];
         }
@@ -362,13 +362,20 @@ $PROMOTION_RANK_ITEMS = [
 // Auth & User Helpers
 // -------------------------------------------------------------
 function publicUser($u) {
+    $role = (string)($u['role'] ?? (($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student'));
     return [
         'id' => (string)($u['id'] ?? ''),
         'name' => (string)($u['name'] ?? ''),
         'email' => (string)($u['email'] ?? ''),
+        'role' => $role,
         'accountType' => ($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student',
+        'schoolId' => (string)($u['schoolId'] ?? ''),
         'schoolName' => (string)($u['schoolName'] ?? ''),
+        'schoolCode' => (string)($u['schoolCode'] ?? ''),
         'gradeLevel' => $u['gradeLevel'] ?? 4,
+        'classSection' => (string)($u['classSection'] ?? ''),
+        'assignedSubjects' => is_array($u['assignedSubjects'] ?? null) ? $u['assignedSubjects'] : [],
+        'assignedLevels' => is_array($u['assignedLevels'] ?? null) ? $u['assignedLevels'] : [],
         'region' => (string)($u['region'] ?? ''),
         'promotionRank' => (string)($u['promotionRank'] ?? '')
     ];
@@ -565,8 +572,23 @@ if (preg_match('#^exam/([^/]+)/([^/]+)$#', $route, $matches) && $method === 'GET
     if ($level === null) errorOut('Invalid level', 400);
 
     $allQs = [];
+    $isJhsOrBece = in_array((string)$level, ['7', '8', '9', 'BECE'], true);
+    $isShsOrWassce = in_array((string)$level, ['SHS 1', 'SHS 2', 'SHS 3', 'WASSCE', 'SHS'], true);
+
     foreach ($db['questions'] as $q) {
-        if (($q['subjectId'] ?? '') === $subjectId && ($q['level'] ?? '') == $level) {
+        if (($q['subjectId'] ?? '') !== $subjectId) continue;
+        $qLvl = (string)($q['level'] ?? '');
+        $match = false;
+        if ($qLvl == (string)$level) {
+            $match = true;
+        } elseif ($isJhsOrBece && $qLvl === 'BECE') {
+            // BECE mock/past questions are specifically accessible to Basic 7-9
+            $match = true;
+        } elseif ($isShsOrWassce && $qLvl === 'WASSCE') {
+            // WASSCE mock/past questions are specifically accessible to SHS 1-3
+            $match = true;
+        }
+        if ($match) {
             $allQs[] = $q;
         }
     }
@@ -712,7 +734,9 @@ if ($route === 'exam/submit' && $method === 'POST') {
         'userId' => $userId,
         'studentName' => $studentName,
         'studentEmail' => $studentEmail,
+        'schoolId' => $u ? (string)($u['schoolId'] ?? '') : (string)($b['schoolId'] ?? ''),
         'schoolName' => $schoolName,
+        'classSection' => $u ? (string)($u['classSection'] ?? '') : (string)($b['classSection'] ?? ''),
         'level' => $level,
         'subjectId' => $subjId,
         'subjectName' => $subjectName,
@@ -839,6 +863,26 @@ if ($route === 'auth/register' && $method === 'POST') {
         $gradeLevel = $parsedLevel;
     }
 
+    // Optional School linkage via schoolCode or selected school
+    $schoolId = trim((string)($b['schoolId'] ?? ''));
+    $schoolCode = trim((string)($b['schoolCode'] ?? ''));
+    $classSection = trim((string)($b['classSection'] ?? ''));
+
+    if (!empty($db['schools']) && is_array($db['schools'])) {
+        foreach ($db['schools'] as $sch) {
+            if ($schoolId !== '' && ($sch['id'] ?? '') === $schoolId) {
+                $schoolName = $sch['name'] ?? $schoolName;
+                $schoolCode = $sch['code'] ?? $schoolCode;
+                break;
+            } elseif ($schoolCode !== '' && (strcasecmp((string)($sch['code'] ?? ''), $schoolCode) === 0 || strcasecmp((string)($sch['name'] ?? ''), $schoolCode) === 0)) {
+                $schoolId = $sch['id'];
+                $schoolName = $sch['name'];
+                $schoolCode = $sch['code'];
+                break;
+            }
+        }
+    }
+
     foreach ($db['users'] as $u) {
         if (strtolower(trim((string)($u['email'] ?? ''))) === $email) {
             errorOut('An account with this email already exists. Please sign in.', 409);
@@ -853,9 +897,13 @@ if ($route === 'auth/register' && $method === 'POST') {
         'id' => $userId,
         'name' => $name,
         'email' => $email,
+        'role' => $accountType === 'ges-promo' ? 'ges-promo' : 'student',
         'accountType' => $accountType,
+        'schoolId' => $schoolId,
         'schoolName' => $schoolName,
+        'schoolCode' => $schoolCode,
         'gradeLevel' => $gradeLevel,
+        'classSection' => $classSection,
         'region' => $region,
         'promotionRank' => $promotionRank,
         'passwordPlain' => $password,
@@ -2419,5 +2467,745 @@ MANDATORY GHANAIAN DOMESTICATION & PEDAGOGY RULES:
     ]);
 }
 
+// -------------------------------------------------------------
+// School & Teacher Portal Endpoints
+// -------------------------------------------------------------
+
+// List all active schools (Public: used for student sign-up dropdown)
+if ($route === 'schools/list' && ($method === 'GET' || $method === 'POST')) {
+    $schools = [];
+    if (!empty($db['schools']) && is_array($db['schools'])) {
+        foreach ($db['schools'] as $s) {
+            $schools[] = [
+                'id' => (string)($s['id'] ?? ''),
+                'name' => (string)($s['name'] ?? ''),
+                'code' => (string)($s['code'] ?? ''),
+                'region' => (string)($s['region'] ?? ''),
+                'town' => (string)($s['town'] ?? ''),
+                'category' => (string)($s['category'] ?? 'Combined')
+            ];
+        }
+    }
+    usort($schools, function($a, $b) {
+        return strcasecmp($a['name'], $b['name']);
+    });
+    jsonOut(['schools' => $schools]);
+}
+
+// School Registration (creates School and School Admin account)
+if ($route === 'school/register' && $method === 'POST') {
+    $b = getJsonBody();
+    $name = trim((string)($b['schoolName'] ?? ''));
+    $code = strtoupper(trim((string)($b['schoolCode'] ?? '')));
+    $region = trim((string)($b['region'] ?? ''));
+    $town = trim((string)($b['town'] ?? ''));
+    $category = trim((string)($b['category'] ?? 'Combined'));
+    $adminName = trim((string)($b['adminName'] ?? 'Head of School'));
+    $email = strtolower(trim((string)($b['adminEmail'] ?? '')));
+    $password = (string)($b['adminPassword'] ?? '');
+
+    if ($name === '') errorOut('School name is required', 400);
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) errorOut('Enter a valid administrator email address', 400);
+    if (strlen($password) < 6) errorOut('Password must be at least 6 characters', 400);
+
+    // Auto-generate school code if empty
+    if ($code === '') {
+        $clean = preg_replace('/[^A-Za-z0-9]/', '', $name);
+        $prefix = strtoupper(substr($clean, 0, 4));
+        if (strlen($prefix) < 3) $prefix = 'SCH';
+        $code = $prefix . '-' . rand(100, 999);
+    }
+
+    // Ensure school code is unique
+    if (!empty($db['schools'])) {
+        foreach ($db['schools'] as $es) {
+            if (strcasecmp((string)($es['code'] ?? ''), $code) === 0) {
+                $code .= '-' . rand(10, 99);
+                break;
+            }
+        }
+    }
+
+    // Ensure admin email does not already exist
+    foreach ($db['users'] as $u) {
+        if (strtolower(trim((string)($u['email'] ?? ''))) === $email) {
+            errorOut('An account with this administrator email already exists. Please sign in.', 409);
+        }
+    }
+
+    $schoolId = generateUuid();
+    $now = round(microtime(true) * 1000);
+    $schoolRecord = [
+        'id' => $schoolId,
+        'name' => $name,
+        'code' => $code,
+        'region' => $region,
+        'town' => $town,
+        'category' => $category,
+        'adminEmail' => $email,
+        'createdAt' => $now
+    ];
+    $db['schools'][] = $schoolRecord;
+
+    $adminId = generateUuid();
+    $token = bin2hex(random_bytes(24));
+    $userRecord = [
+        'id' => $adminId,
+        'name' => $adminName,
+        'email' => $email,
+        'role' => 'school_admin',
+        'accountType' => 'school_admin',
+        'schoolId' => $schoolId,
+        'schoolName' => $name,
+        'schoolCode' => $code,
+        'gradeLevel' => 'ADMIN',
+        'passwordPlain' => $password,
+        'passwordHash' => password_hash($password, PASSWORD_BCRYPT),
+        'createdAt' => $now
+    ];
+    $db['users'][] = $userRecord;
+    $db['sessions'][] = [
+        'id' => generateUuid(),
+        'userId' => $adminId,
+        'token' => $token,
+        'createdAt' => $now
+    ];
+
+    saveDb($db);
+
+    jsonOut([
+        'ok' => true,
+        'token' => $token,
+        'school' => $schoolRecord,
+        'user' => publicUser($userRecord)
+    ], 201);
+}
+
+// School & Teacher Login
+if ($route === 'school/login' && $method === 'POST') {
+    $b = getJsonBody();
+    $email = strtolower(trim((string)($b['email'] ?? '')));
+    $password = (string)($b['password'] ?? '');
+
+    if ($email === '') errorOut('Email is required', 400);
+    if ($password === '') errorOut('Password is required', 400);
+
+    $matchedUser = null;
+    foreach ($db['users'] as $u) {
+        if (strtolower(trim((string)($u['email'] ?? ''))) === $email) {
+            $matchedUser = $u;
+            break;
+        }
+    }
+
+    if (!$matchedUser) {
+        errorOut('No account found with this email. Please check your credentials.', 401);
+    }
+
+    $valid = false;
+    if (!empty($matchedUser['passwordHash']) && password_verify($password, $matchedUser['passwordHash'])) {
+        $valid = true;
+    } elseif (isset($matchedUser['passwordPlain']) && $matchedUser['passwordPlain'] === $password) {
+        $valid = true;
+    }
+
+    if (!$valid) {
+        errorOut('Incorrect password. Please try again.', 401);
+    }
+
+    $role = (string)($matchedUser['role'] ?? '');
+    if ($role !== 'school_admin' && $role !== 'teacher' && $role !== 'admin') {
+        errorOut('This account is registered as a regular student. Please sign in via the Student Portal.', 403);
+    }
+
+    $school = null;
+    $sId = (string)($matchedUser['schoolId'] ?? '');
+    if ($sId !== '' && !empty($db['schools'])) {
+        foreach ($db['schools'] as $s) {
+            if (($s['id'] ?? '') === $sId) {
+                $school = $s;
+                break;
+            }
+        }
+    }
+
+    $token = bin2hex(random_bytes(24));
+    $now = round(microtime(true) * 1000);
+    $db['sessions'][] = [
+        'id' => generateUuid(),
+        'userId' => $matchedUser['id'],
+        'token' => $token,
+        'createdAt' => $now
+    ];
+    saveDb($db);
+
+    jsonOut([
+        'ok' => true,
+        'token' => $token,
+        'user' => publicUser($matchedUser),
+        'school' => $school
+    ]);
+}
+
+// Mount Teacher (POST /api/school/teachers/add)
+if ($route === 'school/teachers/add' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+        errorOut('Not authorised. School Administrator privileges required.', 403);
+    }
+
+    $schoolId = (string)($u['schoolId'] ?? ($b['schoolId'] ?? ''));
+    $schoolName = (string)($u['schoolName'] ?? '');
+    $schoolCode = (string)($u['schoolCode'] ?? '');
+
+    $name = trim((string)($b['name'] ?? ''));
+    $email = strtolower(trim((string)($b['email'] ?? '')));
+    $password = trim((string)($b['password'] ?? ''));
+    if ($password === '') $password = 'Teacher2026#';
+    $assignedSubjects = is_array($b['assignedSubjects'] ?? null) ? $b['assignedSubjects'] : [];
+    $assignedLevels = is_array($b['assignedLevels'] ?? null) ? $b['assignedLevels'] : [];
+    $classSections = is_array($b['classSections'] ?? null) ? $b['classSections'] : [];
+
+    if ($name === '') errorOut('Teacher full name is required', 400);
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) errorOut('Enter a valid teacher email address', 400);
+
+    foreach ($db['users'] as $eu) {
+        if (strtolower(trim((string)($eu['email'] ?? ''))) === $email) {
+            errorOut('An account with this email already exists in the system.', 409);
+        }
+    }
+
+    $teacherId = generateUuid();
+    $now = round(microtime(true) * 1000);
+    $teacherRecord = [
+        'id' => $teacherId,
+        'name' => $name,
+        'email' => $email,
+        'role' => 'teacher',
+        'accountType' => 'teacher',
+        'schoolId' => $schoolId,
+        'schoolName' => $schoolName,
+        'schoolCode' => $schoolCode,
+        'gradeLevel' => 'TEACHER',
+        'assignedSubjects' => $assignedSubjects,
+        'assignedLevels' => $assignedLevels,
+        'classSections' => $classSections,
+        'passwordPlain' => $password,
+        'passwordHash' => password_hash($password, PASSWORD_BCRYPT),
+        'createdAt' => $now
+    ];
+
+    $db['users'][] = $teacherRecord;
+    saveDb($db);
+
+    jsonOut([
+        'ok' => true,
+        'teacher' => publicUser($teacherRecord)
+    ], 201);
+}
+
+// List Teachers (GET or POST /api/school/teachers)
+if ($route === 'school/teachers' && ($method === 'GET' || $method === 'POST')) {
+    $b = getJsonBody();
+    $token = $b['token'] ?? ($_GET['token'] ?? null);
+    $u = getUserByToken($db, $token);
+    if (!$u) errorOut('Not authorised', 401);
+
+    $schoolId = (string)($u['schoolId'] ?? ($b['schoolId'] ?? ($_GET['schoolId'] ?? '')));
+    if ($schoolId === '') errorOut('School ID required', 400);
+
+    $teachers = [];
+    foreach ($db['users'] as $usr) {
+        if (($usr['schoolId'] ?? '') === $schoolId && ($usr['role'] ?? '') === 'teacher') {
+            $teachers[] = publicUser($usr);
+        }
+    }
+
+    usort($teachers, function($a, $b) {
+        return strcasecmp($a['name'], $b['name']);
+    });
+
+    jsonOut(['teachers' => $teachers]);
+}
+
+// Delete Teacher (POST /api/school/teachers/delete)
+if ($route === 'school/teachers/delete' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+        errorOut('Not authorised', 403);
+    }
+    $schoolId = (string)($u['schoolId'] ?? '');
+    $teacherId = trim((string)($b['teacherId'] ?? ''));
+
+    $db['users'] = array_values(array_filter($db['users'], function($usr) use ($teacherId, $schoolId) {
+        if (($usr['id'] ?? '') === $teacherId) {
+            return ($usr['schoolId'] ?? '') !== $schoolId;
+        }
+        return true;
+    }));
+    saveDb($db);
+    jsonOut(['ok' => true]);
+}
+
+// Mount Student - Single (POST /api/school/students/add)
+if ($route === 'school/students/add' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'teacher' && ($u['role'] ?? '') !== 'admin')) {
+        errorOut('Not authorised', 403);
+    }
+
+    $schoolId = (string)($u['schoolId'] ?? '');
+    $schoolName = (string)($u['schoolName'] ?? '');
+    $schoolCode = (string)($u['schoolCode'] ?? '');
+
+    $name = trim((string)($b['name'] ?? ''));
+    $email = strtolower(trim((string)($b['email'] ?? '')));
+    $password = trim((string)($b['password'] ?? ''));
+    if ($password === '') $password = 'Student2026#';
+    $gradeLevel = normLevel($b['gradeLevel'] ?? 4) ?? 4;
+    $classSection = trim((string)($b['classSection'] ?? ''));
+
+    if ($name === '') errorOut('Student name is required', 400);
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) errorOut('Enter a valid student email address', 400);
+
+    foreach ($db['users'] as $eu) {
+        if (strtolower(trim((string)($eu['email'] ?? ''))) === $email) {
+            errorOut('An account with this email already exists.', 409);
+        }
+    }
+
+    $studentId = generateUuid();
+    $now = round(microtime(true) * 1000);
+    $studentRecord = [
+        'id' => $studentId,
+        'name' => $name,
+        'email' => $email,
+        'role' => 'student',
+        'accountType' => 'student',
+        'schoolId' => $schoolId,
+        'schoolName' => $schoolName,
+        'schoolCode' => $schoolCode,
+        'gradeLevel' => $gradeLevel,
+        'classSection' => $classSection,
+        'passwordPlain' => $password,
+        'passwordHash' => password_hash($password, PASSWORD_BCRYPT),
+        'createdAt' => $now
+    ];
+
+    $db['users'][] = $studentRecord;
+    saveDb($db);
+
+    jsonOut(['ok' => true, 'student' => publicUser($studentRecord)], 201);
+}
+
+// Bulk Mount Students (POST /api/school/students/bulk)
+if ($route === 'school/students/bulk' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'teacher' && ($u['role'] ?? '') !== 'admin')) {
+        errorOut('Not authorised', 403);
+    }
+
+    $schoolId = (string)($u['schoolId'] ?? '');
+    $schoolName = (string)($u['schoolName'] ?? '');
+    $schoolCode = (string)($u['schoolCode'] ?? '');
+
+    $studentRows = is_array($b['students'] ?? null) ? $b['students'] : [];
+    if (empty($studentRows)) errorOut('No student records provided in payload', 400);
+
+    $existingEmails = [];
+    foreach ($db['users'] as $usr) {
+        if (!empty($usr['email'])) $existingEmails[strtolower(trim($usr['email']))] = true;
+    }
+
+    $now = round(microtime(true) * 1000);
+    $added = [];
+    $skipped = [];
+
+    foreach ($studentRows as $row) {
+        $name = trim((string)($row['name'] ?? ''));
+        $email = strtolower(trim((string)($row['email'] ?? '')));
+        $rawLevel = $row['gradeLevel'] ?? 4;
+        $lvl = normLevel($rawLevel) ?? 4;
+        $section = trim((string)($row['classSection'] ?? ''));
+        $pw = trim((string)($row['password'] ?? ''));
+        if ($pw === '') $pw = 'Student2026#';
+
+        if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $skipped[] = ['email' => $email, 'reason' => 'Invalid name or email'];
+            continue;
+        }
+
+        if (isset($existingEmails[$email])) {
+            $skipped[] = ['email' => $email, 'reason' => 'Email already registered'];
+            continue;
+        }
+
+        $sid = generateUuid();
+        $record = [
+            'id' => $sid,
+            'name' => $name,
+            'email' => $email,
+            'role' => 'student',
+            'accountType' => 'student',
+            'schoolId' => $schoolId,
+            'schoolName' => $schoolName,
+            'schoolCode' => $schoolCode,
+            'gradeLevel' => $lvl,
+            'classSection' => $section,
+            'passwordPlain' => $pw,
+            'passwordHash' => password_hash($pw, PASSWORD_BCRYPT),
+            'createdAt' => $now
+        ];
+
+        $db['users'][] = $record;
+        $existingEmails[$email] = true;
+        $added[] = publicUser($record);
+    }
+
+    if (!empty($added)) {
+        saveDb($db);
+    }
+
+    jsonOut([
+        'ok' => true,
+        'addedCount' => count($added),
+        'skippedCount' => count($skipped),
+        'added' => $added,
+        'skipped' => $skipped
+    ]);
+}
+
+// List School Students (GET or POST /api/school/students)
+if ($route === 'school/students' && ($method === 'GET' || $method === 'POST')) {
+    $b = getJsonBody();
+    $token = $b['token'] ?? ($_GET['token'] ?? null);
+    $u = getUserByToken($db, $token);
+    if (!$u) errorOut('Not authorised', 401);
+
+    $schoolId = (string)($u['schoolId'] ?? ($b['schoolId'] ?? ($_GET['schoolId'] ?? '')));
+    if ($schoolId === '') errorOut('School ID required', 400);
+
+    $studentExamsMap = [];
+    $studentScoresMap = [];
+    foreach ($db['results'] as $res) {
+        if (($res['schoolId'] ?? '') === $schoolId) {
+            $uid = (string)($res['userId'] ?? '');
+            if ($uid !== '') {
+                $studentExamsMap[$uid] = ($studentExamsMap[$uid] ?? 0) + 1;
+                $studentScoresMap[$uid][] = (float)($res['percent'] ?? 0);
+            }
+        }
+    }
+
+    $students = [];
+    foreach ($db['users'] as $usr) {
+        if (($usr['schoolId'] ?? '') === $schoolId && (($usr['role'] ?? '') === 'student' || ($usr['accountType'] ?? '') === 'student')) {
+            $pub = publicUser($usr);
+            $uid = $pub['id'];
+            $scores = $studentScoresMap[$uid] ?? [];
+            $pub['examsTaken'] = $studentExamsMap[$uid] ?? 0;
+            $pub['avgScore'] = count($scores) > 0 ? round(array_sum($scores) / count($scores)) : 0;
+            $students[] = $pub;
+        }
+    }
+
+    usort($students, function($a, $b) {
+        return strcasecmp($a['name'], $b['name']);
+    });
+
+    jsonOut(['students' => $students]);
+}
+
+// Delete Student (POST /api/school/students/delete)
+if ($route === 'school/students/delete' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+        errorOut('Not authorised', 403);
+    }
+    $schoolId = (string)($u['schoolId'] ?? '');
+    $studentId = trim((string)($b['studentId'] ?? ''));
+
+    $db['users'] = array_values(array_filter($db['users'], function($usr) use ($studentId, $schoolId) {
+        if (($usr['id'] ?? '') === $studentId) {
+            return ($usr['schoolId'] ?? '') !== $schoolId;
+        }
+        return true;
+    }));
+    saveDb($db);
+    jsonOut(['ok' => true]);
+}
+
+// School-wide Performance Analytics (POST /api/school/performance)
+if ($route === 'school/performance' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+        errorOut('Not authorised', 403);
+    }
+
+    $schoolId = (string)($u['schoolId'] ?? ($b['schoolId'] ?? ''));
+    if ($schoolId === '') errorOut('School ID required', 400);
+
+    $studentCount = 0;
+    $teacherCount = 0;
+    foreach ($db['users'] as $usr) {
+        if (($usr['schoolId'] ?? '') === $schoolId) {
+            if (($usr['role'] ?? '') === 'teacher') $teacherCount++;
+            elseif (($usr['role'] ?? '') === 'student' || ($usr['accountType'] ?? '') === 'student') $studentCount++;
+        }
+    }
+
+    $schoolResults = [];
+    $subjectStats = [];
+    $levelStats = [];
+    $totalExams = 0;
+    $totalPassed = 0;
+    $allPercents = [];
+
+    foreach ($db['results'] as $res) {
+        if (($res['schoolId'] ?? '') === $schoolId) {
+            $totalExams++;
+            $pct = (float)($res['percent'] ?? 0);
+            $allPercents[] = $pct;
+            if (!empty($res['passed']) || $pct >= 50) $totalPassed++;
+
+            $sName = (string)($res['subjectName'] ?? 'General');
+            if (!isset($subjectStats[$sName])) {
+                $subjectStats[$sName] = ['subjectName' => $sName, 'examsCount' => 0, 'totalPercent' => 0, 'passedCount' => 0];
+            }
+            $subjectStats[$sName]['examsCount']++;
+            $subjectStats[$sName]['totalPercent'] += $pct;
+            if (!empty($res['passed']) || $pct >= 50) $subjectStats[$sName]['passedCount']++;
+
+            $lvl = (string)($res['level'] ?? 'Other');
+            $lvlLabel = is_numeric($lvl) ? "Basic $lvl" : $lvl;
+            if (!isset($levelStats[$lvlLabel])) {
+                $levelStats[$lvlLabel] = ['levelLabel' => $lvlLabel, 'examsCount' => 0, 'totalPercent' => 0, 'passedCount' => 0];
+            }
+            $levelStats[$lvlLabel]['examsCount']++;
+            $levelStats[$lvlLabel]['totalPercent'] += $pct;
+            if (!empty($res['passed']) || $pct >= 50) $levelStats[$lvlLabel]['passedCount']++;
+
+            $schoolResults[] = [
+                'id' => $res['id'] ?? '',
+                'studentName' => $res['studentName'] ?? 'Student',
+                'studentEmail' => $res['studentEmail'] ?? '',
+                'classSection' => $res['classSection'] ?? '',
+                'level' => $res['level'] ?? '',
+                'subjectName' => $res['subjectName'] ?? '',
+                'score' => $res['score'] ?? 0,
+                'total' => $res['total'] ?? 0,
+                'percent' => $pct,
+                'passed' => !empty($res['passed']) || $pct >= 50,
+                'createdAt' => $res['createdAt'] ?? 0
+            ];
+        }
+    }
+
+    usort($schoolResults, function($a, $b) {
+        return ($b['createdAt'] ?? 0) <=> ($a['createdAt'] ?? 0);
+    });
+
+    $subjectBreakdown = [];
+    foreach ($subjectStats as $item) {
+        $cnt = $item['examsCount'];
+        $subjectBreakdown[] = [
+            'subjectName' => $item['subjectName'],
+            'examsCount' => $cnt,
+            'avgPercent' => $cnt > 0 ? round($item['totalPercent'] / $cnt) : 0,
+            'passRate' => $cnt > 0 ? round(($item['passedCount'] / $cnt) * 100) : 0
+        ];
+    }
+    usort($subjectBreakdown, function($a, $b) {
+        return $b['examsCount'] <=> $a['examsCount'];
+    });
+
+    $levelBreakdown = [];
+    foreach ($levelStats as $item) {
+        $cnt = $item['examsCount'];
+        $levelBreakdown[] = [
+            'levelLabel' => $item['levelLabel'],
+            'examsCount' => $cnt,
+            'avgPercent' => $cnt > 0 ? round($item['totalPercent'] / $cnt) : 0,
+            'passRate' => $cnt > 0 ? round(($item['passedCount'] / $cnt) * 100) : 0
+        ];
+    }
+
+    $overallAvg = count($allPercents) > 0 ? round(array_sum($allPercents) / count($allPercents)) : 0;
+    $overallPassRate = $totalExams > 0 ? round(($totalPassed / $totalExams) * 100) : 0;
+
+    jsonOut([
+        'ok' => true,
+        'studentCount' => $studentCount,
+        'teacherCount' => $teacherCount,
+        'totalExams' => $totalExams,
+        'overallAvg' => $overallAvg,
+        'overallPassRate' => $overallPassRate,
+        'subjectBreakdown' => $subjectBreakdown,
+        'levelBreakdown' => $levelBreakdown,
+        'recentResults' => array_slice($schoolResults, 0, 100)
+    ]);
+}
+
+// Subject Teacher Performance Analytics (POST /api/teacher/performance)
+if ($route === 'teacher/performance' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || (($u['role'] ?? '') !== 'teacher' && ($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+        errorOut('Not authorised. Teacher account required.', 403);
+    }
+
+    $schoolId = (string)($u['schoolId'] ?? '');
+    $assignedSubjects = is_array($u['assignedSubjects'] ?? null) ? $u['assignedSubjects'] : [];
+    $assignedLevels = is_array($u['assignedLevels'] ?? null) ? $u['assignedLevels'] : [];
+    $classSections = is_array($u['classSections'] ?? null) ? $u['classSections'] : [];
+
+    $normSubjs = array_map(function($s) { return strtolower(trim((string)$s)); }, $assignedSubjects);
+    $normLvls = array_map(function($l) {
+        $s = strtolower(trim((string)$l));
+        $s = str_replace('basic ', '', $s);
+        return $s;
+    }, $assignedLevels);
+
+    $myStudents = [];
+    $myStudentIds = [];
+    foreach ($db['users'] as $usr) {
+        if (($usr['schoolId'] ?? '') === $schoolId && (($usr['role'] ?? '') === 'student' || ($usr['accountType'] ?? '') === 'student')) {
+            $studentLvl = strtolower(trim((string)($usr['gradeLevel'] ?? '')));
+            $studentSec = trim((string)($usr['classSection'] ?? ''));
+
+            $levelMatch = empty($normLvls) || in_array($studentLvl, $normLvls, true);
+            $sectionMatch = empty($classSections) || in_array($studentSec, $classSections, true);
+
+            if ($levelMatch || $sectionMatch) {
+                $pub = publicUser($usr);
+                $myStudents[] = $pub;
+                $myStudentIds[$pub['id']] = true;
+            }
+        }
+    }
+
+    $teacherResults = [];
+    $totalExams = 0;
+    $totalPassed = 0;
+    $allPercents = [];
+    $questionMissCounts = [];
+    $classBreakdownMap = [];
+
+    foreach ($db['results'] as $res) {
+        if (($res['schoolId'] ?? '') !== $schoolId) continue;
+
+        $rSubj = strtolower(trim((string)($res['subjectName'] ?? '')));
+        $rSubjId = (string)($res['subjectId'] ?? '');
+        $rLvl = strtolower(trim((string)($res['level'] ?? '')));
+        $rLvlClean = str_replace('basic ', '', $rLvl);
+        $rUserId = (string)($res['userId'] ?? '');
+
+        $subjectMatch = empty($normSubjs);
+        if (!$subjectMatch) {
+            foreach ($normSubjs as $as) {
+                if ($as !== '' && (strpos($rSubj, $as) !== false || $rSubjId === $as)) {
+                    $subjectMatch = true;
+                    break;
+                }
+            }
+        }
+        if (!$subjectMatch) continue;
+
+        $levelMatch = empty($normLvls) || in_array($rLvlClean, $normLvls, true) || isset($myStudentIds[$rUserId]);
+        if (!$levelMatch) continue;
+
+        $pct = (float)($res['percent'] ?? 0);
+        $passed = !empty($res['passed']) || $pct >= 50;
+        $totalExams++;
+        $allPercents[] = $pct;
+        if ($passed) $totalPassed++;
+
+        $cKey = is_numeric($res['level'] ?? '') ? 'Basic ' . $res['level'] : (string)($res['level'] ?? 'General');
+        if (!empty($res['classSection'])) $cKey .= ' (' . $res['classSection'] . ')';
+        if (!isset($classBreakdownMap[$cKey])) {
+            $classBreakdownMap[$cKey] = ['classLabel' => $cKey, 'examsCount' => 0, 'totalPercent' => 0, 'passedCount' => 0];
+        }
+        $classBreakdownMap[$cKey]['examsCount']++;
+        $classBreakdownMap[$cKey]['totalPercent'] += $pct;
+        if ($passed) $classBreakdownMap[$cKey]['passedCount']++;
+
+        if (!empty($res['details']) && is_array($res['details'])) {
+            foreach ($res['details'] as $det) {
+                $qid = (string)($det['questionId'] ?? ($det['id'] ?? ''));
+                $isCor = !empty($det['isCorrect']) || !empty($det['correct']);
+                if (!$isCor && $qid !== '') {
+                    if (!isset($questionMissCounts[$qid])) {
+                        $questionMissCounts[$qid] = [
+                            'questionId' => $qid,
+                            'text' => $det['text'] ?? '',
+                            'missCount' => 0,
+                            'explanation' => $det['explanation'] ?? ''
+                        ];
+                    }
+                    $questionMissCounts[$qid]['missCount']++;
+                }
+            }
+        }
+
+        $teacherResults[] = [
+            'id' => $res['id'] ?? '',
+            'studentName' => $res['studentName'] ?? 'Student',
+            'studentEmail' => $res['studentEmail'] ?? '',
+            'classSection' => $res['classSection'] ?? '',
+            'level' => $res['level'] ?? '',
+            'subjectName' => $res['subjectName'] ?? '',
+            'score' => $res['score'] ?? 0,
+            'total' => $res['total'] ?? 0,
+            'percent' => $pct,
+            'passed' => $passed,
+            'details' => $res['details'] ?? [],
+            'createdAt' => $res['createdAt'] ?? 0
+        ];
+    }
+
+    usort($teacherResults, function($a, $b) {
+        return ($b['createdAt'] ?? 0) <=> ($a['createdAt'] ?? 0);
+    });
+
+    $classBreakdown = [];
+    foreach ($classBreakdownMap as $item) {
+        $cnt = $item['examsCount'];
+        $classBreakdown[] = [
+            'classLabel' => $item['classLabel'],
+            'examsCount' => $cnt,
+            'avgPercent' => $cnt > 0 ? round($item['totalPercent'] / $cnt) : 0,
+            'passRate' => $cnt > 0 ? round(($item['passedCount'] / $cnt) * 100) : 0
+        ];
+    }
+
+    $topMissedQuestions = array_values($questionMissCounts);
+    usort($topMissedQuestions, function($a, $b) {
+        return $b['missCount'] <=> $a['missCount'];
+    });
+
+    $overallAvg = count($allPercents) > 0 ? round(array_sum($allPercents) / count($allPercents)) : 0;
+    $overallPassRate = $totalExams > 0 ? round(($totalPassed / $totalExams) * 100) : 0;
+
+    jsonOut([
+        'ok' => true,
+        'teacher' => publicUser($u),
+        'myStudentsCount' => count($myStudents),
+        'totalExams' => $totalExams,
+        'overallAvg' => $overallAvg,
+        'overallPassRate' => $overallPassRate,
+        'classBreakdown' => $classBreakdown,
+        'studentRoster' => $myStudents,
+        'results' => array_slice($teacherResults, 0, 100),
+        'topMissedQuestions' => array_slice($topMissedQuestions, 0, 10)
+    ]);
+}
+
 // Fallback: 404 for unknown API route
 errorOut("Route not found: $method /api/$route", 404);
+

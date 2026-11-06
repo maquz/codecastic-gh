@@ -11,34 +11,18 @@ export const TRACKS: Track[] = [
     {
         slug: 'basic',
         code: null,
-        label: 'Basic 4 to 9',
-        title: 'Basic 4 to 9: end-of-term and end-of-year exams',
-        lead: 'Multiple choice exams for every class from Basic 4 to Basic 9.',
-        about: 'Choose your class level and you will only see questions for that level. Answer at your own pace, then get your score and an explanation for every question.',
-    },
-    {
-        slug: 'bece',
-        code: 'BECE',
-        label: 'BECE',
-        title: 'BECE practice',
-        lead: 'Basic Education Certificate Examination.',
-        about: 'The BECE is the national examination taken at the end of junior high school. Practise by subject, see your score straight away and read the explanation for every answer.',
+        label: 'Basic 4 to 9 (BECE)',
+        title: 'Basic 4 to 9 & BECE Exams',
+        lead: 'Multiple choice exams for Basic 4 to 9, with comprehensive BECE preparation for Basic 7 to 9.',
+        about: 'Progress through class levels from Basic 4 to Basic 9. Learners in Basic 7, 8, and 9 can also take full national BECE past question and mock exam series.',
     },
     {
         slug: 'shs',
         code: 'SHS',
-        label: 'SHS 1 - 3',
-        title: 'SHS 1 - 3: Senior High School end-of-term and mock exams',
-        lead: 'Multiple choice exams for every Senior High School form from SHS 1 to SHS 3.',
-        about: 'Choose your SHS form (SHS 1, SHS 2, or SHS 3) and you will only see questions for that level. Answer at your own pace, then get your score and an explanation for every question.',
-    },
-    {
-        slug: 'wassce',
-        code: 'WASSCE',
-        label: 'WASSCE',
-        title: 'WASSCE practice',
-        lead: 'West African Senior School Certificate Examination.',
-        about: 'The WASSCE is the examination taken at the end of senior high school. Practise by subject, see your score straight away and read the explanation for every answer.',
+        label: 'WASSCE (SHS 1 - 3)',
+        title: 'WASSCE (SHS 1 - 3): End-of-Term & WASSCE Practice',
+        lead: 'Multiple choice exams for Senior High School forms SHS 1 to SHS 3, including WASSCE practice.',
+        about: 'Choose your SHS form (SHS 1, SHS 2, or SHS 3) to practise end-of-term exams and national WASSCE questions.',
     },
     {
         slug: 'gtle',
@@ -57,3 +41,9 @@ export const TRACKS: Track[] = [
         about: 'Work through professional knowledge and classroom practice questions, see your score straight away and read the explanation for each answer.',
     },
 ];
+
+export function findTrack(slug: string): Track | undefined {
+    if (slug === 'bece') return TRACKS.find((t) => t.slug === 'basic');
+    if (slug === 'wassce') return TRACKS.find((t) => t.slug === 'shs');
+    return TRACKS.find((t) => t.slug === slug);
+}

@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { api } from '@appdeploy/client';
 import { TRACKS } from '../exams';
 import { navigate } from '../ui';
+import { SchoolAuthModal, SchoolAdminPortalView, TeacherPortalView } from './SchoolTeacherPortal';
 import {
     GraduationCap,
     BookOpen,
@@ -57,16 +58,18 @@ import {
     Pause,
     Play,
     StopCircle,
+    Copy,
+    Check,
 } from 'lucide-react';
 
 export type Level = number | string;
 
 export const TRACK_NAMES: Record<string, string> = {
     'ges-promotion': 'GES Promotion Exams',
-    'basic': 'Basic 4 to 9 Exams',
-    'bece': 'BECE Examination Hub',
-    'shs': 'SHS 1 - 3 Exams',
-    'wassce': 'WASSCE Examination Hub',
+    'basic': 'Basic 4 to 9 (BECE)',
+    'bece': 'Basic 4 to 9 (BECE)',
+    'shs': 'WASSCE (SHS 1 - 3)',
+    'wassce': 'WASSCE (SHS 1 - 3)',
     'gtle': 'GTLE (Teacher Licensure) Exams',
 };
 
@@ -166,8 +169,14 @@ type StudentUser = {
     id: string;
     name: string;
     email: string;
-    accountType?: 'student' | 'ges-promo';
+    role?: 'student' | 'teacher' | 'school_admin' | 'ges-promo' | 'admin';
+    accountType?: 'student' | 'ges-promo' | 'teacher' | 'school_admin';
+    schoolId?: string;
     schoolName: string;
+    schoolCode?: string;
+    classSection?: string;
+    assignedSubjects?: string[];
+    assignedLevels?: (string | number)[];
     gradeLevel: Level;
     region?: string;
     promotionRank?: string;
@@ -240,15 +249,19 @@ function errMsg(e: any, fallback: string): string {
 
 function slugForUser(u: StudentUser): string {
     if (u.accountType === 'ges-promo' || u.gradeLevel === 'GES-PROMO') return 'ges-promotion';
-    if (u.gradeLevel === 'BECE') return 'bece';
+    if (u.gradeLevel === 'BECE') return 'basic';
     if (u.gradeLevel === 'SHS' || SHS_LEVELS.includes(String(u.gradeLevel))) return 'shs';
-    if (u.gradeLevel === 'WASSCE') return 'wassce';
+    if (u.gradeLevel === 'WASSCE') return 'shs';
     if (u.gradeLevel === 'GTLE') return 'gtle';
     return 'basic';
 }
 
 function userMatchesSection(u: StudentUser, activeSlug: string): boolean {
-    return slugForUser(u) === activeSlug;
+    const userSlug = slugForUser(u);
+    if (userSlug === activeSlug) return true;
+    if (userSlug === 'basic' && activeSlug === 'bece') return true;
+    if (userSlug === 'shs' && activeSlug === 'wassce') return true;
+    return false;
 }
 
 function SubjectIcon({ name, size = 20 }: { name: string; size?: number }) {
@@ -310,7 +323,7 @@ export function FormattedQuestionText({
     );
 }
 
-type Tab = 'student' | 'admin';
+type Tab = 'student' | 'admin' | 'school' | 'teacher';
 
 export default function ExamHubPortal({
     activeSlug,
@@ -325,6 +338,7 @@ export default function ExamHubPortal({
     const [user, setUser] = useState<StudentUser | null>(null);
     const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) || '');
     const [checkingAuth, setCheckingAuth] = useState<boolean>(true);
+    const [showSchoolAuthModal, setShowSchoolAuthModal] = useState<boolean>(false);
     const isGesPromoSection = activeSlug === 'ges-promotion' || initialLevel === 'GES-PROMO';
 
     useEffect(() => {
@@ -335,8 +349,14 @@ export default function ExamHubPortal({
         }
         api.post('/api/auth/me', { token: saved })
             .then((r) => {
-                setUser(r.data.user);
+                const u = r.data.user;
+                setUser(u);
                 setToken(saved);
+                if (u?.role === 'school_admin') {
+                    setTab('school');
+                } else if (u?.role === 'teacher') {
+                    setTab('teacher');
+                }
             })
             .catch(() => {
                 localStorage.removeItem(TOKEN_KEY);
@@ -350,9 +370,15 @@ export default function ExamHubPortal({
         localStorage.setItem(TOKEN_KEY, newToken);
         setUser(newUser);
         setToken(newToken);
-        const targetSlug = slugForUser(newUser);
-        if (targetSlug !== activeSlug) {
-            navigate(`/exams/${targetSlug}`);
+        if (newUser.role === 'school_admin') {
+            setTab('school');
+        } else if (newUser.role === 'teacher') {
+            setTab('teacher');
+        } else {
+            const targetSlug = slugForUser(newUser);
+            if (targetSlug !== activeSlug) {
+                navigate(`/exams/${targetSlug}`);
+            }
         }
     };
 
@@ -426,19 +452,64 @@ export default function ExamHubPortal({
                             </div>
                         )}
 
-                        <nav className="flex gap-1 rounded-lg bg-slate-100 p-1" aria-label="Portal mode">
-                            {(['student', 'admin'] as Tab[]).map((t) => (
+                        <nav className="flex items-center gap-1 rounded-lg bg-slate-100 p-1" aria-label="Portal mode">
+                            <button
+                                type="button"
+                                onClick={() => setTab('student')}
+                                className={`rounded-md px-3 py-1.5 text-xs sm:text-sm font-semibold capitalize transition ${
+                                    tab === 'student' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                                }`}
+                            >
+                                Student Portal
+                            </button>
+
+                            {user?.role === 'school_admin' && (
                                 <button
-                                    key={t}
                                     type="button"
-                                    onClick={() => setTab(t)}
-                                    className={`rounded-md px-3.5 py-1.5 text-sm font-medium capitalize transition ${
-                                        tab === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                                    onClick={() => setTab('school')}
+                                    className={`rounded-md px-3 py-1.5 text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 ${
+                                        tab === 'school' ? 'bg-[#364c83] text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
                                     }`}
                                 >
-                                    {t}
+                                    <School size={13} />
+                                    School Admin
                                 </button>
-                            ))}
+                            )}
+
+                            {user?.role === 'teacher' && (
+                                <button
+                                    type="button"
+                                    onClick={() => setTab('teacher')}
+                                    className={`rounded-md px-3 py-1.5 text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 ${
+                                        tab === 'teacher' ? 'bg-[#364c83] text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                >
+                                    <UserCheck size={13} />
+                                    Teacher Portal
+                                </button>
+                            )}
+
+                            {(!user || (user.role !== 'school_admin' && user.role !== 'teacher')) && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSchoolAuthModal(true)}
+                                    className="rounded-md px-3 py-1.5 text-xs sm:text-sm font-semibold text-slate-600 hover:text-[#364c83] transition flex items-center gap-1.5"
+                                    title="School Head & Subject Teacher Portal"
+                                >
+                                    <School size={13} />
+                                    Schools &amp; Teachers
+                                </button>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={() => setTab('admin')}
+                                className={`rounded-md px-3 py-1.5 text-xs sm:text-sm font-semibold capitalize transition ${
+                                    tab === 'admin' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                                }`}
+                            >
+                                Super Admin
+                            </button>
                         </nav>
                     </div>
                 </div>
@@ -507,9 +578,79 @@ export default function ExamHubPortal({
                 </div>
             </header>
 
-            <main className={`mx-auto w-full min-w-0 flex-1 px-4 py-8 sm:px-6 max-w-full ${tab === 'admin' ? 'max-w-6xl' : 'max-w-4xl'}`}>
+            <main className={`mx-auto w-full min-w-0 flex-1 px-4 py-8 sm:px-6 max-w-full ${tab === 'admin' || tab === 'school' || tab === 'teacher' ? 'max-w-6xl' : 'max-w-4xl'}`}>
                 {tab === 'admin' ? (
                     <AdminView />
+                ) : tab === 'school' ? (
+                    user && user.role === 'school_admin' ? (
+                        <SchoolAdminPortalView
+                            user={user}
+                            token={token}
+                            onLogout={handleStudentLogout}
+                            onSwitchToStudent={() => setTab('student')}
+                        />
+                    ) : (
+                        <div className="mx-auto max-w-md py-12 text-center bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
+                            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#364c83]/10 text-[#364c83] mb-4">
+                                <School size={28} />
+                            </div>
+                            <h2 className="text-xl font-bold text-slate-900">School Admin Portal</h2>
+                            <p className="mt-2 text-sm text-slate-600">
+                                Mount your school, provision subject teachers and students, and monitor test performance school-wide.
+                            </p>
+                            <div className="mt-6 flex flex-col gap-2.5">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSchoolAuthModal(true)}
+                                    className="w-full rounded-xl bg-[#364c83] py-3 text-sm font-bold text-white shadow-sm hover:bg-[#1f2d57] transition"
+                                >
+                                    Sign In or Mount School
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setTab('student')}
+                                    className="w-full rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+                                >
+                                    Back to Student Portal
+                                </button>
+                            </div>
+                        </div>
+                    )
+                ) : tab === 'teacher' ? (
+                    user && user.role === 'teacher' ? (
+                        <TeacherPortalView
+                            user={user}
+                            token={token}
+                            onLogout={handleStudentLogout}
+                            onSwitchToStudent={() => setTab('student')}
+                        />
+                    ) : (
+                        <div className="mx-auto max-w-md py-12 text-center bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
+                            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#364c83]/10 text-[#364c83] mb-4">
+                                <UserCheck size={28} />
+                            </div>
+                            <h2 className="text-xl font-bold text-slate-900">Subject Teacher Portal</h2>
+                            <p className="mt-2 text-sm text-slate-600">
+                                Track your students' test attempts, review individual question answers, diagnose weak topics, and export gradebook records.
+                            </p>
+                            <div className="mt-6 flex flex-col gap-2.5">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSchoolAuthModal(true)}
+                                    className="w-full rounded-xl bg-[#364c83] py-3 text-sm font-bold text-white shadow-sm hover:bg-[#1f2d57] transition"
+                                >
+                                    Sign In as Subject Teacher
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setTab('student')}
+                                    className="w-full rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+                                >
+                                    Back to Student Portal
+                                </button>
+                            </div>
+                        </div>
+                    )
                 ) : checkingAuth ? (
                     <div className="flex items-center justify-center gap-2 py-24 text-slate-400">
                         <Loader2 className="animate-spin" size={18} />
@@ -520,6 +661,7 @@ export default function ExamHubPortal({
                         key={`${activeSlug}-auth`}
                         isGesPromo={isGesPromoSection}
                         initialLevel={initialLevel}
+                        activeSlug={activeSlug}
                         onAuthenticated={handleAuthenticated}
                     />
                 ) : (
@@ -530,6 +672,11 @@ export default function ExamHubPortal({
                     />
                 )}
             </main>
+            <SchoolAuthModal
+                isOpen={showSchoolAuthModal}
+                onClose={() => setShowSchoolAuthModal(false)}
+                onAuthenticated={handleAuthenticated}
+            />
         </div>
     );
 }
@@ -541,16 +688,21 @@ export default function ExamHubPortal({
 function StudentAuthView({
     isGesPromo,
     initialLevel,
+    activeSlug,
     onAuthenticated,
 }: {
     isGesPromo: boolean;
     initialLevel: Level | null;
+    activeSlug?: string;
     onAuthenticated: (u: StudentUser, token: string) => void;
 }) {
+    const isShsTrack = activeSlug === 'shs' || initialLevel === 'SHS';
     const [mode, setMode] = useState<'login' | 'register' | 'recover'>('login');
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
-    const [gradeLevel, setGradeLevel] = useState<Level>(initialLevel === 'SHS' ? 'SHS 1' : initialLevel ?? 4);
+    const [schoolCode, setSchoolCode] = useState('');
+    const [classSection, setClassSection] = useState('');
+    const [gradeLevel, setGradeLevel] = useState<Level>(isShsTrack ? 'SHS 1' : initialLevel && initialLevel !== 'basic' ? initialLevel : 4);
     const [region, setRegion] = useState('');
     const [promotionRank, setPromotionRank] = useState('');
     const [password, setPassword] = useState('');
@@ -569,8 +721,8 @@ function StudentAuthView({
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
-        setGradeLevel(initialLevel === 'SHS' ? 'SHS 1' : initialLevel ?? 4);
-    }, [initialLevel]);
+        setGradeLevel(isShsTrack ? 'SHS 1' : initialLevel && initialLevel !== 'basic' ? initialLevel : 4);
+    }, [initialLevel, isShsTrack]);
 
     const switchMode = (nextMode: 'login' | 'register' | 'recover') => {
         setMode(nextMode);
@@ -600,6 +752,8 @@ function StudentAuthView({
                           name: name.trim(),
                           email: email.trim(),
                           gradeLevel,
+                          schoolCode: schoolCode.trim() || undefined,
+                          classSection: classSection.trim() || undefined,
                           password,
                       };
                 const res = await api.post('/api/auth/register', payload);
@@ -1105,39 +1259,59 @@ function StudentAuthView({
                             </Field>
 
                             {mode === 'register' && (
-                                <Field label="Grade / Exam Level">
-                                    {initialLevel === 'SHS' ? (
-                                        <select
-                                            value={String(gradeLevel)}
-                                            onChange={(e) => setGradeLevel(parseLevel(e.target.value))}
-                                            className="input"
-                                        >
-                                            {SHS_LEVELS.map((lvl) => (
-                                                <option key={lvl} value={lvl}>
-                                                    {lvl}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    ) : initialLevel ? (
-                                        <input
-                                            readOnly
-                                            value={levelLabel(initialLevel)}
-                                            className="input bg-slate-50 font-semibold text-[#364c83]"
-                                        />
-                                    ) : (
-                                        <select
-                                            value={String(gradeLevel)}
-                                            onChange={(e) => setGradeLevel(parseLevel(e.target.value))}
-                                            className="input"
-                                        >
-                                            {SCHOOL_LEVELS.map((lvl) => (
-                                                <option key={lvl} value={String(lvl)}>
-                                                    Basic {lvl}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    )}
-                                </Field>
+                                <>
+                                    <Field label="Grade / Exam Level">
+                                        {isShsTrack ? (
+                                            <select
+                                                value={String(gradeLevel)}
+                                                onChange={(e) => setGradeLevel(parseLevel(e.target.value))}
+                                                className="input"
+                                            >
+                                                <option value="SHS 1">SHS 1</option>
+                                                <option value="SHS 2">SHS 2</option>
+                                                <option value="SHS 3">SHS 3 (WASSCE Candidate)</option>
+                                            </select>
+                                        ) : initialLevel && typeof initialLevel === 'string' && initialLevel !== 'basic' && initialLevel !== 'shs' ? (
+                                            <input
+                                                readOnly
+                                                value={levelLabel(initialLevel)}
+                                                className="input bg-slate-50 font-semibold text-[#364c83]"
+                                            />
+                                        ) : (
+                                            <select
+                                                value={String(gradeLevel)}
+                                                onChange={(e) => setGradeLevel(parseLevel(e.target.value))}
+                                                className="input"
+                                            >
+                                                <option value="4">Basic 4 (Lower Primary)</option>
+                                                <option value="5">Basic 5 (Upper Primary)</option>
+                                                <option value="6">Basic 6 (Upper Primary)</option>
+                                                <option value="7">Basic 7 (JHS 1 / BECE)</option>
+                                                <option value="8">Basic 8 (JHS 2 / BECE)</option>
+                                                <option value="9">Basic 9 (JHS 3 / BECE Candidate)</option>
+                                            </select>
+                                        )}
+                                    </Field>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <Field label="School Code / Name (Optional)">
+                                            <input
+                                                value={schoolCode}
+                                                onChange={(e) => setSchoolCode(e.target.value)}
+                                                placeholder="e.g. SCH-XXXX or School name"
+                                                className="input"
+                                            />
+                                        </Field>
+                                        <Field label="Class / Section (Optional)">
+                                            <input
+                                                value={classSection}
+                                                onChange={(e) => setClassSection(e.target.value)}
+                                                placeholder="e.g. Basic 7A or Form 2 Green"
+                                                className="input"
+                                            />
+                                        </Field>
+                                    </div>
+                                </>
                             )}
 
                             <div>
@@ -3235,31 +3409,17 @@ function AdminTimers({
         },
         {
             slug: 'basic',
-            label: 'Basic School (Basic 4 to 9)',
+            label: 'Basic 4 to 9 (BECE)',
             badge: 'Primary & JHS',
-            desc: 'End-of-term and end-of-year practice for Basic 4, 5, 6, 7, 8, and 9 pupils.',
+            desc: 'End-of-term practice for Basic 4 to 9, plus national BECE mock and past questions for Basic 7 to 9.',
             defaultMins: 30,
         },
         {
-            slug: 'bece',
-            label: 'BECE Examination Hub',
-            badge: 'JHS 3 National',
-            desc: 'National examination practice for Basic Education Certificate Examination candidates.',
-            defaultMins: 45,
-        },
-        {
             slug: 'shs',
-            label: 'SHS 1 - 3 Exams',
+            label: 'WASSCE (SHS 1 - 3)',
             badge: 'Senior High School',
-            desc: 'End-of-term and mock tests for SHS 1, SHS 2, and SHS 3 students.',
+            desc: 'End-of-term and national WASSCE practice for SHS 1, SHS 2, and SHS 3 students.',
             defaultMins: 45,
-        },
-        {
-            slug: 'wassce',
-            label: 'WASSCE Examination Hub',
-            badge: 'SHS 3 National',
-            desc: 'West African Senior School Certificate Examination comprehensive mock papers.',
-            defaultMins: 60,
         },
         {
             slug: 'gtle',
@@ -6388,10 +6548,8 @@ function CandidatesAdmin({
     // Detailed analytics for revealed card panels
     const trackCounts = {
         gesPromo: candidates.filter((c) => c.accountType === 'ges-promo').length,
-        basic: candidates.filter((c) => c.accountType !== 'ges-promo' && typeof c.gradeLevel === 'number' && c.gradeLevel >= 4 && c.gradeLevel <= 9).length,
-        shs: candidates.filter((c) => c.accountType !== 'ges-promo' && SHS_LEVELS.includes(String(c.gradeLevel))).length,
-        bece: candidates.filter((c) => c.accountType !== 'ges-promo' && c.gradeLevel === 'BECE').length,
-        wassce: candidates.filter((c) => c.accountType !== 'ges-promo' && c.gradeLevel === 'WASSCE').length,
+        basic: candidates.filter((c) => c.accountType !== 'ges-promo' && (c.gradeLevel === 'BECE' || (typeof c.gradeLevel === 'number' && c.gradeLevel >= 4 && c.gradeLevel <= 9))).length,
+        shs: candidates.filter((c) => c.accountType !== 'ges-promo' && (c.gradeLevel === 'WASSCE' || SHS_LEVELS.includes(String(c.gradeLevel)))).length,
         gtle: candidates.filter((c) => c.accountType !== 'ges-promo' && c.gradeLevel === 'GTLE').length,
     };
 
@@ -6438,12 +6596,10 @@ function CandidatesAdmin({
 
         if (trackFilter !== 'all') {
             if (trackFilter === 'ges-promo' && c.accountType !== 'ges-promo') return false;
-            if (trackFilter === 'basic' && (c.accountType === 'ges-promo' || typeof c.gradeLevel !== 'number' || c.gradeLevel < 4 || c.gradeLevel > 9)) {
+            if (trackFilter === 'basic' && (c.accountType === 'ges-promo' || (c.gradeLevel !== 'BECE' && (typeof c.gradeLevel !== 'number' || c.gradeLevel < 4 || c.gradeLevel > 9)))) {
                 return false;
             }
-            if (trackFilter === 'shs' && (c.accountType === 'ges-promo' || !SHS_LEVELS.includes(String(c.gradeLevel)))) return false;
-            if (trackFilter === 'bece' && (c.accountType === 'ges-promo' || c.gradeLevel !== 'BECE')) return false;
-            if (trackFilter === 'wassce' && (c.accountType === 'ges-promo' || c.gradeLevel !== 'WASSCE')) return false;
+            if (trackFilter === 'shs' && (c.accountType === 'ges-promo' || (c.gradeLevel !== 'WASSCE' && !SHS_LEVELS.includes(String(c.gradeLevel))))) return false;
             if (trackFilter === 'gtle' && (c.accountType === 'ges-promo' || c.gradeLevel !== 'GTLE')) return false;
         }
 
@@ -7119,10 +7275,8 @@ function CandidatesAdmin({
                         >
                             <option value="all">All Exam Categories</option>
                             <option value="ges-promo">GES Promotion Candidates</option>
-                            <option value="basic">Basic 4 – 9</option>
-                            <option value="shs">SHS 1 – 3</option>
-                            <option value="bece">BECE</option>
-                            <option value="wassce">WASSCE</option>
+                            <option value="basic">Basic 4 to 9 (BECE)</option>
+                            <option value="shs">WASSCE (SHS 1 – 3)</option>
                             <option value="gtle">GTLE</option>
                         </select>
                     </div>
@@ -7148,10 +7302,8 @@ function CandidatesAdmin({
                     {[
                         { id: 'all', label: 'All Candidates', count: candidates.length },
                         { id: 'ges-promo', label: 'GES Promotion', count: trackCounts.gesPromo },
-                        { id: 'basic', label: 'Basic 4–9', count: trackCounts.basic },
-                        { id: 'shs', label: 'SHS 1–3', count: trackCounts.shs },
-                        { id: 'bece', label: 'BECE', count: trackCounts.bece },
-                        { id: 'wassce', label: 'WASSCE', count: trackCounts.wassce },
+                        { id: 'basic', label: 'Basic 4 to 9 (BECE)', count: trackCounts.basic },
+                        { id: 'shs', label: 'WASSCE (SHS 1–3)', count: trackCounts.shs },
                         { id: 'gtle', label: 'GTLE', count: trackCounts.gtle },
                     ].map((item) => (
                         <button

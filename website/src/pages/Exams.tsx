@@ -1,9 +1,9 @@
 import { PageHead } from '../ui';
-import { TRACKS } from '../exams';
+import { TRACKS, findTrack } from '../exams';
 import ExamHubPortal from '../components/ExamHubPortal';
 
 export default function Exams({ sub }: { sub: string }) {
-    const track = TRACKS.find((t) => t.slug === sub);
+    const track = findTrack(sub);
 
     if (track) {
         return <ExamHubPortal activeSlug={track.slug} initialLevel={track.code} sectionLabel={`${track.label} practice`} />;
