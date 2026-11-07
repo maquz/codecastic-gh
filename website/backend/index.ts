@@ -1589,6 +1589,162 @@ export const handler = router({
         },
     ],
 
+    // ---------- ExamHub: Offline Pack & Sync ----------
+    'GET /api/offline/pack': [
+        async (ctx) => {
+            const reqLevel = (ctx.query?.level || '') as string;
+            const reqTrack = (ctx.query?.track || '') as string;
+            const normLvl = reqLevel ? (/^\d+$/.test(reqLevel) ? Number(reqLevel) : reqLevel) : null;
+            const track = reqTrack.trim();
+
+            const isJhsOrBece = ['7', '8', '9', 'BECE'].includes(String(normLvl)) || track === 'basic' || track === 'bece';
+            const isShsOrWassce = ['SHS 1', 'SHS 2', 'SHS 3', 'WASSCE', 'SHS'].includes(String(normLvl)) || track === 'shs' || track === 'wassce';
+            const isGtle = normLvl === 'GTLE' || track === 'gtle';
+            const isGes = normLvl === 'GES-PROMO' || track === 'ges-promotion';
+
+            const { items: allQs } = await db.list('questions', { limit: 10000 });
+            const matchedQuestions = allQs.filter((q: any) => {
+                const qLvl = String(q.level || '');
+                if (normLvl !== null && qLvl === String(normLvl)) return true;
+                if (isJhsOrBece && ['4', '5', '6', '7', '8', '9', 'BECE'].includes(qLvl)) return true;
+                if (isShsOrWassce && ['SHS 1', 'SHS 2', 'SHS 3', 'WASSCE', 'SHS'].includes(qLvl)) return true;
+                if (isGtle && qLvl === 'GTLE') return true;
+                if (isGes && ['GES-PROMO', 'AD II', 'AD I', 'DD', 'DIR II', 'DIR I'].includes(qLvl)) return true;
+                if (normLvl === null && !track) return true;
+                return false;
+            }).map((q: any) => ({
+                id: q.id,
+                subjectId: q.subjectId,
+                level: q.level,
+                text: q.text,
+                options: q.options || [],
+                correctIndex: typeof q.correctIndex === 'number' ? q.correctIndex : 0,
+                explanation: q.explanation || '',
+                year: q.year || null,
+                category: q.category || null,
+            }));
+
+            const { items: allSubjects } = await db.list('subjects', { limit: 200 });
+            const safeSubjects = allSubjects.map((s: any) => ({ id: s.id, name: s.name }));
+
+            return json({
+                ok: true,
+                track,
+                level: normLvl,
+                subjects: safeSubjects,
+                questions: matchedQuestions,
+                totalQuestions: matchedQuestions.length,
+                generatedAt: Date.now(),
+            });
+        },
+    ],
+
+    'POST /api/offline/sync-batch': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const submissions = Array.isArray(b.submissions) ? b.submissions : [];
+            if (submissions.length === 0) return json({ ok: true, syncedCount: 0 });
+
+            const { items: allResults } = await db.list('results', { limit: 10000 });
+            const existingIds = new Set(allResults.map((r: any) => r.id));
+
+            const toAdd: any[] = [];
+            const syncedIds: string[] = [];
+
+            for (const sub of submissions) {
+                const subId = String(sub.id || '').trim() || crypto.randomUUID();
+                if (existingIds.has(subId)) {
+                    syncedIds.push(subId);
+                    continue;
+                }
+
+                toAdd.push({
+                    id: subId,
+                    userId: sub.userId || '',
+                    studentName: sub.studentName || 'Candidate',
+                    studentEmail: sub.studentEmail || '',
+                    schoolId: sub.schoolId || '',
+                    schoolName: sub.schoolName || '',
+                    classSection: sub.classSection || '',
+                    level: sub.level,
+                    subjectId: sub.subjectId || '',
+                    subjectName: sub.subjectName || 'Subject',
+                    score: Number(sub.score) || 0,
+                    total: Number(sub.total) || 0,
+                    totalQuestions: Number(sub.total) || 0,
+                    percent: Number(sub.percent) || 0,
+                    passed: !!sub.passed,
+                    details: Array.isArray(sub.details) ? sub.details : [],
+                    createdAt: Number(sub.timestamp) || Date.now(),
+                    syncedAt: Date.now(),
+                    offlineOrigin: true,
+                });
+                existingIds.add(subId);
+                syncedIds.push(subId);
+            }
+
+            if (toAdd.length > 0) {
+                await db.add('results', toAdd);
+            }
+
+            return json({
+                ok: true,
+                syncedCount: syncedIds.length,
+                syncedIds,
+            });
+        },
+    ],
+
+    'POST /api/school/lab/import': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const results = Array.isArray(b.results) ? b.results : Array.isArray(b.data?.results) ? b.data.results : [];
+            if (results.length === 0) return error('No test results found in payload', 400);
+
+            const { items: allResults } = await db.list('results', { limit: 10000 });
+            const existingIds = new Set(allResults.map((r: any) => r.id));
+
+            const toAdd: any[] = [];
+            for (const item of results) {
+                const itemId = String(item.id || '').trim() || crypto.randomUUID();
+                if (existingIds.has(itemId)) continue;
+
+                toAdd.push({
+                    id: itemId,
+                    userId: item.userId || '',
+                    studentName: item.studentName || 'Candidate',
+                    studentEmail: item.studentEmail || '',
+                    schoolId: item.schoolId || b.schoolId || '',
+                    schoolName: item.schoolName || b.schoolName || '',
+                    classSection: item.classSection || '',
+                    level: item.level,
+                    subjectId: item.subjectId || '',
+                    subjectName: item.subjectName || 'Subject',
+                    score: Number(item.score) || 0,
+                    total: Number(item.total) || 0,
+                    totalQuestions: Number(item.total) || 0,
+                    percent: Number(item.percent) || 0,
+                    passed: !!item.passed,
+                    details: Array.isArray(item.details) ? item.details : [],
+                    createdAt: Number(item.timestamp) || Date.now(),
+                    importedAt: Date.now(),
+                    importedFromLab: true,
+                });
+                existingIds.add(itemId);
+            }
+
+            if (toAdd.length > 0) {
+                await db.add('results', toAdd);
+            }
+
+            return json({
+                ok: true,
+                importedCount: toAdd.length,
+                message: `Successfully imported ${toAdd.length} lab test attempts.`,
+            });
+        },
+    ],
+
     // ---------- ExamHub: Admin ----------
     'GET /api/admin/status': [
         async () => {

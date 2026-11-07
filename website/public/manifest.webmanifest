@@ -1,0 +1,19 @@
+{
+  "name": "Codecastic ExamHub",
+  "short_name": "ExamHub",
+  "start_url": "/exams",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#364c83",
+  "description": "Offline-ready examination hub for Basic 4-9 (BECE), WASSCE (SHS 1-3), GTLE and GES Promotion practice.",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

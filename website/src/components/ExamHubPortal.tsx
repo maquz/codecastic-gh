@@ -60,7 +60,21 @@ import {
     StopCircle,
     Copy,
     Check,
+    Wifi,
+    WifiOff,
+    CloudOff,
+    RefreshCw,
 } from 'lucide-react';
+import {
+    saveOfflinePack,
+    getMatchingOfflinePack,
+    getOfflineQuestions,
+    getOfflineSubjects,
+    queueOfflineResult,
+    getPendingSyncQueue,
+    removePendingSync,
+    getOfflineResults,
+} from '../lib/offlineDb';
 
 export type Level = number | string;
 
@@ -669,6 +683,8 @@ export default function ExamHubPortal({
                         key={`${activeSlug}-${user.id}`}
                         user={user}
                         token={token}
+                        activeSlug={activeSlug}
+                        sectionLabel={sectionLabel}
                     />
                 )}
             </main>
@@ -1581,9 +1597,13 @@ function AiTutorDialog({
 function StudentView({
     user,
     token,
+    activeSlug,
+    sectionLabel,
 }: {
     user: StudentUser;
     token: string;
+    activeSlug?: string;
+    sectionLabel?: string;
 }) {
     const [stage, setStage] = useState<'select' | 'exam' | 'result'>('select');
     const level: Level = user.accountType === 'ges-promo' ? 'GES-PROMO' : user.gradeLevel;
@@ -1592,6 +1612,15 @@ function StudentView({
     const [loading, setLoading] = useState(true);
     const [notice, setNotice] = useState('');
     const [starting, setStarting] = useState<string | null>(null);
+
+    // Offline & Sync state
+    const [isOnline, setIsOnline] = useState<boolean>(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+    const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+    const [isSyncing, setIsSyncing] = useState<boolean>(false);
+    const [syncMsg, setSyncMsg] = useState<string>('');
+    const [offlinePackCached, setOfflinePackCached] = useState<boolean>(false);
+    const [downloadingPack, setDownloadingPack] = useState<boolean>(false);
+    const [isOfflineSession, setIsOfflineSession] = useState<boolean>(false);
 
     // Per-question timer: default 60s, adjustable (30s, 45s, 60s, 90s, 120s, or 0/untimed)
     const [perQuestionSeconds, setPerQuestionSeconds] = useState<number>(60);
@@ -1682,42 +1711,164 @@ function StudentView({
         }
     };
 
-    const loadCatalog = useCallback(async () => {
-        const s = await api.get('/api/subjects');
-        setSubjects(s.data.subjects);
-        const c = await api.get('/api/counts');
-        setCounts(c.data.counts || {});
-        if (c.data.yearsMap) setYearsMap(c.data.yearsMap);
-        if (c.data.categoriesMap) setCategoriesMap(c.data.categoriesMap);
-        if (c.data.yearCounts) setYearCounts(c.data.yearCounts);
-        if (c.data.categoryCounts) setCategoryCounts(c.data.categoryCounts);
+    const handleSyncPending = useCallback(async () => {
+        if (!navigator.onLine) return;
+        setIsSyncing(true);
+        try {
+            const queue = await getPendingSyncQueue();
+            if (queue.length === 0) {
+                setPendingSyncCount(0);
+                return;
+            }
+            const res = await api.post('/api/offline/sync-batch', { submissions: queue });
+            if (res.data?.ok) {
+                for (const item of queue) {
+                    await removePendingSync(item.id);
+                }
+                const remaining = await getPendingSyncQueue();
+                setPendingSyncCount(remaining.length);
+                setSyncMsg(`Synced ${res.data.syncedCount || queue.length} offline test(s) to server!`);
+                setTimeout(() => setSyncMsg(''), 4000);
+            }
+        } catch (err) {
+            console.warn('Sync failed', err);
+        } finally {
+            setIsSyncing(false);
+        }
     }, []);
+
+    const handleDownloadOfflinePack = async () => {
+        if (!navigator.onLine) {
+            alert('Please connect to the internet to download the offline question pack.');
+            return;
+        }
+        setDownloadingPack(true);
+        try {
+            const trackSlug = activeSlug || slugForUser(user);
+            const res = await api.get(`/api/offline/pack?level=${encodeURIComponent(String(level))}&track=${encodeURIComponent(trackSlug)}`);
+            if (res.data?.ok) {
+                await saveOfflinePack({
+                    track: trackSlug,
+                    level: String(level),
+                    label: `${sectionLabel || 'Exam'} (${levelLabel(level)})`,
+                    subjects: res.data.subjects || [],
+                    questions: res.data.questions || [],
+                    timers: res.data.timers || {},
+                });
+                setOfflinePackCached(true);
+                alert(`Offline pack successfully installed! ${res.data.totalQuestions} questions cached. You can now take tests anytime without internet.`);
+            }
+        } catch (err) {
+            alert('Could not download offline pack. Please check your internet connection and try again.');
+        } finally {
+            setDownloadingPack(false);
+        }
+    };
+
+    const loadCatalog = useCallback(async () => {
+        try {
+            if (navigator.onLine) {
+                const s = await api.get('/api/subjects');
+                setSubjects(s.data.subjects);
+                const c = await api.get('/api/counts');
+                setCounts(c.data.counts || {});
+                if (c.data.yearsMap) setYearsMap(c.data.yearsMap);
+                if (c.data.categoriesMap) setCategoriesMap(c.data.categoriesMap);
+                if (c.data.yearCounts) setYearCounts(c.data.yearCounts);
+                if (c.data.categoryCounts) setCategoryCounts(c.data.categoryCounts);
+                return;
+            }
+        } catch (netErr) {
+            console.warn('Network catalog fetch failed, loading offline subjects', netErr);
+        }
+
+        // Offline fallback
+        const offSubjs = await getOfflineSubjects(level, activeSlug || slugForUser(user));
+        if (offSubjs.length > 0) {
+            setSubjects(offSubjs as Subject[]);
+            const offCounts: Record<string, number> = {};
+            for (const sub of offSubjs) {
+                const offQs = await getOfflineQuestions(level, sub.id);
+                offCounts[`${sub.id}|${level}`] = offQs.length;
+            }
+            setCounts(offCounts);
+        }
+    }, [level, activeSlug, user]);
 
     const loadStudentStats = useCallback(async () => {
         try {
-            const res = await api.post('/api/student/history', {
-                token,
-                studentEmail: user.email,
-                studentName: user.name,
-                userId: user.id,
-            });
-            if (res.data) {
-                const d = res.data;
-                const examsTaken = Number(d.examsTaken ?? d.stats?.examsTaken ?? (Array.isArray(d.results) ? d.results.length : 0)) || 0;
-                const avgScore = Number(d.avgScore ?? d.stats?.avgPercent ?? 0) || 0;
-                const passRate = Number(d.passRate ?? 0) || 0;
-                const recentResults = Array.isArray(d.recentResults) ? d.recentResults : (Array.isArray(d.results) ? d.results : []);
-                setStudentStats({
-                    examsTaken,
-                    avgScore,
-                    passRate,
-                    recentResults,
+            if (navigator.onLine) {
+                const res = await api.post('/api/student/history', {
+                    token,
+                    studentEmail: user.email,
+                    studentName: user.name,
+                    userId: user.id,
                 });
+                if (res.data) {
+                    const d = res.data;
+                    const examsTaken = Number(d.examsTaken ?? d.stats?.examsTaken ?? (Array.isArray(d.results) ? d.results.length : 0)) || 0;
+                    const avgScore = Number(d.avgScore ?? d.stats?.avgPercent ?? 0) || 0;
+                    const passRate = Number(d.passRate ?? 0) || 0;
+                    const recentResults = Array.isArray(d.recentResults) ? d.recentResults : (Array.isArray(d.results) ? d.results : []);
+                    setStudentStats({
+                        examsTaken,
+                        avgScore,
+                        passRate,
+                        recentResults,
+                    });
+                    return;
+                }
             }
         } catch {
             // ignore
         }
+
+        // Offline fallback
+        const localResults = await getOfflineResults();
+        if (localResults.length > 0) {
+            const count = localResults.length;
+            const avg = Math.round(localResults.reduce((acc, r) => acc + (r.percent || 0), 0) / count);
+            const passedCount = localResults.filter((r) => r.passed).length;
+            const pRate = Math.round((passedCount / count) * 100);
+            setStudentStats({
+                examsTaken: count,
+                avgScore: avg,
+                passRate: pRate,
+                recentResults: localResults,
+            });
+        }
     }, [token, user.email, user.name, user.id]);
+
+    useEffect(() => {
+        const onOnline = () => {
+            setIsOnline(true);
+            handleSyncPending();
+            loadStudentStats().catch(() => undefined);
+            loadCatalog().catch(() => undefined);
+        };
+        const onOffline = () => {
+            setIsOnline(false);
+        };
+        window.addEventListener('online', onOnline);
+        window.addEventListener('offline', onOffline);
+
+        getPendingSyncQueue().then((q) => {
+            setPendingSyncCount(q.length);
+            if (navigator.onLine && q.length > 0) {
+                handleSyncPending();
+            }
+        });
+
+        const trackSlug = activeSlug || slugForUser(user);
+        getMatchingOfflinePack(level, trackSlug).then((pack) => {
+            setOfflinePackCached(!!pack);
+        });
+
+        return () => {
+            window.removeEventListener('online', onOnline);
+            window.removeEventListener('offline', onOffline);
+        };
+    }, [activeSlug, level, user, handleSyncPending, loadStudentStats, loadCatalog]);
 
     useEffect(() => {
         (async () => {
@@ -1810,23 +1961,45 @@ function StudentView({
                 queryParts.push(`backfill=true`);
             }
             const queryStr = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-            const res = await api.get(`/api/exam/${level}/${s.id}${queryStr}`);
-            const qs: ExamQ[] = res.data.questions;
+
+            let qs: ExamQ[] = [];
+            let offlineUsed = false;
+
+            if (navigator.onLine) {
+                try {
+                    const res = await api.get(`/api/exam/${level}/${s.id}${queryStr}`);
+                    qs = res.data.questions || [];
+                } catch (netErr) {
+                    console.warn('Network exam fetch failed, attempting offline store', netErr);
+                }
+            }
+
+            if (qs.length === 0) {
+                const offQs = await getOfflineQuestions(level, s.id, questionLimit !== 'all' ? questionLimit : undefined);
+                if (offQs.length > 0) {
+                    qs = offQs as ExamQ[];
+                    offlineUsed = true;
+                }
+            }
+
             if (qs.length === 0) {
                 setNotice(
                     filterMode === 'year' && selectedYear !== 'all'
                         ? `No questions found for Year ${selectedYear} in ${s.name}. Please select another year or choose "All Questions".`
                         : filterMode === 'category' && selectedCategory !== 'all'
                         ? `No questions found for category "${selectedCategory}" in ${s.name}. Please select another category or choose "All Questions".`
-                        : 'There are no questions for this section and subject yet.'
+                        : 'There are no questions for this section and subject yet. If offline, please download the offline pack first.'
                 );
                 return;
             }
+
             let chosenQs = qs;
             if (questionLimit !== 'all' && qs.length > questionLimit) {
                 // Shuffle for a fresh, varied practice test
                 chosenQs = [...qs].sort(() => Math.random() - 0.5).slice(0, questionLimit);
             }
+
+            setIsOfflineSession(offlineUsed || !navigator.onLine);
             setSubject(s);
             setQuestions(chosenQs);
             setAnswers({});
@@ -1863,24 +2036,99 @@ function StudentView({
                 : questions;
             const finalQuestions = takenQuestions.length > 0 ? takenQuestions : [questions[index] || questions[0]];
 
-            const res = await api.post('/api/exam/submit', {
-                token,
+            if (navigator.onLine && !isOfflineSession) {
+                try {
+                    const res = await api.post('/api/exam/submit', {
+                        token,
+                        userId: user.id,
+                        studentName: user.name,
+                        schoolName: user.schoolName,
+                        schoolId: user.schoolId,
+                        classSection: user.classSection,
+                        studentEmail: user.email,
+                        level,
+                        subjectId: subject.id,
+                        subjectName: subject.name,
+                        answers,
+                        questionIds: finalQuestions.map((q) => q.id),
+                    });
+                    setQuestions(finalQuestions);
+                    setResult(res.data);
+                    setStage('result');
+                    window.scrollTo({ top: 0 });
+                    loadCatalog().catch(() => undefined);
+                    loadStudentStats().catch(() => undefined);
+                    return;
+                } catch (netErr) {
+                    console.warn('Online submit failed, saving offline in outbox', netErr);
+                }
+            }
+
+            // Grade offline locally
+            let offScore = 0;
+            const offReview: any[] = [];
+            const offDetails: any[] = [];
+            finalQuestions.forEach((q) => {
+                const chosen = answers[q.id];
+                const correct = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
+                const isCorrect = chosen !== undefined && chosen !== null && Number(chosen) === correct;
+                if (isCorrect) offScore++;
+
+                const item = {
+                    id: q.id,
+                    questionId: q.id,
+                    text: q.text,
+                    options: q.options,
+                    chosen: chosen !== undefined ? chosen : null,
+                    selected: chosen !== undefined ? chosen : null,
+                    correctIndex: correct,
+                    isCorrect,
+                    correct: isCorrect,
+                    explanation: q.explanation || '',
+                    year: q.year || null,
+                    category: q.category || null,
+                };
+                offDetails.push(item);
+                offReview.push(item);
+            });
+
+            const totalQ = finalQuestions.length;
+            const percent = totalQ > 0 ? Math.round((offScore / totalQ) * 100) : 0;
+            const passed = percent >= 50;
+
+            const offId = 'offline-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+            const offlinePayload = {
+                id: offId,
+                resultId: offId,
                 userId: user.id,
                 studentName: user.name,
-                schoolName: user.schoolName,
                 studentEmail: user.email,
+                schoolName: user.schoolName,
+                schoolId: user.schoolId,
+                schoolCode: user.schoolCode,
+                classSection: user.classSection,
                 level,
                 subjectId: subject.id,
                 subjectName: subject.name,
+                score: offScore,
+                total: totalQ,
+                totalQuestions: totalQ,
+                percent,
+                passed,
+                review: offReview,
+                details: offDetails,
                 answers,
                 questionIds: finalQuestions.map((q) => q.id),
-            });
-            // Update active question set to taken questions so untaken questions are never displayed in the summary
+                timestamp: Date.now(),
+                isOfflineSubmitted: true,
+            };
+
+            await queueOfflineResult(offlinePayload as any);
             setQuestions(finalQuestions);
-            setResult(res.data);
+            setResult(offlinePayload as any);
             setStage('result');
+            setPendingSyncCount((prev) => prev + 1);
             window.scrollTo({ top: 0 });
-            loadCatalog().catch(() => undefined);
             loadStudentStats().catch(() => undefined);
         } catch (e) {
             setNotice(errMsg(e, 'Could not submit the exam. Please try again.'));
@@ -2350,6 +2598,23 @@ function StudentView({
                     </p>
                     <p className="mt-1 text-lg font-semibold text-[#364c83]">{displayPercent}%</p>
                     <p className="mt-2 text-sm text-slate-600">{msg}</p>
+                    {String((result as any)?.id || '').startsWith('offline-') && (
+                        <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs font-semibold text-amber-900 flex items-center justify-between gap-2 text-left">
+                            <span className="flex items-center gap-1.5">
+                                <WifiOff size={14} className="text-amber-700 shrink-0" />
+                                <span>Completed offline &amp; saved locally. Will automatically sync to school portal when connected.</span>
+                            </span>
+                            {isOnline && (
+                                <button
+                                    type="button"
+                                    onClick={handleSyncPending}
+                                    className="rounded bg-[#364c83] text-white px-2.5 py-1 text-xs font-bold hover:bg-[#1f2d57] shrink-0"
+                                >
+                                    Sync Now
+                                </button>
+                            )}
+                        </div>
+                    )}
                     <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                         <button
                             type="button"
@@ -2477,7 +2742,69 @@ function StudentView({
                             {user.schoolName || levelLabel(level)}
                         </p>
                     </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <div
+                            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ${
+                                !isOnline
+                                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                    : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            }`}
+                        >
+                            {!isOnline ? <WifiOff size={13} className="text-amber-600" /> : <Wifi size={13} className="text-emerald-600" />}
+                            <span>{!isOnline ? 'Offline Mode' : 'Online'}</span>
+                        </div>
+
+                        {pendingSyncCount > 0 && (
+                            <button
+                                type="button"
+                                onClick={handleSyncPending}
+                                disabled={isSyncing}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-[#364c83] text-white px-2.5 py-1 text-xs font-bold hover:bg-[#1f2d57] transition shadow-xs disabled:opacity-50"
+                                title="Sync pending offline test results to server"
+                            >
+                                <RefreshCw size={12} className={isSyncing ? 'animate-spin' : ''} />
+                                <span>{isSyncing ? 'Syncing...' : `Sync Tests (${pendingSyncCount})`}</span>
+                            </button>
+                        )}
+
+                        <button
+                            type="button"
+                            onClick={handleDownloadOfflinePack}
+                            disabled={downloadingPack}
+                            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+                                offlinePackCached
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                                    : 'border-slate-200 bg-white text-slate-700 hover:border-[#364c83] hover:text-[#364c83]'
+                            }`}
+                            title={offlinePackCached ? 'Offline pack is installed! Click to refresh/update' : 'Download all questions for this exam to practice offline'}
+                        >
+                            {downloadingPack ? (
+                                <>
+                                    <Loader2 size={13} className="animate-spin text-[#364c83]" />
+                                    <span>Downloading...</span>
+                                </>
+                            ) : offlinePackCached ? (
+                                <>
+                                    <Check size={13} className="text-emerald-600" />
+                                    <span>Offline Ready</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Download size={13} />
+                                    <span>Download Offline Pack</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
                 </div>
+
+                {syncMsg && (
+                    <div className="mt-3 rounded-lg bg-emerald-50 border border-emerald-200 p-2.5 text-xs font-semibold text-emerald-800 flex items-center gap-1.5">
+                        <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                        <span>{syncMsg}</span>
+                    </div>
+                )}
             </div>
 
             {/* Interactive Candidate KPI Performance Cards */}

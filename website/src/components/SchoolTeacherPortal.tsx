@@ -29,7 +29,8 @@ import {
     BarChart3,
     Trophy,
     FileSpreadsheet,
-    AlertCircle
+    AlertCircle,
+    HardDrive
 } from 'lucide-react';
 import type { Level } from './ExamHubPortal';
 
@@ -443,6 +444,38 @@ export function TeacherPortalView({
         downloadCsv(`${user.name.replace(/\s+/g, '_')}_Gradebook.csv`, rows);
     };
 
+    const [importingLab, setImportingLab] = useState(false);
+    const handleImportTeacherLabFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+            try {
+                setImportingLab(true);
+                const parsed = JSON.parse(evt.target?.result as string);
+                const results = Array.isArray(parsed) ? parsed : Array.isArray(parsed.results) ? parsed.results : [];
+                if (results.length === 0) {
+                    alert('No test attempts found in file.');
+                    return;
+                }
+                const res = await api.post('/api/school/lab/import', {
+                    token,
+                    schoolId: user.schoolId,
+                    schoolName: user.schoolName,
+                    results,
+                });
+                alert(`Successfully imported ${res.data.importedCount} test results into your class gradebook!`);
+                loadData();
+            } catch {
+                alert('Failed to import lab results. Ensure it is a valid .codecastic-results.json file.');
+            } finally {
+                setImportingLab(false);
+                e.target.value = '';
+            }
+        };
+        reader.readAsText(file);
+    };
+
     const filteredResults = useMemo(() => {
         if (!stats?.results) return [];
         let list = stats.results;
@@ -510,6 +543,17 @@ export function TeacherPortalView({
                             <Download size={12} />
                             Export Gradebook (CSV)
                         </button>
+                        <label className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs cursor-pointer">
+                            <Upload size={12} className={importingLab ? 'animate-spin text-[#364c83]' : ''} />
+                            <span>{importingLab ? 'Importing...' : 'Import Lab Results (USB)'}</span>
+                            <input
+                                type="file"
+                                accept=".json,.codecastic-results.json"
+                                className="hidden"
+                                onChange={handleImportTeacherLabFile}
+                                disabled={importingLab}
+                            />
+                        </label>
                         <button
                             type="button"
                             onClick={onSwitchToStudent}
@@ -869,8 +913,61 @@ export function SchoolAdminPortalView({
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<any | null>(null);
     const [teachers, setTeachers] = useState<PortalUser[]>([]);
-    const [students, setStudents] = useState<PortalUser[]>([]);
-    const [tab, setTab] = useState<'overview' | 'teachers' | 'students'>('overview');
+    const [tab, setTab] = useState<'overview' | 'teachers' | 'students' | 'lab'>('overview');
+    const [downloadingPack, setDownloadingPack] = useState(false);
+    const [importingLab, setImportingLab] = useState(false);
+
+    const handleDownloadPack = async () => {
+        setDownloadingPack(true);
+        try {
+            const res = await api.get('/api/offline/pack');
+            if (res.data?.ok) {
+                const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${(user.schoolName || 'ExamHub').replace(/\s+/g, '_')}_Question_Pack.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                flash(true, `Downloaded question pack (${res.data.totalQuestions} questions) for offline lab testing!`);
+            }
+        } catch {
+            flash(false, 'Could not download question pack. Check network connection.');
+        } finally {
+            setDownloadingPack(false);
+        }
+    };
+
+    const handleImportLabFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+            try {
+                setImportingLab(true);
+                const parsed = JSON.parse(evt.target?.result as string);
+                const results = Array.isArray(parsed) ? parsed : Array.isArray(parsed.results) ? parsed.results : [];
+                if (results.length === 0) {
+                    flash(false, 'No valid test attempts found in this file.');
+                    return;
+                }
+                const res = await api.post('/api/school/lab/import', {
+                    token,
+                    schoolId: user.schoolId,
+                    schoolName: user.schoolName,
+                    results,
+                });
+                flash(true, `Successfully imported ${res.data.importedCount} student test results from USB!`);
+                loadAll();
+            } catch {
+                flash(false, 'Failed to import lab results. Ensure file is a valid .codecastic-results.json file.');
+            } finally {
+                setImportingLab(false);
+                e.target.value = '';
+            }
+        };
+        reader.readAsText(file);
+    };
     
     // Mount Teacher Form State
     const [tName, setTName] = useState('');
@@ -1161,6 +1258,16 @@ export function SchoolAdminPortalView({
                 >
                     <Users size={16} />
                     Mount Students ({students.length})
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setTab('lab')}
+                    className={`pb-3 text-sm font-bold border-b-2 transition flex items-center gap-2 ${
+                        tab === 'lab' ? 'border-[#364c83] text-[#364c83]' : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                >
+                    <HardDrive size={16} />
+                    Offline Lab & USB Hub
                 </button>
             </div>
 
@@ -1492,7 +1599,128 @@ export function SchoolAdminPortalView({
                 </div>
             )}
 
-            {/* Bulk Upload Modal */}
+            {/* Tab 4: Offline Lab & USB Hub */}
+            {tab === 'lab' && (
+                <div className="space-y-6">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
+                        <div className="flex items-center gap-3">
+                            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-[#364c83]">
+                                <HardDrive size={22} />
+                            </div>
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900">School ICT Computer Lab Offline Testing Hub</h3>
+                                <p className="text-xs text-slate-500">
+                                    Equip your school's computer lab to administer BECE and WASSCE mock examinations completely offline without active internet.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {/* Action 1 */}
+                            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 flex flex-col justify-between">
+                                <div>
+                                    <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-[#364c83] text-white font-bold text-xs mb-2">
+                                        1
+                                    </span>
+                                    <h4 className="text-sm font-bold text-slate-900">Standalone Lab Runner</h4>
+                                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                                        A single self-contained HTML test environment. Opens directly in Google Chrome, Microsoft Edge, or Firefox on any desktop PC without installing any software.
+                                    </p>
+                                </div>
+                                <div className="mt-4 pt-3 border-t border-slate-200/80">
+                                    <a
+                                        href="/lab-runner.html"
+                                        download="codecastic-lab-runner.html"
+                                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#364c83] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#2a3c68] shadow-2xs transition"
+                                    >
+                                        <Download size={14} />
+                                        Download lab-runner.html
+                                    </a>
+                                </div>
+                            </div>
+
+                            {/* Action 2 */}
+                            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 flex flex-col justify-between">
+                                <div>
+                                    <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-[#364c83] text-white font-bold text-xs mb-2">
+                                        2
+                                    </span>
+                                    <h4 className="text-sm font-bold text-slate-900">Offline Question Pack</h4>
+                                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                                        Exports the latest national curriculum questions, subjects, options, and explanations into an encrypted JSON pack ready for your USB drive.
+                                    </p>
+                                </div>
+                                <div className="mt-4 pt-3 border-t border-slate-200/80">
+                                    <button
+                                        type="button"
+                                        onClick={handleDownloadPack}
+                                        disabled={downloadingPack}
+                                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs disabled:opacity-50 transition"
+                                    >
+                                        {downloadingPack ? <Loader2 size={14} className="animate-spin text-[#364c83]" /> : <Download size={14} />}
+                                        {downloadingPack ? 'Generating Pack...' : 'Download Question Pack (.json)'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Action 3 */}
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 flex flex-col justify-between">
+                                <div>
+                                    <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-emerald-600 text-white font-bold text-xs mb-2">
+                                        3
+                                    </span>
+                                    <h4 className="text-sm font-bold text-slate-900">Import Lab Results (USB)</h4>
+                                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                                        After students complete their mock exams in the ICT lab, upload their exported results file here to populate the school performance charts and teacher records.
+                                    </p>
+                                </div>
+                                <div className="mt-4 pt-3 border-t border-emerald-200/80">
+                                    <label className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-emerald-700 shadow-2xs cursor-pointer transition">
+                                        {importingLab ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                                        <span>{importingLab ? 'Importing Attempts...' : 'Upload Results from USB'}</span>
+                                        <input
+                                            type="file"
+                                            accept=".json,.codecastic-results.json"
+                                            className="hidden"
+                                            onChange={handleImportLabFile}
+                                            disabled={importingLab}
+                                        />
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Step-by-step instructions card */}
+                        <div className="mt-8 rounded-xl border border-indigo-100 bg-indigo-50/40 p-5">
+                            <h4 className="text-xs font-bold text-[#364c83] uppercase tracking-wider mb-3">
+                                5-Step ICT Laboratory Exam Procedure
+                            </h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 text-xs text-slate-700">
+                                <div className="rounded-lg bg-white/90 p-3 border border-indigo-100">
+                                    <span className="font-bold text-[#364c83] block mb-1">Step 1: Save to USB</span>
+                                    Download <code>lab-runner.html</code> and the Question Pack <code>.json</code> onto any USB flash drive.
+                                </div>
+                                <div className="rounded-lg bg-white/90 p-3 border border-indigo-100">
+                                    <span className="font-bold text-[#364c83] block mb-1">Step 2: Open in Lab</span>
+                                    Plug the USB into lab computers and double-click <code>codecastic-lab-runner.html</code> in the web browser.
+                                </div>
+                                <div className="rounded-lg bg-white/90 p-3 border border-indigo-100">
+                                    <span className="font-bold text-[#364c83] block mb-1">Step 3: Load Questions</span>
+                                    Click "Load Question Pack (.json)" once on the computer. All subjects and questions load instantly.
+                                </div>
+                                <div className="rounded-lg bg-white/90 p-3 border border-indigo-100">
+                                    <span className="font-bold text-[#364c83] block mb-1">Step 4: Take Exams</span>
+                                    Students enter their name & class section, select their subject, and complete the timed examination.
+                                </div>
+                                <div className="rounded-lg bg-white/90 p-3 border border-indigo-100">
+                                    <span className="font-bold text-[#364c83] block mb-1">Step 5: Export & Upload</span>
+                                    Click "Export Results to USB" on the lab PCs. Bring the USB back to this portal and click "Upload Results from USB".
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             {showBulkModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in duration-150">
                     <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl border border-slate-200">

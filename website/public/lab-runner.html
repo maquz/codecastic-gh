@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Codecastic ExamHub - Offline School Lab Runner</title>
+  <style>
+    :root {
+      --primary: #364c83;
+      --primary-hover: #1f2d57;
+      --accent: #2a8759;
+      --warning: #e6bb31;
+      --danger: #e14947;
+      --slate-50: #f8fafc;
+      --slate-100: #f1f5f9;
+      --slate-200: #e2e8f0;
+      --slate-700: #334155;
+      --slate-900: #0f172a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--slate-50); color: var(--slate-900); min-height: 100vh; display: flex; flex-direction: column; }
+    header { background: white; border-bottom: 1px solid var(--slate-200); padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.15rem; color: var(--primary); }
+    .badge { background: #e0e7ff; color: #3730a3; padding: 3px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+    .container { max-width: 820px; margin: 30px auto; padding: 0 16px; width: 100%; flex: 1; }
+    .card { background: white; border: 1px solid var(--slate-200); border-radius: 16px; padding: 24px 28px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); margin-bottom: 20px; }
+    h1, h2, h3 { color: var(--slate-900); }
+    p { color: #64748b; font-size: 0.95rem; line-height: 1.5; margin-top: 6px; }
+    .form-group { margin-top: 16px; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--slate-700); margin-bottom: 6px; }
+    input, select { width: 100%; padding: 10px 14px; border: 1px solid var(--slate-200); border-radius: 10px; font-size: 0.95rem; outline: none; transition: border-color 0.15s; background: white; }
+    input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(54,76,131,0.15); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media(max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; font-size: 0.9rem; padding: 12px 20px; border-radius: 10px; border: none; cursor: pointer; transition: all 0.15s; text-decoration: none; }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-outline { background: white; border: 1px solid var(--slate-200); color: var(--slate-700); }
+    .btn-outline:hover { background: var(--slate-100); }
+    .btn-success { background: var(--accent); color: white; }
+    .btn-success:hover { filter: brightness(0.9); }
+    .btn-block { width: 100%; }
+    .options-list { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+    .option-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; border: 2px solid var(--slate-200); border-radius: 12px; cursor: pointer; transition: all 0.15s; background: white; }
+    .option-item:hover { border-color: #cbd5e1; background: #f8fafc; }
+    .option-item.selected { border-color: var(--primary); background: #eef2ff; }
+    .opt-letter { font-weight: 800; width: 24px; height: 24px; border-radius: 6px; background: var(--slate-100); display: flex; align-items: center; justify-content: center; font-size: 0.8rem; flex-shrink: 0; }
+    .option-item.selected .opt-letter { background: var(--primary); color: white; }
+    .timer-pill { background: #fee2e2; color: #991b1b; padding: 6px 14px; border-radius: 999px; font-weight: 800; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; }
+    .q-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--slate-200); }
+    .q-dots { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0; }
+    .dot { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--slate-200); display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 700; cursor: pointer; background: white; }
+    .dot.active { border-color: var(--primary); background: var(--primary); color: white; }
+    .dot.answered { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+    .dot.answered.active { background: var(--primary); color: white; }
+    .review-item { padding: 16px; border-radius: 12px; border: 1px solid var(--slate-200); margin-top: 12px; }
+    .review-item.correct { border-left: 5px solid var(--accent); background: #f0fdf4; }
+    .review-item.wrong { border-left: 5px solid var(--danger); background: #fef2f2; }
+    .explanation-box { margin-top: 10px; padding: 10px 14px; background: white; border-radius: 8px; font-size: 0.85rem; color: #334155; border: 1px dashed var(--slate-200); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <svg width="24" height="24" viewBox="0 0 326 250">
+        <rect width="326" height="250" rx="36" fill="#364c83"/>
+        <path d="M153,71 C165,88 171,109 162,123 C159,129 156,133 153,136 C150,133 147,129 144,123 C135,109 141,88 153,71 Z" fill="#E6BB31"/>
+      </svg>
+      <span>ExamHub Offline Lab</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span class="badge">100% Offline Mode</span>
+      <button class="btn btn-outline" style="padding: 6px 12px; font-size: 0.75rem;" onclick="exportResults()">💾 Export Results to USB</button>
+    </div>
+  </header>
+
+  <div class="container" id="app">
+    <!-- View 1: Student / School Entry -->
+    <div id="view-setup" class="card">
+      <h2>Candidate Examination Setup</h2>
+      <p>This station runs 100% offline. Enter your candidate details and choose your test.</p>
+
+      <div class="form-group">
+        <label>Candidate Full Name *</label>
+        <input type="text" id="candidateName" placeholder="e.g. Kwame Mensah" required>
+      </div>
+
+      <div class="grid-2">
+        <div class="form-group">
+          <label>Grade / Examination Level *</label>
+          <select id="gradeLevel" onchange="filterSubjects()">
+            <option value="4">Basic 4</option>
+            <option value="5">Basic 5</option>
+            <option value="6">Basic 6</option>
+            <option value="7">Basic 7 (JHS 1 / BECE)</option>
+            <option value="8">Basic 8 (JHS 2 / BECE)</option>
+            <option value="9" selected>Basic 9 (JHS 3 / BECE Candidate)</option>
+            <option value="SHS 1">SHS 1</option>
+            <option value="SHS 2">SHS 2</option>
+            <option value="SHS 3">SHS 3 (WASSCE Candidate)</option>
+            <option value="GTLE">GTLE</option>
+            <option value="GES-PROMO">GES Promotion</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Subject *</label>
+          <select id="subjectSelect"></select>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="form-group">
+          <label>School Code or Name (Optional)</label>
+          <input type="text" id="schoolCode" placeholder="e.g. SCH-1044 or St. Augustine's">
+        </div>
+        <div class="form-group">
+          <label>Class Section / Arm (Optional)</label>
+          <input type="text" id="classSection" placeholder="e.g. Basic 9A or Form 2 Yellow">
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-top: 24px;">
+        <button class="btn btn-primary btn-block" onclick="startExam()">Start Test Now →</button>
+      </div>
+
+      <div style="margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--slate-200); font-size: 0.8rem; color: #64748b; display: flex; justify-content: space-between; align-items: center;">
+        <span>Question Pack: <strong id="packStatus">Loading local questions...</strong></span>
+        <label style="cursor: pointer; color: var(--primary); font-weight: 700; margin: 0;">
+          Load Custom Pack JSON
+          <input type="file" accept=".json" style="display: none;" onchange="loadCustomPack(this)">
+        </label>
+      </div>
+    </div>
+
+    <!-- View 2: Active Exam -->
+    <div id="view-exam" class="card" style="display: none;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--slate-200); padding-bottom: 14px;">
+        <div>
+          <h3 id="examSubjectTitle">Subject Test</h3>
+          <span style="font-size: 0.8rem; color: #64748b;" id="examCandidateLabel">Candidate</span>
+        </div>
+        <div class="timer-pill">
+          ⏱ <span id="timerText">45:00</span>
+        </div>
+      </div>
+
+      <div class="q-dots" id="questionDots"></div>
+
+      <div style="margin-top: 20px;">
+        <span style="font-size: 0.8rem; font-weight: 700; color: #64748b; text-transform: uppercase;" id="qNumber">Question 1 of 20</span>
+        <div id="qText" style="font-size: 1.1rem; font-weight: 600; margin-top: 8px; line-height: 1.5;"></div>
+        <div class="options-list" id="optionsContainer"></div>
+      </div>
+
+      <div class="q-nav">
+        <button class="btn btn-outline" id="btnPrev" onclick="navigateQ(-1)">← Previous</button>
+        <button class="btn btn-primary" id="btnNext" onclick="navigateQ(1)">Next →</button>
+        <button class="btn btn-success" id="btnFinish" style="display: none;" onclick="finishExam()">Submit Test</button>
+      </div>
+    </div>
+
+    <!-- View 3: Results -->
+    <div id="view-result" class="card" style="display: none;">
+      <div style="text-align: center; padding: 10px 0 20px;">
+        <div style="display: inline-block; padding: 16px; border-radius: 50%; background: #e0e7ff; color: var(--primary); font-size: 2rem; margin-bottom: 10px;">
+          🎓
+        </div>
+        <h2 id="resultTitle">Test Completed</h2>
+        <div style="font-size: 3rem; font-weight: 900; color: var(--primary); margin: 8px 0;" id="resultPercent">0%</div>
+        <p id="resultSummary" style="font-weight: 600; color: #334155;">Score: 0 / 0</p>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin: 20px 0;">
+        <button class="btn btn-primary" style="flex: 1;" onclick="exportResults()">💾 Save Result to USB</button>
+        <button class="btn btn-outline" style="flex: 1;" onclick="resetToSetup()">Take Another Test</button>
+      </div>
+
+      <h3 style="margin-top: 26px; border-top: 1px solid var(--slate-200); padding-top: 16px;">Answer Review &amp; Explanations</h3>
+      <div id="reviewContainer"></div>
+    </div>
+  </div>
+
+  <script>
+    // Local Question Bank Cache
+    let questionBank = [];
+    let subjects = [
+      { id: 'math', name: 'Mathematics' },
+      { id: 'eng', name: 'English Language' },
+      { id: 'sci', name: 'Integrated Science' },
+      { id: 'ict', name: 'Computing / ICT' },
+      { id: 'soc', name: 'Social Studies' }
+    ];
+
+    let currentQuestions = [];
+    let currentQIndex = 0;
+    let selectedAnswers = {};
+    let timerSeconds = 45 * 60;
+    let timerInterval = null;
+
+    // Load initial embedded seed or packs if available
+    function init() {
+      filterSubjects();
+      // Try to load cached pack from localStorage if present
+      const savedPack = localStorage.getItem('codecastic_lab_pack');
+      if (savedPack) {
+        try {
+          const parsed = JSON.parse(savedPack);
+          if (parsed.questions) questionBank = parsed.questions;
+          if (parsed.subjects) subjects = parsed.subjects;
+          document.getElementById('packStatus').innerText = `${questionBank.length} questions loaded locally`;
+          filterSubjects();
+        } catch(e) {}
+      } else {
+        document.getElementById('packStatus').innerText = 'Ready. Questions will be loaded from pack or USB.';
+      }
+    }
+
+    function filterSubjects() {
+      const select = document.getElementById('subjectSelect');
+      select.innerHTML = '';
+      subjects.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.name;
+        select.appendChild(opt);
+      });
+    }
+
+    function loadCustomPack(input) {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const pack = JSON.parse(e.target.result);
+          if (pack.questions) questionBank = pack.questions;
+          if (pack.subjects) subjects = pack.subjects;
+          localStorage.setItem('codecastic_lab_pack', JSON.stringify(pack));
+          document.getElementById('packStatus').innerText = `${questionBank.length} questions loaded from ${file.name}`;
+          filterSubjects();
+          alert(`Successfully loaded ${questionBank.length} questions into Offline Lab Runner!`);
+        } catch(err) {
+          alert('Invalid pack JSON format.');
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function startExam() {
+      const name = document.getElementById('candidateName').value.trim();
+      if (!name) {
+        alert('Please enter your full candidate name.');
+        return;
+      }
+      const lvl = document.getElementById('gradeLevel').value;
+      const subjId = document.getElementById('subjectSelect').value;
+
+      // Filter questions matching subject and level
+      currentQuestions = questionBank.filter(q => {
+        const sMatch = (q.subjectId === subjId);
+        const lMatch = String(q.level).toUpperCase() === String(lvl).toUpperCase() ||
+          (['7','8','9','BECE'].includes(lvl) && q.level === 'BECE') ||
+          (String(lvl).startsWith('SHS') && q.level === 'WASSCE');
+        return sMatch && lMatch;
+      });
+
+      if (currentQuestions.length === 0) {
+        // Fallback demo questions if pack has not been populated yet
+        currentQuestions = [
+          { id: 'q1', text: 'Which of the following is the standard binary base in computing?', options: ['Base 2', 'Base 8', 'Base 10', 'Base 16'], correctIndex: 0, explanation: 'The binary numeral system uses two symbols: 0 and 1, hence Base 2.' },
+          { id: 'q2', text: 'What is the primary organ responsible for pumping blood throughout the human body?', options: ['Lungs', 'Heart', 'Liver', 'Kidney'], correctIndex: 1, explanation: 'The human heart pumps oxygenated blood through the circulatory system.' },
+          { id: 'q3', text: 'Solve for x: 3x - 5 = 10', options: ['x = 3', 'x = 4', 'x = 5', 'x = 6'], correctIndex: 2, explanation: '3x = 10 + 5 = 15; x = 15 / 3 = 5.' }
+        ];
+      }
+
+      currentQIndex = 0;
+      selectedAnswers = {};
+      timerSeconds = 45 * 60;
+
+      document.getElementById('view-setup').style.display = 'none';
+      document.getElementById('view-result').style.display = 'none';
+      document.getElementById('view-exam').style.display = 'block';
+
+      const subjName = subjects.find(s => s.id === subjId)?.name || 'Subject Test';
+      document.getElementById('examSubjectTitle').innerText = `${subjName} (${lvl})`;
+      document.getElementById('examCandidateLabel').innerText = `Candidate: ${name}`;
+
+      renderQuestionDots();
+      renderQuestion();
+
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        timerSeconds--;
+        const mins = Math.floor(timerSeconds / 60);
+        const secs = timerSeconds % 60;
+        document.getElementById('timerText').innerText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+        if (timerSeconds <= 0) {
+          clearInterval(timerInterval);
+          finishExam();
+        }
+      }, 1000);
+    }
+
+    function renderQuestionDots() {
+      const container = document.getElementById('questionDots');
+      container.innerHTML = '';
+      currentQuestions.forEach((_, idx) => {
+        const dot = document.createElement('div');
+        dot.className = `dot ${idx === currentQIndex ? 'active' : ''} ${selectedAnswers[idx] !== undefined ? 'answered' : ''}`;
+        dot.innerText = idx + 1;
+        dot.onclick = () => { currentQIndex = idx; renderQuestion(); };
+        container.appendChild(dot);
+      });
+    }
+
+    function renderQuestion() {
+      const q = currentQuestions[currentQIndex];
+      document.getElementById('qNumber').innerText = `Question ${currentQIndex + 1} of ${currentQuestions.length}`;
+      document.getElementById('qText').innerText = q.text;
+
+      const optsContainer = document.getElementById('optionsContainer');
+      optsContainer.innerHTML = '';
+      const letters = ['A', 'B', 'C', 'D'];
+
+      q.options.forEach((opt, idx) => {
+        const div = document.createElement('div');
+        div.className = `option-item ${selectedAnswers[currentQIndex] === idx ? 'selected' : ''}`;
+        div.onclick = () => selectOption(idx);
+        div.innerHTML = `<span class="opt-letter">${letters[idx]}</span> <span>${opt}</span>`;
+        optsContainer.appendChild(div);
+      });
+
+      document.getElementById('btnPrev').style.visibility = (currentQIndex === 0) ? 'hidden' : 'visible';
+      if (currentQIndex === currentQuestions.length - 1) {
+        document.getElementById('btnNext').style.display = 'none';
+        document.getElementById('btnFinish').style.display = 'inline-flex';
+      } else {
+        document.getElementById('btnNext').style.display = 'inline-flex';
+        document.getElementById('btnFinish').style.display = 'none';
+      }
+
+      renderQuestionDots();
+    }
+
+    function selectOption(idx) {
+      selectedAnswers[currentQIndex] = idx;
+      renderQuestion();
+    }
+
+    function navigateQ(dir) {
+      const target = currentQIndex + dir;
+      if (target >= 0 && target < currentQuestions.length) {
+        currentQIndex = target;
+        renderQuestion();
+      }
+    }
+
+    function finishExam() {
+      clearInterval(timerInterval);
+      let score = 0;
+      const review = [];
+
+      currentQuestions.forEach((q, idx) => {
+        const chosen = selectedAnswers[idx] !== undefined ? selectedAnswers[idx] : null;
+        const isCorrect = chosen !== null && chosen === q.correctIndex;
+        if (isCorrect) score++;
+
+        review.push({
+          questionText: q.text,
+          options: q.options,
+          chosen,
+          correctIndex: q.correctIndex,
+          isCorrect,
+          explanation: q.explanation || ''
+        });
+      });
+
+      const total = currentQuestions.length;
+      const percent = Math.round((score / total) * 100);
+
+      document.getElementById('view-exam').style.display = 'none';
+      document.getElementById('view-result').style.display = 'block';
+
+      document.getElementById('resultPercent').innerText = `${percent}%`;
+      document.getElementById('resultSummary').innerText = `You scored ${score} out of ${total} questions (${percent >= 50 ? 'Passed' : 'Remedial'})`;
+
+      // Render review
+      const reviewContainer = document.getElementById('reviewContainer');
+      reviewContainer.innerHTML = '';
+      const letters = ['A', 'B', 'C', 'D'];
+
+      review.forEach((item, idx) => {
+        const div = document.createElement('div');
+        div.className = `review-item ${item.isCorrect ? 'correct' : 'wrong'}`;
+        const chosenText = item.chosen !== null ? `${letters[item.chosen]}. ${item.options[item.chosen]}` : 'Not answered';
+        const correctText = `${letters[item.correctIndex]}. ${item.options[item.correctIndex]}`;
+
+        div.innerHTML = `
+          <strong>Q${idx + 1}: ${item.questionText}</strong>
+          <div style="font-size: 0.85rem; margin-top: 6px;">
+            <span>Your Choice: <strong>${chosenText}</strong> ${item.isCorrect ? '✅' : '❌'}</span><br>
+            ${!item.isCorrect ? `<span>Correct Answer: <strong style="color: #166534;">${correctText}</strong></span>` : ''}
+          </div>
+          ${item.explanation ? `<div class="explanation-box">💡 <strong>Explanation:</strong> ${item.explanation}</div>` : ''}
+        `;
+        reviewContainer.appendChild(div);
+      });
+
+      // Save submission to local storage history
+      saveLocalAttempt({
+        id: 'offline-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6),
+        timestamp: Date.now(),
+        studentName: document.getElementById('candidateName').value.trim(),
+        schoolCode: document.getElementById('schoolCode').value.trim() || undefined,
+        classSection: document.getElementById('classSection').value.trim() || undefined,
+        level: document.getElementById('gradeLevel').value,
+        subjectId: document.getElementById('subjectSelect').value,
+        subjectName: subjects.find(s => s.id === document.getElementById('subjectSelect').value)?.name || 'Subject',
+        score,
+        total,
+        percent,
+        passed: percent >= 50
+      });
+    }
+
+    function saveLocalAttempt(attempt) {
+      const existing = JSON.parse(localStorage.getItem('codecastic_lab_attempts') || '[]');
+      existing.push(attempt);
+      localStorage.setItem('codecastic_lab_attempts', JSON.stringify(existing));
+    }
+
+    function exportResults() {
+      const attempts = JSON.parse(localStorage.getItem('codecastic_lab_attempts') || '[]');
+      if (attempts.length === 0) {
+        alert('No test attempts recorded on this station yet.');
+        return;
+      }
+      const data = {
+        exportType: 'codecastic_lab_results',
+        station: navigator.userAgent,
+        exportedAt: Date.now(),
+        totalSubmissions: attempts.length,
+        results: attempts
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ExamHub-Lab-Results-${new Date().toISOString().slice(0, 10)}.codecastic-results.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function resetToSetup() {
+      document.getElementById('view-result').style.display = 'none';
+      document.getElementById('view-setup').style.display = 'block';
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>

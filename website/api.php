@@ -764,6 +764,205 @@ if ($route === 'exam/submit' && $method === 'POST') {
     ]);
 }
 
+// Offline Question Pack: GET|POST /api/offline/pack
+if ($route === 'offline/pack' && ($method === 'GET' || $method === 'POST')) {
+    $reqLevel = $_GET['level'] ?? ($_POST['level'] ?? '');
+    $reqTrack = $_GET['track'] ?? ($_POST['track'] ?? '');
+
+    $normLvl = normLevel($reqLevel);
+    $track = trim((string)$reqTrack);
+
+    $matchedQuestions = [];
+    $isJhsOrBece = in_array((string)$normLvl, ['7', '8', '9', 'BECE'], true) || $track === 'basic' || $track === 'bece';
+    $isShsOrWassce = in_array((string)$normLvl, ['SHS 1', 'SHS 2', 'SHS 3', 'WASSCE', 'SHS'], true) || $track === 'shs' || $track === 'wassce';
+    $isGtle = ($normLvl === 'GTLE' || $track === 'gtle');
+    $isGes = ($normLvl === 'GES-PROMO' || $track === 'ges-promotion');
+
+    foreach ($db['questions'] as $q) {
+        $qLvl = (string)($q['level'] ?? '');
+        $match = false;
+        if ($normLvl !== null && $qLvl == (string)$normLvl) {
+            $match = true;
+        } elseif ($isJhsOrBece && in_array($qLvl, ['4', '5', '6', '7', '8', '9', 'BECE'], true)) {
+            $match = true;
+        } elseif ($isShsOrWassce && in_array($qLvl, ['SHS 1', 'SHS 2', 'SHS 3', 'WASSCE', 'SHS'], true)) {
+            $match = true;
+        } elseif ($isGtle && $qLvl === 'GTLE') {
+            $match = true;
+        } elseif ($isGes && in_array($qLvl, ['GES-PROMO', 'AD II', 'AD I', 'DD', 'DIR II', 'DIR I'], true)) {
+            $match = true;
+        } elseif ($normLvl === null && empty($track)) {
+            $match = true;
+        }
+        if ($match) {
+            $matchedQuestions[] = [
+                'id' => $q['id'] ?? '',
+                'subjectId' => $q['subjectId'] ?? '',
+                'level' => $q['level'] ?? '',
+                'text' => $q['text'] ?? '',
+                'options' => $q['options'] ?? [],
+                'correctIndex' => isset($q['correctIndex']) ? (int)$q['correctIndex'] : 0,
+                'explanation' => (string)($q['explanation'] ?? ''),
+                'year' => $q['year'] ?? null,
+                'category' => $q['category'] ?? null
+            ];
+        }
+    }
+
+    $safeSubjects = [];
+    foreach ($db['subjects'] as $s) {
+        $safeSubjects[] = [
+            'id' => $s['id'] ?? '',
+            'name' => $s['name'] ?? ''
+        ];
+    }
+
+    jsonOut([
+        'ok' => true,
+        'track' => $track,
+        'level' => $normLvl,
+        'subjects' => $safeSubjects,
+        'questions' => $matchedQuestions,
+        'totalQuestions' => count($matchedQuestions),
+        'timers' => $db['timers'] ?? [],
+        'generatedAt' => round(microtime(true) * 1000)
+    ]);
+}
+
+// Offline Batch Sync: POST /api/offline/sync-batch
+if ($route === 'offline/sync-batch' && $method === 'POST') {
+    $b = getJsonBody();
+    $submissions = is_array($b['submissions'] ?? null) ? $b['submissions'] : [];
+    if (empty($submissions)) {
+        jsonOut(['ok' => true, 'syncedCount' => 0, 'message' => 'No submissions to sync']);
+    }
+
+    $existingIds = [];
+    foreach ($db['results'] as $r) {
+        if (isset($r['id'])) $existingIds[$r['id']] = true;
+    }
+
+    $synced = [];
+    $schoolCodesMap = [];
+    foreach (($db['schools'] ?? []) as $sc) {
+        if (isset($sc['code']) && isset($sc['id'])) {
+            $schoolCodesMap[strtoupper(trim($sc['code']))] = $sc;
+        }
+    }
+
+    foreach ($submissions as $sub) {
+        $subId = trim((string)($sub['id'] ?? ''));
+        if ($subId === '') $subId = generateUuid();
+        if (isset($existingIds[$subId])) {
+            $synced[] = $subId;
+            continue;
+        }
+
+        $code = strtoupper(trim((string)($sub['schoolCode'] ?? '')));
+        $schoolId = trim((string)($sub['schoolId'] ?? ''));
+        $schoolName = trim((string)($sub['schoolName'] ?? ''));
+        if (isset($schoolCodesMap[$code])) {
+            $schoolId = $schoolCodesMap[$code]['id'];
+            if ($schoolName === '') $schoolName = $schoolCodesMap[$code]['name'];
+        }
+
+        $record = [
+            'id' => $subId,
+            'userId' => (string)($sub['userId'] ?? ''),
+            'studentName' => (string)($sub['studentName'] ?? 'Candidate'),
+            'studentEmail' => (string)($sub['studentEmail'] ?? ''),
+            'schoolId' => $schoolId,
+            'schoolName' => $schoolName,
+            'classSection' => (string)($sub['classSection'] ?? ''),
+            'level' => normLevel($sub['level'] ?? '') ?? $sub['level'],
+            'subjectId' => (string)($sub['subjectId'] ?? ''),
+            'subjectName' => (string)($sub['subjectName'] ?? 'Subject'),
+            'score' => (int)($sub['score'] ?? 0),
+            'total' => (int)($sub['total'] ?? 0),
+            'totalQuestions' => (int)($sub['total'] ?? 0),
+            'percent' => (int)($sub['percent'] ?? 0),
+            'passed' => !empty($sub['passed']),
+            'details' => is_array($sub['details'] ?? null) ? $sub['details'] : [],
+            'createdAt' => (int)($sub['timestamp'] ?? round(microtime(true) * 1000)),
+            'syncedAt' => round(microtime(true) * 1000),
+            'offlineOrigin' => true
+        ];
+
+        $db['results'][] = $record;
+        $existingIds[$subId] = true;
+        $synced[] = $subId;
+    }
+
+    saveDb($db);
+    jsonOut([
+        'ok' => true,
+        'syncedCount' => count($synced),
+        'syncedIds' => $synced
+    ]);
+}
+
+// School Lab Import: POST /api/school/lab/import
+if ($route === 'school/lab/import' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    $results = is_array($b['results'] ?? null) ? $b['results'] : [];
+    if (empty($results) && isset($b['data']) && is_array($b['data']['results'] ?? null)) {
+        $results = $b['data']['results'];
+    }
+
+    if (empty($results)) {
+        errorOut('No test results found in payload', 400);
+    }
+
+    $existingIds = [];
+    foreach ($db['results'] as $r) {
+        if (isset($r['id'])) $existingIds[$r['id']] = true;
+    }
+
+    $importedCount = 0;
+    $targetSchoolId = $u ? ($u['schoolId'] ?? '') : ($b['schoolId'] ?? '');
+    $targetSchoolName = $u ? ($u['schoolName'] ?? '') : ($b['schoolName'] ?? '');
+
+    foreach ($results as $item) {
+        $itemId = trim((string)($item['id'] ?? ''));
+        if ($itemId === '') $itemId = generateUuid();
+        if (isset($existingIds[$itemId])) continue;
+
+        $rec = [
+            'id' => $itemId,
+            'userId' => (string)($item['userId'] ?? ''),
+            'studentName' => (string)($item['studentName'] ?? 'Candidate'),
+            'studentEmail' => (string)($item['studentEmail'] ?? ''),
+            'schoolId' => $targetSchoolId ?: ($item['schoolId'] ?? ''),
+            'schoolName' => $targetSchoolName ?: ($item['schoolName'] ?? ''),
+            'classSection' => (string)($item['classSection'] ?? ''),
+            'level' => normLevel($item['level'] ?? '') ?? $item['level'],
+            'subjectId' => (string)($item['subjectId'] ?? ''),
+            'subjectName' => (string)($item['subjectName'] ?? 'Subject'),
+            'score' => (int)($item['score'] ?? 0),
+            'total' => (int)($item['total'] ?? 0),
+            'totalQuestions' => (int)($item['total'] ?? 0),
+            'percent' => (int)($item['percent'] ?? 0),
+            'passed' => !empty($item['passed']),
+            'details' => is_array($item['details'] ?? null) ? $item['details'] : [],
+            'createdAt' => (int)($item['timestamp'] ?? round(microtime(true) * 1000)),
+            'importedAt' => round(microtime(true) * 1000),
+            'importedFromLab' => true
+        ];
+
+        $db['results'][] = $rec;
+        $existingIds[$itemId] = true;
+        $importedCount++;
+    }
+
+    saveDb($db);
+    jsonOut([
+        'ok' => true,
+        'importedCount' => $importedCount,
+        'message' => "Successfully imported $importedCount lab test attempts."
+    ]);
+}
+
 // Student Exam History
 if ($route === 'student/history' && $method === 'POST') {
     $b = getJsonBody();
