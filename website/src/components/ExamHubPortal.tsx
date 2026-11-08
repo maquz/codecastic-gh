@@ -196,6 +196,7 @@ type StudentUser = {
     schoolId?: string;
     schoolName: string;
     schoolCode?: string;
+    studentCode?: string;
     classSection?: string;
     assignedSubjects?: string[];
     assignedLevels?: (string | number)[];
@@ -757,6 +758,7 @@ function StudentAuthView({
 }) {
     const isShsTrack = activeSlug === 'shs' || initialLevel === 'SHS';
     const [mode, setMode] = useState<'login' | 'register' | 'recover'>('login');
+    const [studentLoginType, setStudentLoginType] = useState<'school' | 'direct'>(isGesPromo ? 'direct' : 'school');
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [schoolCode, setSchoolCode] = useState('');
@@ -818,10 +820,19 @@ function StudentAuthView({
                 const res = await api.post('/api/auth/register', payload);
                 onAuthenticated(res.data.user, res.data.token);
             } else if (mode === 'login') {
-                const res = await api.post('/api/auth/login', {
-                    email: email.trim(),
-                    password,
-                });
+                const res = await api.post(
+                    '/api/auth/login',
+                    !isGesPromo && studentLoginType === 'school'
+                        ? {
+                              schoolCode: schoolCode.trim().toUpperCase(),
+                              studentIdentifier: name.trim() || email.trim(),
+                              password: password || 'Student2026#',
+                          }
+                        : {
+                              email: email.trim(),
+                              password,
+                          }
+                );
                 onAuthenticated(res.data.user, res.data.token);
             } else {
                 const res = await api.post('/api/auth/recover', {
@@ -1291,31 +1302,87 @@ function StudentAuthView({
                     renderBrowserRecoveryPanel()
                 ) : (
                     <>
-                        <form onSubmit={submit} className="mt-5 space-y-4">
-                            {mode === 'register' && (
-                                <Field label="Full Name">
-                                    <input
-                                        required
-                                        value={name}
-                                        onChange={(e) => setName(e.target.value)}
-                                        placeholder="e.g. Kofi Mensah"
-                                        autoComplete="name"
-                                        className="input"
-                                    />
-                                </Field>
-                            )}
+                        {mode === 'login' && !isGesPromo && (
+                            <div className="flex rounded-lg bg-slate-100 p-1 text-xs font-semibold mb-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setStudentLoginType('school')}
+                                    className={`flex-1 rounded-md py-1.5 transition text-center ${
+                                        studentLoginType === 'school'
+                                            ? 'bg-white text-[#364c83] shadow-xs font-bold'
+                                            : 'text-slate-500 hover:text-slate-800'
+                                    }`}
+                                >
+                                    🏫 School Student (Join Code)
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setStudentLoginType('direct')}
+                                    className={`flex-1 rounded-md py-1.5 transition text-center ${
+                                        studentLoginType === 'direct'
+                                            ? 'bg-white text-slate-800 shadow-xs font-bold'
+                                            : 'text-slate-500 hover:text-slate-800'
+                                    }`}
+                                >
+                                    ✉️ Private Candidate (Email)
+                                </button>
+                            </div>
+                        )}
 
-                            <Field label="Email Address">
-                                <input
-                                    required
-                                    type="email"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    placeholder="e.g. kofi@example.com"
-                                    autoComplete="email"
-                                    className="input"
-                                />
-                            </Field>
+                        <form onSubmit={submit} className="mt-3 space-y-4">
+                            {mode === 'login' && !isGesPromo && studentLoginType === 'school' ? (
+                                <>
+                                    <Field label="School Join Code">
+                                        <input
+                                            required
+                                            value={schoolCode}
+                                            onChange={(e) => setSchoolCode(e.target.value.toUpperCase())}
+                                            placeholder="e.g. SCH-XXXX"
+                                            className="input font-mono font-bold tracking-wide text-[#364c83]"
+                                        />
+                                        <span className="text-[11px] text-slate-400 mt-1 block">
+                                            Assigned by your school or ICT lab teacher
+                                        </span>
+                                    </Field>
+
+                                    <Field label="Student Full Name or Student ID">
+                                        <input
+                                            required
+                                            value={name}
+                                            onChange={(e) => setName(e.target.value)}
+                                            placeholder="e.g. Kwame Osei or STU-001"
+                                            className="input"
+                                        />
+                                    </Field>
+                                </>
+                            ) : (
+                                <>
+                                    {mode === 'register' && (
+                                        <Field label="Full Name">
+                                            <input
+                                                required
+                                                value={name}
+                                                onChange={(e) => setName(e.target.value)}
+                                                placeholder="e.g. Kofi Mensah"
+                                                autoComplete="name"
+                                                className="input"
+                                            />
+                                        </Field>
+                                    )}
+
+                                    <Field label="Email Address">
+                                        <input
+                                            required
+                                            type="email"
+                                            value={email}
+                                            onChange={(e) => setEmail(e.target.value)}
+                                            placeholder="e.g. kofi@example.com"
+                                            autoComplete="email"
+                                            className="input"
+                                        />
+                                    </Field>
+                                </>
+                            )}
 
                             {mode === 'register' && (
                                 <>
@@ -1376,9 +1443,13 @@ function StudentAuthView({
                             <div>
                                 <div className="mb-1.5 flex items-center justify-between">
                                     <span className="text-xs font-medium text-slate-600">
-                                        {mode === 'register' ? 'Password (min. 6 characters)' : 'Password'}
+                                        {mode === 'login' && !isGesPromo && studentLoginType === 'school'
+                                            ? 'Password / PIN (Optional)'
+                                            : mode === 'register'
+                                            ? 'Password (min. 6 characters)'
+                                            : 'Password'}
                                     </span>
-                                    {mode === 'login' && (
+                                    {mode === 'login' && (isGesPromo || studentLoginType !== 'school') && (
                                         <button
                                             type="button"
                                             onClick={() => switchMode('recover')}
@@ -1390,11 +1461,11 @@ function StudentAuthView({
                                 </div>
                                 <div className="relative">
                                     <input
-                                        required
+                                        required={mode === 'register' || (mode === 'login' && (isGesPromo || studentLoginType !== 'school'))}
                                         type={showPassword ? 'text' : 'password'}
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
-                                        placeholder="••••••••"
+                                        placeholder={mode === 'login' && !isGesPromo && studentLoginType === 'school' ? 'Default: Student2026#' : '••••••••'}
                                         autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                                         className="input pr-20"
                                     />
@@ -1416,7 +1487,11 @@ function StudentAuthView({
                                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#364c83] py-2.5 text-sm font-semibold text-white transition hover:bg-[#1f2d57] disabled:opacity-50"
                             >
                                 {busy && <Loader2 className="animate-spin" size={16} />}
-                                {mode === 'login' ? 'Sign in to ExamHub' : 'Create account & continue'}
+                                {mode === 'login'
+                                    ? !isGesPromo && studentLoginType === 'school'
+                                        ? 'Join Exam with School Code'
+                                        : 'Sign in to ExamHub'
+                                    : 'Create account & continue'}
                             </button>
                         </form>
 

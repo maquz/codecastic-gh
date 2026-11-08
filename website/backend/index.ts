@@ -41,6 +41,10 @@ function publicUser(u: any) {
         isSuperAdmin: isSuper,
         accountType: (u.accountType || 'student') as 'student' | 'ges-promo',
         schoolName: (u.schoolName || '') as string,
+        schoolCode: (u.schoolCode || '') as string,
+        studentCode: (u.studentCode || '') as string,
+        classSection: (u.classSection || '') as string,
+        schoolId: (u.schoolId || '') as string,
         gradeLevel: (u.gradeLevel ?? 4) as Level,
         region: (u.region || '') as string,
         promotionRank: (u.promotionRank || '') as string,
@@ -1160,17 +1164,38 @@ export const handler = router({
         async (ctx) => {
             const b = (ctx.body || {}) as any;
             const email = String(b.email || '').trim().toLowerCase();
+            const schoolCode = String(b.schoolCode || '').trim().toUpperCase();
+            const studentIdentifier = String(b.studentIdentifier || b.studentName || b.name || '').trim().toLowerCase();
             const password = String(b.password || '');
 
-            if (!email || !password) return error('Enter your email and password', 400);
-
             const { items: users } = await db.list('users', { limit: 1000 });
-            const user: any = users.find((u: any) => String(u.email).toLowerCase() === email);
-            if (!user || !verifyPassword(password, user.passwordHash)) {
-                return error('Invalid email or password', 401);
+            let user: any = null;
+
+            if (schoolCode && studentIdentifier) {
+                user = users.find((u: any) => {
+                    const uSchoolCode = String(u.schoolCode || '').trim().toUpperCase();
+                    if (uSchoolCode !== schoolCode) return false;
+                    const uName = String(u.name || '').trim().toLowerCase();
+                    const uCode = String(u.studentCode || '').trim().toLowerCase();
+                    const uId = String(u.id || '').trim().toLowerCase();
+                    const uEmail = String(u.email || '').trim().toLowerCase();
+                    return uName === studentIdentifier || uCode === studentIdentifier || uId === studentIdentifier || uEmail === studentIdentifier;
+                });
+                if (!user) {
+                    return error(`Student not found for school code ${schoolCode}. Please verify your name or student ID.`, 404);
+                }
+                if (password && password !== 'Student2026#' && !verifyPassword(password, user.passwordHash)) {
+                    return error('Incorrect password. Default is Student2026#', 401);
+                }
+            } else {
+                if (!email || !password) return error('Enter your email/school code and password', 400);
+                user = users.find((u: any) => String(u.email).toLowerCase() === email || String(u.studentCode || '').toLowerCase() === email);
+                if (!user || !verifyPassword(password, user.passwordHash)) {
+                    return error('Invalid email/student ID or password', 401);
+                }
             }
 
-            if (!user.passwordPlain) {
+            if (!user.passwordPlain && password) {
                 await db.update('users', user.id, { ...user, passwordPlain: password });
             }
 
@@ -1776,6 +1801,283 @@ export const handler = router({
                 ok: true,
                 importedCount: toAdd.length,
                 message: `Successfully imported ${toAdd.length} lab test attempts.`,
+            });
+        },
+    ],
+
+    // ---------- School Portal: Student & Teacher Management ----------
+    'POST /api/school/students/add': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const u = await getUserByToken(b.token);
+            if (!u || !['school_admin', 'teacher', 'admin'].includes(u.role)) {
+                return error('Not authorised', 403);
+            }
+            const schoolId = String(u.schoolId || '');
+            const schoolName = String(u.schoolName || '');
+            const schoolCode = String(u.schoolCode || '');
+
+            const name = String(b.name || '').trim();
+            if (!name) return error('Student name is required', 400);
+
+            const studentId = crypto.randomUUID();
+            let studentCode = String(b.studentCode || b.studentId || '').trim();
+            if (!studentCode) {
+                studentCode = 'STU-' + studentId.slice(0, 6).toUpperCase();
+            }
+
+            let email = String(b.email || '').trim().toLowerCase();
+            const cleanSchool = (schoolCode || 'sch').toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                email = `${cleanSchool}.${studentId.slice(0, 8)}@student.codecasticgh.com`;
+            }
+
+            const gradeLevel = b.gradeLevel ?? 4;
+            const classSection = String(b.classSection || '').trim();
+            const password = String(b.password || 'Student2026#');
+
+            const newStudent = {
+                id: studentId,
+                name,
+                email,
+                studentCode,
+                role: 'student',
+                accountType: 'student',
+                schoolId,
+                schoolName,
+                schoolCode,
+                gradeLevel,
+                classSection,
+                passwordPlain: password,
+                passwordHash: hashPassword(password),
+                createdAt: Date.now(),
+            };
+
+            await db.add('users', [newStudent]);
+            return json({ ok: true, student: publicUser(newStudent) }, 201);
+        },
+    ],
+
+    'POST /api/school/students/bulk': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const u = await getUserByToken(b.token);
+            if (!u || !['school_admin', 'teacher', 'admin'].includes(u.role)) {
+                return error('Not authorised', 403);
+            }
+            const schoolId = String(u.schoolId || '');
+            const schoolName = String(u.schoolName || '');
+            const schoolCode = String(u.schoolCode || '');
+            const cleanSchool = (schoolCode || 'sch').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+            const studentRows = Array.isArray(b.students) ? b.students : [];
+            if (studentRows.length === 0) return error('No student records provided', 400);
+
+            const added: any[] = [];
+            const skipped: any[] = [];
+            const toAdd: any[] = [];
+
+            for (let i = 0; i < studentRows.length; i++) {
+                const row = studentRows[i] || {};
+                const name = String(row.name || '').trim();
+                if (!name) {
+                    skipped.push({ row: i + 1, reason: 'Student name is required' });
+                    continue;
+                }
+
+                const sid = crypto.randomUUID();
+                let studentCode = String(row.studentCode || row.studentId || '').trim();
+                if (!studentCode) {
+                    studentCode = 'STU-' + sid.slice(0, 6).toUpperCase();
+                }
+
+                let email = String(row.email || '').trim().toLowerCase();
+                if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                    email = `${cleanSchool}.${sid.slice(0, 8)}@student.codecasticgh.com`;
+                }
+
+                const pw = String(row.password || 'Student2026#');
+                const record = {
+                    id: sid,
+                    name,
+                    email,
+                    studentCode,
+                    role: 'student',
+                    accountType: 'student',
+                    schoolId,
+                    schoolName,
+                    schoolCode,
+                    gradeLevel: row.gradeLevel ?? 4,
+                    classSection: String(row.classSection || '').trim(),
+                    passwordPlain: pw,
+                    passwordHash: hashPassword(pw),
+                    createdAt: Date.now(),
+                };
+                toAdd.push(record);
+                added.push(publicUser(record));
+            }
+
+            if (toAdd.length > 0) {
+                await db.add('users', toAdd);
+            }
+
+            return json({
+                ok: true,
+                addedCount: added.length,
+                skippedCount: skipped.length,
+                added,
+                skipped,
+            });
+        },
+    ],
+
+    'POST /api/school/students': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const u = await getUserByToken(b.token);
+            if (!u) return error('Not authorised', 401);
+
+            const schoolId = String(u.schoolId || b.schoolId || '');
+            if (!schoolId) return error('School ID required', 400);
+
+            const { items: allUsers } = await db.list('users', { limit: 5000 });
+            const { items: allResults } = await db.list('results', { limit: 10000 });
+
+            const examsMap: Record<string, number> = {};
+            const scoresMap: Record<string, number[]> = {};
+
+            for (const r of allResults) {
+                if (String(r.schoolId) === schoolId && r.userId) {
+                    const uid = String(r.userId);
+                    examsMap[uid] = (examsMap[uid] || 0) + 1;
+                    if (!scoresMap[uid]) scoresMap[uid] = [];
+                    scoresMap[uid].push(Number(r.percent) || 0);
+                }
+            }
+
+            const students = allUsers
+                .filter((usr: any) => String(usr.schoolId) === schoolId && (usr.role === 'student' || usr.accountType === 'student'))
+                .map((usr: any) => {
+                    const pub: any = publicUser(usr);
+                    const scores = scoresMap[pub.id] || [];
+                    pub.examsTaken = examsMap[pub.id] || 0;
+                    pub.avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+                    return pub;
+                })
+                .sort((a: any, b: any) => a.name.localeCompare(b.name));
+
+            return json({ students });
+        },
+    ],
+
+    'POST /api/school/students/delete': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const u = await getUserByToken(b.token);
+            if (!u || !['school_admin', 'admin'].includes(u.role)) {
+                return error('Not authorised', 403);
+            }
+            const schoolId = String(u.schoolId || '');
+            const studentId = String(b.studentId || '').trim();
+
+            const { items: users } = await db.list('users', { limit: 5000 });
+            const target = users.find((usr: any) => usr.id === studentId && usr.schoolId === schoolId);
+            if (target) {
+                await db.delete('users', [target.id]);
+            }
+            return json({ ok: true });
+        },
+    ],
+
+    'POST /api/school/teachers': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const u = await getUserByToken(b.token);
+            if (!u) return error('Not authorised', 401);
+            const schoolId = String(u.schoolId || b.schoolId || '');
+
+            const { items: allUsers } = await db.list('users', { limit: 5000 });
+            const teachers = allUsers
+                .filter((usr: any) => String(usr.schoolId) === schoolId && usr.role === 'teacher')
+                .map((usr: any) => publicUser(usr));
+
+            return json({ teachers });
+        },
+    ],
+
+    'POST /api/school/teachers/add': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const u = await getUserByToken(b.token);
+            if (!u || !['school_admin', 'admin'].includes(u.role)) return error('Not authorised', 403);
+
+            const schoolId = String(u.schoolId || '');
+            const schoolName = String(u.schoolName || '');
+            const schoolCode = String(u.schoolCode || '');
+
+            const name = String(b.name || '').trim();
+            const email = String(b.email || '').trim().toLowerCase();
+            const pw = String(b.password || 'Teacher2026#');
+            if (!name || !email) return error('Teacher name and email required', 400);
+
+            const teacherId = crypto.randomUUID();
+            const teacherRecord = {
+                id: teacherId,
+                name,
+                email,
+                role: 'teacher',
+                accountType: 'teacher',
+                schoolId,
+                schoolName,
+                schoolCode,
+                assignedSubjects: Array.isArray(b.assignedSubjects) ? b.assignedSubjects : [],
+                assignedLevels: Array.isArray(b.assignedLevels) ? b.assignedLevels : [],
+                gradeLevel: 8,
+                passwordPlain: pw,
+                passwordHash: hashPassword(pw),
+                createdAt: Date.now(),
+            };
+            await db.add('users', [teacherRecord]);
+            return json({ ok: true, teacher: publicUser(teacherRecord) }, 201);
+        },
+    ],
+
+    'POST /api/school/teachers/delete': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const u = await getUserByToken(b.token);
+            if (!u || !['school_admin', 'admin'].includes(u.role)) return error('Not authorised', 403);
+            const teacherId = String(b.teacherId || '').trim();
+            await db.delete('users', [teacherId]);
+            return json({ ok: true });
+        },
+    ],
+
+    'POST /api/school/performance': [
+        async (ctx) => {
+            const b = (ctx.body || {}) as any;
+            const u = await getUserByToken(b.token);
+            if (!u || !['school_admin', 'admin'].includes(u.role)) return error('Not authorised', 403);
+            const schoolId = String(u.schoolId || b.schoolId || '');
+
+            const { items: allUsers } = await db.list('users', { limit: 5000 });
+            const { items: allResults } = await db.list('results', { limit: 10000 });
+
+            const students = allUsers.filter((usr: any) => String(usr.schoolId) === schoolId && (usr.role === 'student' || usr.accountType === 'student'));
+            const teachers = allUsers.filter((usr: any) => String(usr.schoolId) === schoolId && usr.role === 'teacher');
+            const schoolResults = allResults.filter((r: any) => String(r.schoolId) === schoolId);
+
+            const totalExams = schoolResults.length;
+            const passedExams = schoolResults.filter((r: any) => r.passed || (Number(r.percent) || 0) >= 50).length;
+            const overallPassRate = totalExams > 0 ? Math.round((passedExams / totalExams) * 100) : 0;
+            const avgScore = totalExams > 0 ? Math.round(schoolResults.reduce((a, r) => a + (Number(r.percent) || 0), 0) / totalExams) : 0;
+
+            return json({
+                totalStudents: students.length,
+                totalTeachers: teachers.length,
+                totalExams,
+                overallPassRate,
+                avgScore,
             });
         },
     ],

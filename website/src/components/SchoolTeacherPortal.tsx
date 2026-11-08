@@ -38,6 +38,7 @@ export type PortalUser = {
     schoolId?: string;
     schoolName: string;
     schoolCode?: string;
+    studentCode?: string;
     classSection?: string;
     assignedSubjects?: string[];
     assignedLevels?: (string | number)[];
@@ -696,7 +697,9 @@ export function TeacherPortalView({
                                         <tr key={r.id || i} className="hover:bg-slate-50/60 transition">
                                             <td className="px-4 py-3 font-semibold text-slate-900">
                                                 {r.studentName}
-                                                <span className="block text-[11px] text-slate-400 font-normal">{r.studentEmail}</span>
+                                                {r.studentEmail && !r.studentEmail.endsWith('@student.codecasticgh.com') && (
+                                                    <span className="block text-[11px] text-slate-400 font-normal">{r.studentEmail}</span>
+                                                )}
                                             </td>
                                             <td className="px-4 py-3 text-slate-700">
                                                 {r.classSection ? `${isNumeric(r.level) ? `Basic ${r.level}` : r.level} (${r.classSection})` : isNumeric(r.level) ? `Basic ${r.level}` : r.level}
@@ -973,9 +976,9 @@ export function SchoolAdminPortalView({
     const [tLevels, setTLevels] = useState<string[]>(['7', '8', '9']);
     const [addingTeacher, setAddingTeacher] = useState(false);
 
-    // Mount Student Form State
+    // Mount Student Form State (No email needed — authenticated via School Code)
     const [sName, setSName] = useState('');
-    const [sEmail, setSEmail] = useState('');
+    const [sId, setSId] = useState('');
     const [sLevel, setSLevel] = useState<string>('8');
     const [sSection, setSSection] = useState('');
     const [addingStudent, setAddingStudent] = useState(false);
@@ -1023,6 +1026,63 @@ export function SchoolAdminPortalView({
         }
     };
 
+    const downloadCsvTemplate = () => {
+        const csvContent =
+            "Student Full Name,Grade Level,Class Section,Student ID\n" +
+            "Kwame Osei,Basic 8,8A,STU-001\n" +
+            "Abena Mensah,Basic 9,9B,STU-002\n" +
+            "Kofi Appiah,SHS 2,Science 1,STU-003\n" +
+            "Ama Serwaa,Basic 7,Gold,STU-004\n";
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', 'codecastic_students_bulk_upload_template.csv');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const downloadStudentsCsv = () => {
+        if (students.length === 0) {
+            flash(false, 'No enrolled students to export yet.');
+            return;
+        }
+        const headers = ["Student Name", "Student ID / Code", "School Code", "Grade Level", "Class Section", "Exams Taken", "Average Score (%)"];
+        const rows = students.map((st) => [
+            `"${(st.name || '').replace(/"/g, '""')}"`,
+            `"${((st as any).studentCode || st.id?.slice(0, 8)?.toUpperCase() || '').replace(/"/g, '""')}"`,
+            `"${(user.schoolCode || '').replace(/"/g, '""')}"`,
+            `"${isNumeric(st.gradeLevel) ? `Basic ${st.gradeLevel}` : st.gradeLevel}"`,
+            `"${(st.classSection || '').replace(/"/g, '""')}"`,
+            (st as any).examsTaken ?? 0,
+            (st as any).avgScore ? `${(st as any).avgScore}%` : '--',
+        ]);
+        const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        const safeSchool = (user.schoolName || 'school').toLowerCase().replace(/[^a-z0-9]/g, '_');
+        link.setAttribute('download', `${safeSchool}_enrolled_students.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleBulkFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            const text = String(evt.target?.result || '');
+            setBulkCsvText(text);
+        };
+        reader.readAsText(file);
+    };
+
     const handleAddTeacher = async (e: FormEvent) => {
         e.preventDefault();
         setAddingTeacher(true);
@@ -1065,12 +1125,12 @@ export function SchoolAdminPortalView({
             await api.post('/api/school/students/add', {
                 token,
                 name: sName.trim(),
-                email: sEmail.trim(),
+                studentCode: sId.trim(),
                 gradeLevel: sLevel,
                 classSection: sSection.trim(),
             });
             setSName('');
-            setSEmail('');
+            setSId('');
             setSSection('');
             flash(true, 'Student enrolled successfully!');
             loadAll();
@@ -1098,24 +1158,61 @@ export function SchoolAdminPortalView({
         try {
             const lines = bulkCsvText.trim().split('\n');
             const studentsToPost: any[] = [];
-            for (const line of lines) {
-                const parts = line.split(',').map((p) => p.trim());
-                if (parts.length >= 2) {
+            for (const rawLine of lines) {
+                const line = rawLine.trim();
+                if (!line) continue;
+                // Skip header row if present
+                if (/^(student\s*name|name|full\s*name)/i.test(line)) continue;
+
+                // Split by comma or tab (handles copy-paste from Excel / Google Sheets)
+                const parts = (line.includes('\t') ? line.split('\t') : line.split(',')).map((p) => p.trim());
+                if (parts.length >= 1 && parts[0]) {
+                    const name = parts[0];
+                    let grade: any = sLevel;
+                    let section = '';
+                    let studentCode = '';
+
+                    if (parts.length >= 2) {
+                        const p1 = parts[1];
+                        if (p1.includes('@')) {
+                            // Legacy row with email in column 1: Name, Email, Level, Section, StudentID
+                            grade = parts[2] ? normalizeLevelStr(parts[2], sLevel) : sLevel;
+                            section = parts[3] || '';
+                            studentCode = parts[4] || '';
+                        } else {
+                            const parsedLvl = normalizeLevelStr(p1, null);
+                            if (parsedLvl !== null) {
+                                grade = parsedLvl;
+                                section = parts[2] || '';
+                                studentCode = parts[3] || '';
+                            } else {
+                                section = p1;
+                                studentCode = parts[2] || '';
+                            }
+                        }
+                    }
+
                     studentsToPost.push({
-                        name: parts[0],
-                        email: parts[1],
-                        gradeLevel: parts[2] || sLevel,
-                        classSection: parts[3] || '',
-                        password: parts[4] || 'Student2026#',
+                        name,
+                        gradeLevel: grade,
+                        classSection: section,
+                        studentCode,
+                        password: 'Student2026#',
                     });
                 }
             }
+
+            if (studentsToPost.length === 0) {
+                flash(false, 'No valid student rows found. Please check your CSV format.');
+                return;
+            }
+
             const res = await api.post('/api/school/students/bulk', {
                 token,
                 students: studentsToPost,
             });
             setBulkResult({ added: res.data.addedCount, skipped: res.data.skippedCount });
-            flash(true, `Imported ${res.data.addedCount} students successfully!`);
+            flash(true, `Mounted ${res.data.addedCount} students to your school successfully!`);
             loadAll();
         } catch (e2: any) {
             flash(false, e2?.response?.data?.error || 'Failed bulk import.');
@@ -1466,17 +1563,40 @@ export function SchoolAdminPortalView({
             {tab === 'students' && (
                 <div className="space-y-6">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                        <span className="text-xs font-bold text-slate-700">
-                            Enrolled Students ({students.length})
-                        </span>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold text-slate-700">
+                                Enrolled Students ({students.length})
+                            </span>
+                            <span className="rounded bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-[#364c83]">
+                                School Join Code: <span className="font-mono font-bold">{user.schoolCode || 'N/A'}</span>
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                                type="button"
+                                onClick={downloadCsvTemplate}
+                                className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-2xs"
+                                title="Download sample CSV format template for student roster"
+                            >
+                                <Download size={13} className="text-slate-500" />
+                                CSV Template
+                            </button>
+                            <button
+                                type="button"
+                                onClick={downloadStudentsCsv}
+                                className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs"
+                                title="Download enrolled students list in CSV format"
+                            >
+                                <Download size={13} />
+                                Export Students (CSV)
+                            </button>
                             <button
                                 type="button"
                                 onClick={() => setShowBulkModal(true)}
-                                className="flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-[#364c83] hover:bg-indigo-100"
+                                className="flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-[#364c83] hover:bg-indigo-100 transition shadow-2xs"
                             >
                                 <Upload size={13} />
-                                Bulk Upload Students (CSV / Excel)
+                                Bulk Upload Students (CSV)
                             </button>
                         </div>
                     </div>
@@ -1484,7 +1604,10 @@ export function SchoolAdminPortalView({
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         {/* Single Student Add */}
                         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
-                            <h3 className="text-sm font-bold text-slate-900 mb-3">Add Single Student</h3>
+                            <h3 className="text-sm font-bold text-slate-900 mb-1">Add Single Student</h3>
+                            <p className="text-[11px] text-slate-500 mb-3">
+                                No email required. Students join using your School Code <strong className="font-mono text-[#364c83]">{user.schoolCode}</strong>.
+                            </p>
                             <form onSubmit={handleAddStudent} className="space-y-3 text-xs">
                                 <div>
                                     <label className="block font-semibold text-slate-700 mb-1">Student Full Name</label>
@@ -1497,15 +1620,16 @@ export function SchoolAdminPortalView({
                                     />
                                 </div>
                                 <div>
-                                    <label className="block font-semibold text-slate-700 mb-1">Student Email</label>
+                                    <label className="block font-semibold text-slate-700 mb-1">Student ID / Index No. (Optional)</label>
                                     <input
-                                        required
-                                        type="email"
-                                        value={sEmail}
-                                        onChange={(e) => setSEmail(e.target.value)}
-                                        placeholder="kwame@example.com"
+                                        value={sId}
+                                        onChange={(e) => setSId(e.target.value)}
+                                        placeholder="e.g. STU-001 or Index Number"
                                         className="input text-xs"
                                     />
+                                    <span className="text-[10px] text-slate-400 mt-0.5 block">
+                                        Assigned automatically if left blank.
+                                    </span>
                                 </div>
                                 <div>
                                     <label className="block font-semibold text-slate-700 mb-1">Grade / Exam Level</label>
@@ -1545,7 +1669,7 @@ export function SchoolAdminPortalView({
                                 <table className="w-full text-left text-xs">
                                     <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase">
                                         <tr>
-                                            <th className="px-4 py-2.5">Name / Email</th>
+                                            <th className="px-4 py-2.5">Student Name / ID</th>
                                             <th className="px-4 py-2.5">Level</th>
                                             <th className="px-4 py-2.5">Section</th>
                                             <th className="px-4 py-2.5">Exams Taken</th>
@@ -1558,7 +1682,9 @@ export function SchoolAdminPortalView({
                                             <tr key={st.id} className="hover:bg-slate-50/60">
                                                 <td className="px-4 py-2.5 font-semibold text-slate-900">
                                                     {st.name}
-                                                    <span className="block text-[11px] font-normal text-slate-400">{st.email}</span>
+                                                    <span className="block text-[11px] font-mono text-slate-500 font-normal">
+                                                        ID: {(st as any).studentCode || st.id?.slice(0, 8)?.toUpperCase()}
+                                                    </span>
                                                 </td>
                                                 <td className="px-4 py-2.5 text-slate-700">
                                                     {isNumeric(st.gradeLevel) ? `Basic ${st.gradeLevel}` : st.gradeLevel}
@@ -1583,7 +1709,7 @@ export function SchoolAdminPortalView({
                                         {students.length === 0 && (
                                             <tr>
                                                 <td colSpan={6} className="py-8 text-center text-slate-400">
-                                                    No students enrolled yet. Add students on the left or use Bulk Upload.
+                                                    No students enrolled yet. Add students on the left, use Bulk Upload, or download the CSV template to prepare your list.
                                                 </td>
                                             </tr>
                                         )}
@@ -1736,28 +1862,52 @@ export function SchoolAdminPortalView({
 
                         <div className="mt-4 text-xs space-y-3">
                             <div className="rounded-lg bg-indigo-50/70 border border-indigo-200 p-3 text-slate-700">
-                                <strong>Format (one student per line):</strong>
+                                <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                                    <strong>Format (one student per line):</strong>
+                                    <button
+                                        type="button"
+                                        onClick={downloadCsvTemplate}
+                                        className="inline-flex items-center gap-1 text-[11px] font-bold text-[#364c83] hover:underline"
+                                    >
+                                        <Download size={12} />
+                                        Download CSV Template
+                                    </button>
+                                </div>
                                 <pre className="mt-1 font-mono text-[11px] text-[#364c83] bg-white/80 p-2 rounded border border-indigo-100">
-{`Kofi Mensah, kofi@example.com, 8, 8A
-Ama Serwaa, ama@example.com, 9, 9B
-Yaw Boakye, yaw@example.com, SHS 2, Science 1`}
+{`Kwame Osei, Basic 8, 8A, STU-001
+Abena Mensah, Basic 9, 9B, STU-002
+Yaw Boakye, SHS 2, Science 1, STU-003`}
                                 </pre>
                                 <span className="text-[10px] text-slate-500 mt-1 block">
-                                    Fields: Name, Email, Grade Level (4-9 or SHS 1-3), Class Section (optional), Password (optional)
+                                    Columns: <strong>Student Full Name, Grade Level (Basic 4-9 or SHS 1-3), Class Section (optional), Student ID (optional)</strong>. No emails needed — students join using school code <span className="font-mono font-bold text-[#364c83]">{user.schoolCode}</span>.
                                 </span>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2 text-xs">
+                                <label className="flex items-center gap-1.5 cursor-pointer rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 transition">
+                                    <Upload size={13} className="text-slate-500" />
+                                    <span>Upload CSV / Excel File</span>
+                                    <input
+                                        type="file"
+                                        accept=".csv,.tsv,.txt"
+                                        onChange={handleBulkFileUpload}
+                                        className="hidden"
+                                    />
+                                </label>
+                                <span className="text-[11px] text-slate-400">or paste directly below</span>
                             </div>
 
                             <textarea
                                 rows={8}
                                 value={bulkCsvText}
                                 onChange={(e) => setBulkCsvText(e.target.value)}
-                                placeholder="Paste CSV rows here..."
+                                placeholder={`Kwame Osei, Basic 8, 8A, STU-001\nAbena Mensah, Basic 9, 9B, STU-002\nYaw Boakye, SHS 2, Science 1, STU-003`}
                                 className="input font-mono text-xs w-full p-3 leading-relaxed"
                             />
 
                             {bulkResult && (
                                 <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-2.5 text-emerald-800 text-xs">
-                                    ✓ Provisioned <strong>{bulkResult.added}</strong> students. Skipped: {bulkResult.skipped}.
+                                    ✓ Mounted <strong>{bulkResult.added}</strong> students. Skipped: {bulkResult.skipped}.
                                 </div>
                             )}
 
@@ -1794,3 +1944,15 @@ function isNumeric(val: any): boolean {
 function chr(index: number): string {
     return String.fromCharCode(65 + index);
 }
+
+function normalizeLevelStr(val: any, fallback: any = 8): any {
+    const s = String(val || '').trim().toLowerCase();
+    if (!s) return fallback;
+    if (s.includes('shs 1') || s === 'shs1') return 'SHS 1';
+    if (s.includes('shs 2') || s === 'shs2') return 'SHS 2';
+    if (s.includes('shs 3') || s === 'shs3' || s.includes('wassce')) return 'SHS 3';
+    const num = parseInt(s.replace(/[^0-9]/g, ''), 10);
+    if (!isNaN(num) && num >= 4 && num <= 9) return num;
+    return fallback;
+}
+

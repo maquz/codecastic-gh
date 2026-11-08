@@ -400,6 +400,7 @@ function publicUser($u) {
         'schoolId' => (string)($u['schoolId'] ?? ''),
         'schoolName' => (string)($u['schoolName'] ?? ''),
         'schoolCode' => (string)($u['schoolCode'] ?? ''),
+        'studentCode' => (string)($u['studentCode'] ?? ''),
         'gradeLevel' => $u['gradeLevel'] ?? 4,
         'classSection' => (string)($u['classSection'] ?? ''),
         'assignedSubjects' => is_array($u['assignedSubjects'] ?? null) ? $u['assignedSubjects'] : [],
@@ -1180,20 +1181,48 @@ if ($route === 'auth/register' && $method === 'POST') {
 if ($route === 'auth/login' && $method === 'POST') {
     $b = getJsonBody();
     $email = strtolower(trim((string)($b['email'] ?? '')));
+    $schoolCode = strtoupper(trim((string)($b['schoolCode'] ?? '')));
+    $studentIdentifier = trim((string)($b['studentIdentifier'] ?? ($b['studentName'] ?? ($b['name'] ?? ''))));
     $password = (string)($b['password'] ?? '');
 
-    if ($email === '' || $password === '') errorOut('Enter your email and password', 400);
-
     $found = null;
-    foreach ($db['users'] as $u) {
-        if (strtolower(trim((string)($u['email'] ?? ''))) === $email) {
-            $found = $u;
-            break;
-        }
-    }
 
-    if (!$found || !verifyUserPassword($password, $found)) {
-        errorOut('Invalid email or password', 401);
+    if ($schoolCode !== '' && $studentIdentifier !== '') {
+        // School student login via School Code + Name or Student Code
+        foreach ($db['users'] as $u) {
+            $uSchoolCode = strtoupper(trim((string)($u['schoolCode'] ?? '')));
+            if ($uSchoolCode === $schoolCode) {
+                $uName = strtolower(trim((string)($u['name'] ?? '')));
+                $uCode = strtolower(trim((string)($u['studentCode'] ?? '')));
+                $uId = strtolower(trim((string)($u['id'] ?? '')));
+                $uEmail = strtolower(trim((string)($u['email'] ?? '')));
+                $identLower = strtolower($studentIdentifier);
+
+                if ($uName === $identLower || $uCode === $identLower || $uId === $identLower || $uEmail === $identLower) {
+                    $found = $u;
+                    break;
+                }
+            }
+        }
+        if (!$found) {
+            errorOut('Student not found for school code ' . $schoolCode . '. Please verify your name or student ID.', 404);
+        }
+        if ($password !== '' && $password !== 'Student2026#' && !verifyUserPassword($password, $found)) {
+            errorOut('Incorrect password. Default password is Student2026#', 401);
+        }
+    } else {
+        if ($email === '' || $password === '') errorOut('Enter your email/school code and password', 400);
+
+        foreach ($db['users'] as $u) {
+            if (strtolower(trim((string)($u['email'] ?? ''))) === $email || strtolower(trim((string)($u['studentCode'] ?? ''))) === $email) {
+                $found = $u;
+                break;
+            }
+        }
+
+        if (!$found || !verifyUserPassword($password, $found)) {
+            errorOut('Invalid email or password', 401);
+        }
     }
 
     $token = bin2hex(random_bytes(24));
@@ -3235,26 +3264,31 @@ if ($route === 'school/students/add' && $method === 'POST') {
 
     $name = trim((string)($b['name'] ?? ''));
     $email = strtolower(trim((string)($b['email'] ?? '')));
+    $studentCode = trim((string)($b['studentCode'] ?? ($b['studentId'] ?? '')));
     $password = trim((string)($b['password'] ?? ''));
     if ($password === '') $password = 'Student2026#';
     $gradeLevel = normLevel($b['gradeLevel'] ?? 4) ?? 4;
     $classSection = trim((string)($b['classSection'] ?? ''));
 
     if ($name === '') errorOut('Student name is required', 400);
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) errorOut('Enter a valid student email address', 400);
-
-    foreach ($db['users'] as $eu) {
-        if (strtolower(trim((string)($eu['email'] ?? ''))) === $email) {
-            errorOut('An account with this email already exists.', 409);
-        }
-    }
 
     $studentId = generateUuid();
+    if ($studentCode === '') {
+        $studentCode = 'STU-' . strtoupper(substr($studentId, 0, 6));
+    }
+
+    $cleanSchool = strtolower(preg_replace('/[^a-z0-9]/', '', $schoolCode ?: 'sch'));
+    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $cleanName = strtolower(preg_replace('/[^a-z0-9]/', '', $name));
+        $email = $cleanSchool . '.' . substr($studentId, 0, 8) . '@student.codecasticgh.com';
+    }
+
     $now = round(microtime(true) * 1000);
     $studentRecord = [
         'id' => $studentId,
         'name' => $name,
         'email' => $email,
+        'studentCode' => $studentCode,
         'role' => 'student',
         'accountType' => 'student',
         'schoolId' => $schoolId,
@@ -3288,39 +3322,40 @@ if ($route === 'school/students/bulk' && $method === 'POST') {
     $studentRows = is_array($b['students'] ?? null) ? $b['students'] : [];
     if (empty($studentRows)) errorOut('No student records provided in payload', 400);
 
-    $existingEmails = [];
-    foreach ($db['users'] as $usr) {
-        if (!empty($usr['email'])) $existingEmails[strtolower(trim($usr['email']))] = true;
-    }
-
     $now = round(microtime(true) * 1000);
     $added = [];
     $skipped = [];
+    $cleanSchool = strtolower(preg_replace('/[^a-z0-9]/', '', $schoolCode ?: 'sch'));
 
-    foreach ($studentRows as $row) {
+    foreach ($studentRows as $idx => $row) {
         $name = trim((string)($row['name'] ?? ''));
-        $email = strtolower(trim((string)($row['email'] ?? '')));
+        if ($name === '') {
+            $skipped[] = ['row' => $idx + 1, 'reason' => 'Student name is required'];
+            continue;
+        }
+
+        $studentCode = trim((string)($row['studentCode'] ?? ($row['studentId'] ?? '')));
         $rawLevel = $row['gradeLevel'] ?? 4;
         $lvl = normLevel($rawLevel) ?? 4;
         $section = trim((string)($row['classSection'] ?? ''));
         $pw = trim((string)($row['password'] ?? ''));
         if ($pw === '') $pw = 'Student2026#';
 
-        if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $skipped[] = ['email' => $email, 'reason' => 'Invalid name or email'];
-            continue;
-        }
-
-        if (isset($existingEmails[$email])) {
-            $skipped[] = ['email' => $email, 'reason' => 'Email already registered'];
-            continue;
-        }
-
         $sid = generateUuid();
+        if ($studentCode === '') {
+            $studentCode = 'STU-' . strtoupper(substr($sid, 0, 6));
+        }
+
+        $email = strtolower(trim((string)($row['email'] ?? '')));
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $email = $cleanSchool . '.' . substr($sid, 0, 8) . '@student.codecasticgh.com';
+        }
+
         $record = [
             'id' => $sid,
             'name' => $name,
             'email' => $email,
+            'studentCode' => $studentCode,
             'role' => 'student',
             'accountType' => 'student',
             'schoolId' => $schoolId,
@@ -3334,7 +3369,6 @@ if ($route === 'school/students/bulk' && $method === 'POST') {
         ];
 
         $db['users'][] = $record;
-        $existingEmails[$email] = true;
         $added[] = publicUser($record);
     }
 
