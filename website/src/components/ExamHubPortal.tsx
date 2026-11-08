@@ -4,6 +4,7 @@ import { api } from '@appdeploy/client';
 import { TRACKS } from '../exams';
 import { navigate } from '../ui';
 import { SchoolAuthModal, SchoolAdminPortalView, TeacherPortalView } from './SchoolTeacherPortal';
+import type { PortalUser } from './SchoolTeacherPortal';
 import {
     GraduationCap,
     BookOpen,
@@ -58,13 +59,10 @@ import {
     Pause,
     Play,
     StopCircle,
-    Copy,
     Check,
     Wifi,
     WifiOff,
-    CloudOff,
     RefreshCw,
-    Shield,
     ShieldAlert,
     ShieldCheck,
     Crown,
@@ -643,7 +641,7 @@ export default function ExamHubPortal({
                 ) : tab === 'school' ? (
                     user && user.role === 'school_admin' ? (
                         <SchoolAdminPortalView
-                            user={user}
+                            user={user as unknown as PortalUser}
                             token={token}
                             onLogout={handleStudentLogout}
                             onSwitchToStudent={() => setTab('student')}
@@ -678,7 +676,7 @@ export default function ExamHubPortal({
                 ) : tab === 'teacher' ? (
                     user && user.role === 'teacher' ? (
                         <TeacherPortalView
-                            user={user}
+                            user={user as unknown as PortalUser}
                             token={token}
                             onLogout={handleStudentLogout}
                             onSwitchToStudent={() => setTab('student')}
@@ -736,7 +734,7 @@ export default function ExamHubPortal({
             <SchoolAuthModal
                 isOpen={showSchoolAuthModal}
                 onClose={() => setShowSchoolAuthModal(false)}
-                onAuthenticated={handleAuthenticated}
+                onAuthenticated={(newUser, newToken) => handleAuthenticated(newUser as unknown as StudentUser, newToken)}
             />
         </div>
     );
@@ -1672,7 +1670,7 @@ function StudentView({
     const [questionSecondsLeft, setQuestionSecondsLeft] = useState<number>(60);
     const [isPaused, setIsPaused] = useState<boolean>(false);
     const [showEndConfirm, setShowEndConfirm] = useState<boolean>(false);
-    const [timedOutQuestionIds, setTimedOutQuestionIds] = useState<Record<string, boolean>>({});
+    const [_timedOutQuestionIds, setTimedOutQuestionIds] = useState<Record<string, boolean>>({});
 
     // Student performance stats for interactive KPI cards
     const [studentStats, setStudentStats] = useState<{
@@ -1939,9 +1937,6 @@ function StudentView({
         return subjects.filter((s) => !s.name.toLowerCase().includes('professional studies'));
     }, [level, user.promotionRank, subjects]);
 
-    const totalQuestionsInBank = useMemo(() => {
-        return availableItems.reduce((sum, s) => sum + (counts[`${s.id}|${level}`] || 0), 0);
-    }, [availableItems, counts, level]);
 
     const displayedYears = useMemo(() => {
         const set = new Set<string>();
@@ -2611,15 +2606,15 @@ function StudentView({
     /* ---------------- Result ---------------- */
     if (stage === 'result' && result && subject && level !== null) {
         const displayScore = Number(result.score) || 0;
-        const displayTotal = Number(result.total ?? result.totalQuestions) || questions.length || 1;
+        const displayTotal = Number(result.total ?? (result as any).totalQuestions) || questions.length || 1;
         const displayPercent = typeof result.percent === 'number' ? result.percent : Math.round((displayScore / displayTotal) * 100);
         const msg =
             displayPercent >= 70 ? 'Excellent work!' : displayPercent >= 50 ? 'Good effort, keep going!' : 'Keep practising, you will improve.';
 
         const reviewList: any[] = Array.isArray(result.review)
             ? result.review
-            : Array.isArray(result.details)
-            ? result.details.map((d: any) => ({
+            : Array.isArray((result as any).details)
+            ? (result as any).details.map((d: any) => ({
                   id: d.questionId || d.id,
                   correctIndex: d.correctIndex,
                   chosen: d.selected ?? d.chosen,
@@ -4879,8 +4874,6 @@ function AdminsRolesAdmin({
     );
 }
 
-type Flash = (ok: boolean, text: string) => void;
-
 function SubjectsAdmin({
     code,
     subjects,
@@ -6962,23 +6955,12 @@ function MessagesAdmin({
         }
         setSendingReplyId(msg.id);
         try {
-            const res = await api.post(`/api/admin/messages/${msg.id}/reply`, {
+            await api.post(`/api/admin/messages/${msg.id}/reply`, {
                 passcode: code,
                 replyMessage: text,
             });
             flash(true, `Direct reply sent successfully from info@codecasticgh.com to ${msg.email}!`);
-            setMessages((prev) =>
-                prev.map((m) =>
-                    m.id === msg.id
-                        ? {
-                              ...m,
-                              repliedAt: res.data.repliedAt || Date.now(),
-                              lastReply: text,
-                              replyCount: (m.replyCount || 0) + 1,
-                          }
-                        : m
-                )
-            );
+            await reload();
             clearReply(msg.id);
         } catch (e: any) {
             flash(
@@ -7942,7 +7924,7 @@ function CandidatesAdmin({
                                 <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
                                     Candidates by Examination Track
                                 </span>
-                                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+                                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                                     <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
                                         <span className="block text-[11px] font-semibold text-slate-500">GES Promotion</span>
                                         <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.gesPromo}</span>
@@ -7955,7 +7937,7 @@ function CandidatesAdmin({
                                         </button>
                                     </div>
                                     <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
-                                        <span className="block text-[11px] font-semibold text-slate-500">Basic 4 – 9</span>
+                                        <span className="block text-[11px] font-semibold text-slate-500">Basic 4 – 9 (BECE)</span>
                                         <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.basic}</span>
                                         <button
                                             type="button"
@@ -7966,33 +7948,11 @@ function CandidatesAdmin({
                                         </button>
                                     </div>
                                     <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
-                                        <span className="block text-[11px] font-semibold text-slate-500">SHS 1 – 3</span>
+                                        <span className="block text-[11px] font-semibold text-slate-500">WASSCE (SHS 1 – 3)</span>
                                         <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.shs}</span>
                                         <button
                                             type="button"
                                             onClick={() => setTrackFilter('shs')}
-                                            className="mt-1.5 text-[10px] font-bold text-[#364c83] hover:underline"
-                                        >
-                                            Filter table →
-                                        </button>
-                                    </div>
-                                    <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
-                                        <span className="block text-[11px] font-semibold text-slate-500">BECE</span>
-                                        <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.bece}</span>
-                                        <button
-                                            type="button"
-                                            onClick={() => setTrackFilter('bece')}
-                                            className="mt-1.5 text-[10px] font-bold text-[#364c83] hover:underline"
-                                        >
-                                            Filter table →
-                                        </button>
-                                    </div>
-                                    <div className="rounded-xl border border-indigo-100 bg-white p-3 text-center shadow-xs">
-                                        <span className="block text-[11px] font-semibold text-slate-500">WASSCE</span>
-                                        <span className="mt-1 block text-lg font-bold text-[#364c83]">{trackCounts.wassce}</span>
-                                        <button
-                                            type="button"
-                                            onClick={() => setTrackFilter('wassce')}
                                             className="mt-1.5 text-[10px] font-bold text-[#364c83] hover:underline"
                                         >
                                             Filter table →

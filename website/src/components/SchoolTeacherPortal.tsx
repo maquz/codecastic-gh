@@ -6,7 +6,6 @@ import {
     UserCheck,
     Users,
     BookOpen,
-    TrendingUp,
     Plus,
     Trash2,
     Search,
@@ -16,10 +15,7 @@ import {
     X,
     CheckCircle2,
     XCircle,
-    Clock,
     Sparkles,
-    ChevronRight,
-    ChevronDown,
     Copy,
     Check,
     Loader2,
@@ -27,9 +23,6 @@ import {
     GraduationCap,
     Eye,
     BarChart3,
-    Trophy,
-    FileSpreadsheet,
-    AlertCircle,
     HardDrive
 } from 'lucide-react';
 import type { Level } from './ExamHubPortal';
@@ -38,8 +31,10 @@ export type PortalUser = {
     id: string;
     name: string;
     email: string;
-    role?: 'student' | 'teacher' | 'school_admin' | 'ges-promo' | 'admin';
-    accountType?: string;
+    role?: 'student' | 'teacher' | 'school_admin' | 'ges-promo' | 'admin' | 'superadmin' | 'editor';
+    adminRole?: 'superadmin' | 'admin' | 'editor';
+    isSuperAdmin?: boolean;
+    accountType?: 'student' | 'teacher' | 'school_admin' | 'ges-promo' | string;
     schoolId?: string;
     schoolName: string;
     schoolCode?: string;
@@ -913,6 +908,7 @@ export function SchoolAdminPortalView({
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<any | null>(null);
     const [teachers, setTeachers] = useState<PortalUser[]>([]);
+    const [students, setStudents] = useState<PortalUser[]>([]);
     const [tab, setTab] = useState<'overview' | 'teachers' | 'students' | 'lab'>('overview');
     const [downloadingPack, setDownloadingPack] = useState(false);
     const [importingLab, setImportingLab] = useState(false);

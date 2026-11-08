@@ -13,7 +13,7 @@ function getMailerConfig() {
 
 function createTransporters() {
     const config = getMailerConfig();
-    const list: { name: string; transport: nodemailer.Transporter }[] = [];
+    const list: { name: string; transport: any }[] = [];
 
     // 1. Authenticated SMTP (if SMTP_PASS is provided)
     if (config.pass) {
