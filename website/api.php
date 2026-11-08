@@ -322,6 +322,8 @@ function normLevel($raw) {
     global $SCHOOL_LEVELS, $SHS_LEVELS, $TRACKS;
     $s = trim((string)$raw);
     if ($s === '') return null;
+    $u = strtoupper($s);
+    if ($u === 'ADMIN') return 8;
     if (ctype_digit($s)) {
         $n = (int)$s;
         return in_array($n, $SCHOOL_LEVELS, true) ? $n : null;
@@ -333,7 +335,6 @@ function normLevel($raw) {
     if (preg_match('/^(?:shs|form)\s*([1-3])$/i', $s, $m)) {
         return 'SHS ' . $m[1];
     }
-    $u = strtoupper($s);
     if ($u === 'SHS' || $u === 'SHS 1 - 3' || $u === 'SHS 1-3') return 'SHS 1';
     if ($u === 'GES PROMOTION' || $u === 'GES PROMOTION EXAMS' || $u === 'GES-PROMOTION') return 'GES-PROMO';
     if (in_array($u, $SHS_LEVELS, true)) return $u;
@@ -401,7 +402,7 @@ function publicUser($u) {
         'schoolName' => (string)($u['schoolName'] ?? ''),
         'schoolCode' => (string)($u['schoolCode'] ?? ''),
         'studentCode' => (string)($u['studentCode'] ?? ''),
-        'gradeLevel' => $u['gradeLevel'] ?? 4,
+        'gradeLevel' => (($u['gradeLevel'] ?? '') === 'ADMIN' || ($u['gradeLevel'] ?? '') === 'admin') ? 8 : ($u['gradeLevel'] ?? 4),
         'classSection' => (string)($u['classSection'] ?? ''),
         'assignedSubjects' => is_array($u['assignedSubjects'] ?? null) ? $u['assignedSubjects'] : [],
         'assignedLevels' => is_array($u['assignedLevels'] ?? null) ? $u['assignedLevels'] : [],
@@ -537,11 +538,9 @@ if ($route === 'counts' && $method === 'GET') {
     $yearCounts = [];
     $categoryCounts = [];
 
-    foreach ($qs as $q) {
-        $key = ($q['subjectId'] ?? '') . '|' . ($q['level'] ?? '');
+    $recordCount = function($key, $yr, $cat) use (&$counts, &$yearsMap, &$categoriesMap, &$yearCounts, &$categoryCounts) {
         $counts[$key] = ($counts[$key] ?? 0) + 1;
         
-        $yr = trim((string)($q['year'] ?? ''));
         if ($yr !== '') {
             if (!isset($yearsMap[$key])) $yearsMap[$key] = [];
             if (!in_array($yr, $yearsMap[$key], true)) $yearsMap[$key][] = $yr;
@@ -549,12 +548,57 @@ if ($route === 'counts' && $method === 'GET') {
             $yearCounts[$yKey] = ($yearCounts[$yKey] ?? 0) + 1;
         }
 
-        $cat = trim((string)($q['category'] ?? ''));
         if ($cat !== '') {
             if (!isset($categoriesMap[$key])) $categoriesMap[$key] = [];
             if (!in_array($cat, $categoriesMap[$key], true)) $categoriesMap[$key][] = $cat;
             $cKey = $key . '|' . $cat;
             $categoryCounts[$cKey] = ($categoryCounts[$cKey] ?? 0) + 1;
+        }
+    };
+
+    foreach ($qs as $q) {
+        $subId = $q['subjectId'] ?? '';
+        $lvl = (string)($q['level'] ?? '');
+        $yr = trim((string)($q['year'] ?? ''));
+        $cat = trim((string)($q['category'] ?? ''));
+
+        $recordCount($subId . '|' . $lvl, $yr, $cat);
+
+        // JHS & BECE cross-linking: BECE questions contribute to Basic 7, 8, 9, and vice versa
+        if (strtoupper($lvl) === 'BECE') {
+            foreach ([7, 8, 9] as $jl) {
+                $recordCount($subId . '|' . $jl, $yr, $cat);
+            }
+        } elseif (in_array($lvl, ['7', '8', '9'], true)) {
+            $recordCount($subId . '|BECE', $yr, $cat);
+            foreach ([7, 8, 9] as $jl) {
+                if ((string)$jl !== $lvl) {
+                    $recordCount($subId . '|' . $jl, $yr, $cat);
+                }
+            }
+        }
+
+        // Primary (4, 5, 6) cross-linking: Primary level questions available across Basic 4-6
+        if (in_array($lvl, ['4', '5', '6'], true)) {
+            foreach ([4, 5, 6] as $pl) {
+                if ((string)$pl !== $lvl) {
+                    $recordCount($subId . '|' . $pl, $yr, $cat);
+                }
+            }
+        }
+
+        // SHS & WASSCE cross-linking: WASSCE questions contribute to SHS 1-3, and vice versa
+        if (strtoupper($lvl) === 'WASSCE') {
+            foreach (['SHS 1', 'SHS 2', 'SHS 3', 'SHS'] as $sl) {
+                $recordCount($subId . '|' . $sl, $yr, $cat);
+            }
+        } elseif (in_array($lvl, ['SHS 1', 'SHS 2', 'SHS 3', 'SHS'], true)) {
+            $recordCount($subId . '|WASSCE', $yr, $cat);
+            foreach (['SHS 1', 'SHS 2', 'SHS 3', 'SHS'] as $sl) {
+                if ($sl !== $lvl) {
+                    $recordCount($subId . '|' . $sl, $yr, $cat);
+                }
+            }
         }
     }
     jsonOut([
@@ -624,6 +668,7 @@ if (preg_match('#^exam/([^/]+)/([^/]+)$#', $route, $matches) && $method === 'GET
     if ($level === null) errorOut('Invalid level', 400);
 
     $allQs = [];
+    $isPrimary = in_array((string)$level, ['4', '5', '6'], true);
     $isJhsOrBece = in_array((string)$level, ['7', '8', '9', 'BECE'], true);
     $isShsOrWassce = in_array((string)$level, ['SHS 1', 'SHS 2', 'SHS 3', 'WASSCE', 'SHS'], true);
 
@@ -633,11 +678,14 @@ if (preg_match('#^exam/([^/]+)/([^/]+)$#', $route, $matches) && $method === 'GET
         $match = false;
         if ($qLvl == (string)$level) {
             $match = true;
-        } elseif ($isJhsOrBece && $qLvl === 'BECE') {
-            // BECE mock/past questions are specifically accessible to Basic 7-9
+        } elseif ($isJhsOrBece && ($qLvl === 'BECE' || in_array($qLvl, ['7', '8', '9'], true))) {
+            // BECE / JHS mock & past questions accessible across Basic 7-9
             $match = true;
-        } elseif ($isShsOrWassce && $qLvl === 'WASSCE') {
-            // WASSCE mock/past questions are specifically accessible to SHS 1-3
+        } elseif ($isPrimary && in_array($qLvl, ['4', '5', '6'], true)) {
+            // Primary mock & past questions accessible across Basic 4-6
+            $match = true;
+        } elseif ($isShsOrWassce && ($qLvl === 'WASSCE' || in_array($qLvl, ['SHS 1', 'SHS 2', 'SHS 3', 'SHS'], true))) {
+            // WASSCE mock/past questions accessible across SHS 1-3
             $match = true;
         }
         if ($match) {
@@ -3059,7 +3107,7 @@ if ($route === 'school/register' && $method === 'POST') {
         'schoolId' => $schoolId,
         'schoolName' => $name,
         'schoolCode' => $code,
-        'gradeLevel' => 'ADMIN',
+        'gradeLevel' => 8,
         'passwordPlain' => $password,
         'passwordHash' => password_hash($password, PASSWORD_BCRYPT),
         'createdAt' => $now

@@ -255,7 +255,21 @@ const PROMOTION_RANK_CODE_BY_ID: Record<string, string> = {
 };
 const LETTERS = ['A', 'B', 'C', 'D'];
 
+function isSchoolStaffOrAdmin(u?: StudentUser | null): boolean {
+    if (!u) return false;
+    return !!(
+        u.isSuperAdmin ||
+        u.role === 'superadmin' ||
+        u.role === 'admin' ||
+        u.role === 'school_admin' ||
+        u.role === 'teacher' ||
+        u.adminRole === 'superadmin' ||
+        u.adminRole === 'admin'
+    );
+}
+
 function levelLabel(l: Level): string {
+    if (l === 'ADMIN') return 'Basic 8';
     if (typeof l === 'number') return `Basic ${l}`;
     if (l === 'SHS') return 'SHS 1 - 3';
     if (SHS_LEVELS.includes(String(l))) return String(l);
@@ -271,6 +285,7 @@ function errMsg(e: any, fallback: string): string {
 }
 
 function slugForUser(u: StudentUser): string {
+    if (isSchoolStaffOrAdmin(u)) return 'basic';
     if (u.accountType === 'ges-promo' || u.gradeLevel === 'GES-PROMO') return 'ges-promotion';
     if (u.gradeLevel === 'BECE') return 'basic';
     if (u.gradeLevel === 'SHS' || SHS_LEVELS.includes(String(u.gradeLevel))) return 'shs';
@@ -280,6 +295,7 @@ function slugForUser(u: StudentUser): string {
 }
 
 function userMatchesSection(u: StudentUser, activeSlug: string): boolean {
+    if (isSchoolStaffOrAdmin(u)) return true;
     const userSlug = slugForUser(u);
     if (userSlug === activeSlug) return true;
     if (userSlug === 'basic' && activeSlug === 'bece') return true;
@@ -1724,7 +1740,26 @@ function StudentView({
     sectionLabel?: string;
 }) {
     const [stage, setStage] = useState<'select' | 'exam' | 'result'>('select');
-    const level: Level = user.accountType === 'ges-promo' ? 'GES-PROMO' : user.gradeLevel;
+    const isStaffOrAdmin = isSchoolStaffOrAdmin(user);
+    const computeInitialLevel = useCallback((): Level => {
+        if (activeSlug === 'ges-promotion' || user.accountType === 'ges-promo') return 'GES-PROMO';
+        if (activeSlug === 'gtle') return 'GTLE';
+        if (activeSlug === 'bece') return 'BECE';
+        if (activeSlug === 'shs' || activeSlug === 'wassce') {
+            if (SHS_LEVELS.includes(String(user.gradeLevel))) return user.gradeLevel;
+            return activeSlug === 'wassce' ? 'WASSCE' : 'SHS 1';
+        }
+        if (typeof user.gradeLevel === 'number' && SCHOOL_LEVELS.includes(user.gradeLevel)) {
+            return user.gradeLevel;
+        }
+        return 8; // Default to Basic 8 (JHS 2)
+    }, [activeSlug, user.gradeLevel, user.accountType]);
+
+    const [level, setLevel] = useState<Level>(computeInitialLevel);
+
+    useEffect(() => {
+        setLevel(computeInitialLevel());
+    }, [computeInitialLevel]);
     const [subjects, setSubjects] = useState<Subject[]>([]);
     const [counts, setCounts] = useState<Record<string, number>>({});
     const [loading, setLoading] = useState(true);
@@ -3237,6 +3272,64 @@ function StudentView({
             </div>
 
             {notice && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{notice}</p>}
+
+            {isStaffOrAdmin && (
+                <div className="rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50/90 via-white to-blue-50/90 p-3 shadow-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2.5">
+                        <div className="flex items-center gap-2">
+                            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#364c83] text-white shadow-xs">
+                                <GraduationCap size={16} />
+                            </span>
+                            <div>
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-xs font-bold text-slate-900">School Staff &amp; Admin Class Preview</span>
+                                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">Preview Mode</span>
+                                </div>
+                                <p className="text-[11px] text-slate-600">Select any grade level to test and inspect questions for that class:</p>
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                            {(activeSlug === 'shs' || activeSlug === 'wassce'
+                                ? [
+                                      { val: 'SHS 1', label: 'SHS 1' },
+                                      { val: 'SHS 2', label: 'SHS 2' },
+                                      { val: 'SHS 3', label: 'SHS 3' },
+                                      { val: 'WASSCE', label: 'WASSCE' },
+                                  ]
+                                : activeSlug === 'gtle'
+                                ? [{ val: 'GTLE', label: 'GTLE' }]
+                                : activeSlug === 'ges-promotion'
+                                ? [{ val: 'GES-PROMO', label: 'GES Promotion' }]
+                                : [
+                                      { val: 4, label: 'Basic 4' },
+                                      { val: 5, label: 'Basic 5' },
+                                      { val: 6, label: 'Basic 6' },
+                                      { val: 7, label: 'Basic 7' },
+                                      { val: 8, label: 'Basic 8' },
+                                      { val: 9, label: 'Basic 9' },
+                                      { val: 'BECE', label: 'BECE' },
+                                  ]
+                            ).map((opt) => {
+                                const active = String(level) === String(opt.val);
+                                return (
+                                    <button
+                                        key={String(opt.val)}
+                                        type="button"
+                                        onClick={() => setLevel(opt.val as Level)}
+                                        className={`rounded-lg px-2.5 py-1 text-xs font-bold transition-all shadow-2xs ${
+                                            active
+                                                ? 'bg-[#364c83] text-white ring-2 ring-[#364c83]/30 scale-105'
+                                                : 'bg-white text-slate-700 border border-slate-200 hover:border-[#364c83] hover:text-[#364c83]'
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <div>
                 <h3 className="text-sm font-semibold text-slate-900">

@@ -13486,7 +13486,7 @@ function publicUser(u) {
     studentCode: u.studentCode || "",
     classSection: u.classSection || "",
     schoolId: u.schoolId || "",
-    gradeLevel: u.gradeLevel ?? 4,
+    gradeLevel: u.gradeLevel === "ADMIN" || u.gradeLevel === "admin" ? 8 : u.gradeLevel ?? 4,
     region: u.region || "",
     promotionRank: u.promotionRank || ""
   };
@@ -13528,6 +13528,9 @@ function normLevel(raw) {
     return `SHS ${shsMatch[1]}`;
   }
   const u = s.toUpperCase();
+  if (u === "ADMIN") {
+    return 8;
+  }
   if (u === "SHS" || u === "SHS 1 - 3" || u === "SHS 1-3") {
     return "SHS 1";
   }
@@ -14617,22 +14620,47 @@ var handler = router({
       const categoriesMap = {};
       const yearCounts = {};
       const categoryCounts = {};
-      qs.forEach((q2) => {
-        const key = `${q2.subjectId}|${q2.level}`;
+      const addKeyCount = (key, yr, cat) => {
         counts[key] = (counts[key] || 0) + 1;
-        if (q2.year && String(q2.year).trim()) {
-          const yr = String(q2.year).trim();
+        if (yr) {
           yearsMap[key] = yearsMap[key] || [];
           if (!yearsMap[key].includes(yr)) yearsMap[key].push(yr);
           const yKey = `${key}|${yr}`;
           yearCounts[yKey] = (yearCounts[yKey] || 0) + 1;
         }
-        if (q2.category && String(q2.category).trim()) {
-          const cat = String(q2.category).trim();
+        if (cat) {
           categoriesMap[key] = categoriesMap[key] || [];
           if (!categoriesMap[key].includes(cat)) categoriesMap[key].push(cat);
           const cKey = `${key}|${cat}`;
           categoryCounts[cKey] = (categoryCounts[cKey] || 0) + 1;
+        }
+      };
+      qs.forEach((q2) => {
+        const subId = String(q2.subjectId || "");
+        const lvl = String(q2.level || "");
+        const yr = q2.year ? String(q2.year).trim() : "";
+        const cat = q2.category ? String(q2.category).trim() : "";
+        addKeyCount(`${subId}|${lvl}`, yr, cat);
+        if (lvl.toUpperCase() === "BECE") {
+          [7, 8, 9].forEach((jl) => addKeyCount(`${subId}|${jl}`, yr, cat));
+        } else if (["7", "8", "9"].includes(lvl)) {
+          addKeyCount(`${subId}|BECE`, yr, cat);
+          [7, 8, 9].forEach((jl) => {
+            if (String(jl) !== lvl) addKeyCount(`${subId}|${jl}`, yr, cat);
+          });
+        }
+        if (["4", "5", "6"].includes(lvl)) {
+          [4, 5, 6].forEach((pl) => {
+            if (String(pl) !== lvl) addKeyCount(`${subId}|${pl}`, yr, cat);
+          });
+        }
+        if (lvl.toUpperCase() === "WASSCE") {
+          ["SHS 1", "SHS 2", "SHS 3", "SHS"].forEach((sl) => addKeyCount(`${subId}|${sl}`, yr, cat));
+        } else if (["SHS 1", "SHS 2", "SHS 3", "SHS"].includes(lvl)) {
+          addKeyCount(`${subId}|WASSCE`, yr, cat);
+          ["SHS 1", "SHS 2", "SHS 3", "SHS"].forEach((sl) => {
+            if (sl !== lvl) addKeyCount(`${subId}|${sl}`, yr, cat);
+          });
         }
       });
       return json({ counts, yearsMap, categoriesMap, yearCounts, categoryCounts });
@@ -14671,9 +14699,18 @@ var handler = router({
     async (ctx) => {
       const level = normLevel(ctx.params.level);
       if (level === null) return error("Invalid level", 400);
-      const allSubjectLevelQs = (await allQuestions()).filter(
-        (q2) => q2.subjectId === ctx.params.subjectId && q2.level === level
-      );
+      const isPrimary = ["4", "5", "6"].includes(String(level));
+      const isJhsOrBece = ["7", "8", "9", "BECE"].includes(String(level));
+      const isShsOrWassce = ["SHS 1", "SHS 2", "SHS 3", "WASSCE", "SHS"].includes(String(level));
+      const allSubjectLevelQs = (await allQuestions()).filter((q2) => {
+        if (q2.subjectId !== ctx.params.subjectId) return false;
+        const qLvl = String(q2.level ?? "");
+        if (qLvl === String(level)) return true;
+        if (isJhsOrBece && (qLvl === "BECE" || ["7", "8", "9"].includes(qLvl))) return true;
+        if (isPrimary && ["4", "5", "6"].includes(qLvl)) return true;
+        if (isShsOrWassce && (qLvl === "WASSCE" || ["SHS 1", "SHS 2", "SHS 3", "SHS"].includes(qLvl))) return true;
+        return false;
+      });
       const yearParam = ctx.query?.year;
       const catParam = ctx.query?.category;
       const limitParam = Number(ctx.query?.limit) || 0;

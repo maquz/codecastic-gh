@@ -13040,6 +13040,363 @@
       "category": "Educational Policies & Governance",
       "createdAt": 1792948433677,
       "id": "10d72f1b-b321-4272-99fa-a54cd1376086"
+    },
+    {
+      "subjectId": "e4a29c17-88df-4122-b2ee-71a62d8544c9",
+      "level": 7,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "Which of the following tools is primarily used for measuring and laying out 90° angles on wood or metal?",
+      "options": [
+        "Try square",
+        "Hacksaw",
+        "Cross-cut saw",
+        "Mallet"
+      ],
+      "correctIndex": 0,
+      "explanation": "A try square is designed specifically for checking and marking right angles (90 degrees).",
+      "id": "7524f8b9-5e4e-45e5-8a09-65068f3db838",
+      "createdAt": 1794170827782
+    },
+    {
+      "subjectId": "e4a29c17-88df-4122-b2ee-71a62d8544c9",
+      "level": 8,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "In food and nutrition, which cooking method uses dry heat in an enclosed oven?",
+      "options": [
+        "Boiling",
+        "Steaming",
+        "Baking",
+        "Poaching"
+      ],
+      "correctIndex": 2,
+      "explanation": "Baking cooks food through dry radiant heat inside an oven.",
+      "id": "67f85329-cf09-429a-b678-4116131fd500",
+      "createdAt": 1794170827784
+    },
+    {
+      "subjectId": "e4a29c17-88df-4122-b2ee-71a62d8544c9",
+      "level": "BECE",
+      "year": "2024",
+      "category": "Past Papers & Mock",
+      "text": "The process of applying a protective coat of molten zinc to iron or steel sheets is called:",
+      "options": [
+        "Galvanizing",
+        "Anodizing",
+        "Tinning",
+        "Electroplating"
+      ],
+      "correctIndex": 0,
+      "explanation": "Galvanizing prevents rusting of iron and steel by coating it with zinc.",
+      "id": "74cff79e-9cf7-4e0f-a21e-20c8f96f4bbc",
+      "createdAt": 1794170827785
+    },
+    {
+      "subjectId": "e4a29c17-88df-4122-b2ee-71a62d8544c9",
+      "level": 4,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "Which sewing tool is used to protect the middle finger when pushing a needle through thick fabric?",
+      "options": [
+        "Thimble",
+        "Tape measure",
+        "Shears",
+        "Bobbin"
+      ],
+      "correctIndex": 0,
+      "explanation": "A thimble is a metal or plastic cap that protects the finger while sewing.",
+      "id": "6cafbbcc-9135-4c69-9528-467d193a5bfd",
+      "createdAt": 1794170827786
+    },
+    {
+      "subjectId": "e4a29c17-88df-4122-b2ee-71a62d8544c9",
+      "level": "BECE",
+      "year": "2023",
+      "category": "Past Papers & Mock",
+      "text": "Personal Protective Equipment (PPE) required when working in a woodworking workshop includes all the following EXCEPT:",
+      "options": [
+        "Goggles",
+        "Ear protectors",
+        "Steel toe boots",
+        "Loose dangling neckties"
+      ],
+      "correctIndex": 3,
+      "explanation": "Loose neckties pose severe entanglement risks near spinning workshop machinery.",
+      "id": "c700f139-e9a1-4e55-8a04-a34e0d4b59bd",
+      "createdAt": 1794170827787
+    },
+    {
+      "subjectId": "c3f81e92-7b44-4e20-912b-31a980e15b22",
+      "level": 7,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "Which major ethnic group in Ghana is traditionally known to have migrated from ancient Western Sudan through Bono Manso?",
+      "options": [
+        "Akan",
+        "Ga-Adangme",
+        "Ewe",
+        "Guan"
+      ],
+      "correctIndex": 0,
+      "explanation": "Oral traditions trace Akan origins through early Bono Manso settlement.",
+      "id": "a3e7c7c9-4586-4d6e-a5aa-a310ade66aae",
+      "createdAt": 1794170827788
+    },
+    {
+      "subjectId": "c3f81e92-7b44-4e20-912b-31a980e15b22",
+      "level": 8,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "Who was the leader of the 1900 War of the Golden Stool against British colonial forces in Asante?",
+      "options": [
+        "Yaa Asantewaa",
+        "Osei Tutu I",
+        "Prempeh I",
+        "Opoku Ware I"
+      ],
+      "correctIndex": 0,
+      "explanation": "Nana Yaa Asantewaa, Queen Mother of Ejisu, courageously led the Asante uprising to protect the Golden Stool.",
+      "id": "53b34fbc-77c0-47f0-aad7-ab9ea7b6862a",
+      "createdAt": 1794170827789
+    },
+    {
+      "subjectId": "c3f81e92-7b44-4e20-912b-31a980e15b22",
+      "level": "BECE",
+      "year": "2024",
+      "category": "Past Papers & Mock",
+      "text": "In which year did the Bond of 1844 formally come into effect in the Gold Coast?",
+      "options": [
+        "1844",
+        "1874",
+        "1896",
+        "1957"
+      ],
+      "correctIndex": 0,
+      "explanation": "The Bond of 1844 was signed on March 6, 1844 between British Lieutenant-Governor Hill and Fante chiefs.",
+      "id": "299c62a6-cfb3-4cef-93df-f426815261f5",
+      "createdAt": 1794170827790
+    },
+    {
+      "subjectId": "c3f81e92-7b44-4e20-912b-31a980e15b22",
+      "level": 4,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "Who was the first Prime Minister and subsequently the first President of the Republic of Ghana?",
+      "options": [
+        "Dr. Kwame Nkrumah",
+        "Dr. J.B. Danquah",
+        "K.A. Busia",
+        "E. Akufo-Addo"
+      ],
+      "correctIndex": 0,
+      "explanation": "Dr. Kwame Nkrumah led Ghana to independence on March 6, 1957.",
+      "id": "d0a96cb0-bbce-4267-bd61-ef5cabbd565c",
+      "createdAt": 1794170827791
+    },
+    {
+      "subjectId": "c3f81e92-7b44-4e20-912b-31a980e15b22",
+      "level": "BECE",
+      "year": "2023",
+      "category": "Past Papers & Mock",
+      "text": "Which political party won the majority of seats in the 1951 Gold Coast general election under the Coussey Constitution?",
+      "options": [
+        "Convention People’s Party (CPP)",
+        "United Gold Coast Convention (UGCC)",
+        "Northern People’s Party (NPP)",
+        "National Liberation Movement (NLM)"
+      ],
+      "correctIndex": 0,
+      "explanation": "The CPP won a landslide victory in the 1951 general election.",
+      "id": "783760bf-5b5a-45ea-8e45-d97a8164b3d1",
+      "createdAt": 1794170827792
+    },
+    {
+      "subjectId": "b1836f34-118c-4a30-8a89-2917e9231f88",
+      "level": 7,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "The supreme law of the Republic of Ghana that guides governance and protects fundamental human rights is the:",
+      "options": [
+        "1992 Constitution",
+        "Criminal Code",
+        "Chieftaincy Act",
+        "Local Government Act"
+      ],
+      "correctIndex": 0,
+      "explanation": "The 1992 Constitution is the supreme law of Ghana.",
+      "id": "50142105-ec0c-44d6-a300-59cd6a891683",
+      "createdAt": 1794170827793
+    },
+    {
+      "subjectId": "b1836f34-118c-4a30-8a89-2917e9231f88",
+      "level": 8,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "Which arm of government is responsible for interpreting the laws and administering justice in Ghana?",
+      "options": [
+        "The Judiciary",
+        "The Executive",
+        "The Legislature",
+        "The Council of State"
+      ],
+      "correctIndex": 0,
+      "explanation": "The Judiciary, headed by the Chief Justice, interprets laws.",
+      "id": "2a6ab803-5524-4b4b-bd91-691d693e1a08",
+      "createdAt": 1794170827794
+    },
+    {
+      "subjectId": "b1836f34-118c-4a30-8a89-2917e9231f88",
+      "level": "BECE",
+      "year": "2024",
+      "category": "Past Papers & Mock",
+      "text": "Rapid population growth without corresponding economic expansion in urban centres in developing countries most often results in:",
+      "options": [
+        "High standard of living",
+        "Proliferation of slums and pressure on social amenities",
+        "Decrease in unemployment",
+        "Surplus revenue for local authorities"
+      ],
+      "correctIndex": 1,
+      "explanation": "Uncontrolled urban influx overstretches housing, healthcare, water, and sanitation facilities.",
+      "id": "91eca392-4def-4daa-aaab-1b62a72226df",
+      "createdAt": 1794170827795
+    },
+    {
+      "subjectId": "b1836f34-118c-4a30-8a89-2917e9231f88",
+      "level": "BECE",
+      "year": "2023",
+      "category": "Past Papers & Mock",
+      "text": "The main goal of sustainable environmental management in Ghana is to:",
+      "options": [
+        "Exploit all minerals as quickly as possible",
+        "Meet present needs without compromising the ability of future generations to meet theirs",
+        "Stop all farming activities near forest belts",
+        "Privatize all water bodies"
+      ],
+      "correctIndex": 1,
+      "explanation": "Sustainability balances socio-economic progress with environmental conservation.",
+      "id": "3f16961d-858f-4a6e-8b7e-7fd616fb120a",
+      "createdAt": 1794170827796
+    },
+    {
+      "subjectId": "d718290e-436f-474c-8181-a9fbc735e076",
+      "level": 4,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "In Christian tradition, God created the universe in how many days before resting?",
+      "options": [
+        "6 days",
+        "7 days",
+        "10 days",
+        "3 days"
+      ],
+      "correctIndex": 0,
+      "explanation": "According to Genesis, God created all things in six days and rested on the seventh day.",
+      "id": "2b4b9b55-3d1c-40c9-a01b-f86062ab7e7c",
+      "createdAt": 1794170827797
+    },
+    {
+      "subjectId": "d718290e-436f-474c-8181-a9fbc735e076",
+      "level": 7,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "The five daily ritual prayers performed by Muslims are known as:",
+      "options": [
+        "Salat",
+        "Sawm",
+        "Zakat",
+        "Hajj"
+      ],
+      "correctIndex": 0,
+      "explanation": "Salat represents the compulsory five daily prayers in Islam.",
+      "id": "a5e62098-2426-4426-bef2-2b45de144622",
+      "createdAt": 1794170827798
+    },
+    {
+      "subjectId": "d718290e-436f-474c-8181-a9fbc735e076",
+      "level": 8,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "In Traditional Ghanaian Society, libation is primarily poured to:",
+      "options": [
+        "Entertain visitors only",
+        "Communicate with the Supreme Being, deities, and ancestors",
+        "Cool the ground before dance",
+        "Sanctify modern currency"
+      ],
+      "correctIndex": 1,
+      "explanation": "Libation is a prayer medium connecting the physical community to ancestors and God.",
+      "id": "7a5935ea-68c6-4cad-9a04-3335cdc4a64a",
+      "createdAt": 1794170827799
+    },
+    {
+      "subjectId": "d718290e-436f-474c-8181-a9fbc735e076",
+      "level": "BECE",
+      "year": "2024",
+      "category": "Past Papers & Mock",
+      "text": "Demonstrating honesty and integrity in public examinations reflects the moral virtue of:",
+      "options": [
+        "Truthfulness and uprightness",
+        "Timidity",
+        "Obedience to peer pressure",
+        "Competitiveness at all costs"
+      ],
+      "correctIndex": 0,
+      "explanation": "Academic honesty is a fundamental moral quality of truthfulness and self-respect.",
+      "id": "94d54f85-0401-4037-b968-135139fab646",
+      "createdAt": 1794170827800
+    },
+    {
+      "subjectId": "2b846379-fec2-4aaf-a237-ccf2adf8a70d",
+      "level": 8,
+      "year": "2023",
+      "category": "Core Concepts",
+      "text": "In spreadsheet software like Microsoft Excel, which symbol must precede every mathematical formula?",
+      "options": [
+        "=",
+        "+",
+        "@",
+        "#"
+      ],
+      "correctIndex": 0,
+      "explanation": "Formulas in spreadsheets always begin with the equal sign (=).",
+      "id": "25bd39a9-6d3a-40ab-8168-9132a0ce8bce",
+      "createdAt": 1794170827801
+    },
+    {
+      "subjectId": "2b846379-fec2-4aaf-a237-ccf2adf8a70d",
+      "level": "BECE",
+      "year": "2024",
+      "category": "Past Papers & Mock",
+      "text": "The keyboard shortcut used to copy selected text in most modern operating systems is:",
+      "options": [
+        "Ctrl + C",
+        "Ctrl + V",
+        "Ctrl + X",
+        "Ctrl + Z"
+      ],
+      "correctIndex": 0,
+      "explanation": "Ctrl + C copies, Ctrl + V pastes, and Ctrl + X cuts.",
+      "id": "24e610df-387f-4ef9-b400-2ddfcae36c47",
+      "createdAt": 1794170827802
+    },
+    {
+      "subjectId": "2b846379-fec2-4aaf-a237-ccf2adf8a70d",
+      "level": "BECE",
+      "year": "2023",
+      "category": "Past Papers & Mock",
+      "text": "A malicious program that replicates itself across computer networks without human action is classified as a:",
+      "options": [
+        "Computer Worm",
+        "Browser Cookie",
+        "Firewall",
+        "Device Driver"
+      ],
+      "correctIndex": 0,
+      "explanation": "A computer worm spreads autonomously through network vulnerabilities.",
+      "id": "9d00fc33-4843-4969-8061-7145bd22971c",
+      "createdAt": 1794170827803
     }
   ],
   "settings": [

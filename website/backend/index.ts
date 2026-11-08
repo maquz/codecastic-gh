@@ -45,7 +45,7 @@ function publicUser(u: any) {
         studentCode: (u.studentCode || '') as string,
         classSection: (u.classSection || '') as string,
         schoolId: (u.schoolId || '') as string,
-        gradeLevel: (u.gradeLevel ?? 4) as Level,
+        gradeLevel: ((u.gradeLevel === 'ADMIN' || u.gradeLevel === 'admin') ? 8 : (u.gradeLevel ?? 4)) as Level,
         region: (u.region || '') as string,
         promotionRank: (u.promotionRank || '') as string,
     };
@@ -101,6 +101,9 @@ function normLevel(raw: unknown): Level | null {
         return `SHS ${shsMatch[1]}`;
     }
     const u = s.toUpperCase();
+    if (u === 'ADMIN') {
+        return 8;
+    }
     if (u === 'SHS' || u === 'SHS 1 - 3' || u === 'SHS 1-3') {
         return 'SHS 1';
     }
@@ -1423,22 +1426,54 @@ export const handler = router({
             const yearCounts: Record<string, number> = {};
             const categoryCounts: Record<string, number> = {};
 
-            qs.forEach((q: any) => {
-                const key = `${q.subjectId}|${q.level}`;
+            const addKeyCount = (key: string, yr: string, cat: string) => {
                 counts[key] = (counts[key] || 0) + 1;
-                if (q.year && String(q.year).trim()) {
-                    const yr = String(q.year).trim();
+                if (yr) {
                     yearsMap[key] = yearsMap[key] || [];
                     if (!yearsMap[key].includes(yr)) yearsMap[key].push(yr);
                     const yKey = `${key}|${yr}`;
                     yearCounts[yKey] = (yearCounts[yKey] || 0) + 1;
                 }
-                if (q.category && String(q.category).trim()) {
-                    const cat = String(q.category).trim();
+                if (cat) {
                     categoriesMap[key] = categoriesMap[key] || [];
                     if (!categoriesMap[key].includes(cat)) categoriesMap[key].push(cat);
                     const cKey = `${key}|${cat}`;
                     categoryCounts[cKey] = (categoryCounts[cKey] || 0) + 1;
+                }
+            };
+
+            qs.forEach((q: any) => {
+                const subId = String(q.subjectId || '');
+                const lvl = String(q.level || '');
+                const yr = q.year ? String(q.year).trim() : '';
+                const cat = q.category ? String(q.category).trim() : '';
+                addKeyCount(`${subId}|${lvl}`, yr, cat);
+
+                // JHS & BECE cross-linking: BECE questions contribute to Basic 7, 8, 9, and vice versa
+                if (lvl.toUpperCase() === 'BECE') {
+                    [7, 8, 9].forEach((jl) => addKeyCount(`${subId}|${jl}`, yr, cat));
+                } else if (['7', '8', '9'].includes(lvl)) {
+                    addKeyCount(`${subId}|BECE`, yr, cat);
+                    [7, 8, 9].forEach((jl) => {
+                        if (String(jl) !== lvl) addKeyCount(`${subId}|${jl}`, yr, cat);
+                    });
+                }
+
+                // Primary (4, 5, 6) cross-linking: Primary level questions available across Basic 4-6
+                if (['4', '5', '6'].includes(lvl)) {
+                    [4, 5, 6].forEach((pl) => {
+                        if (String(pl) !== lvl) addKeyCount(`${subId}|${pl}`, yr, cat);
+                    });
+                }
+
+                // SHS & WASSCE cross-linking: WASSCE questions contribute to SHS 1-3, and vice versa
+                if (lvl.toUpperCase() === 'WASSCE') {
+                    ['SHS 1', 'SHS 2', 'SHS 3', 'SHS'].forEach((sl) => addKeyCount(`${subId}|${sl}`, yr, cat));
+                } else if (['SHS 1', 'SHS 2', 'SHS 3', 'SHS'].includes(lvl)) {
+                    addKeyCount(`${subId}|WASSCE`, yr, cat);
+                    ['SHS 1', 'SHS 2', 'SHS 3', 'SHS'].forEach((sl) => {
+                        if (sl !== lvl) addKeyCount(`${subId}|${sl}`, yr, cat);
+                    });
                 }
             });
             return json({ counts, yearsMap, categoriesMap, yearCounts, categoryCounts });
@@ -1483,9 +1518,20 @@ export const handler = router({
         async (ctx) => {
             const level = normLevel(ctx.params.level);
             if (level === null) return error('Invalid level', 400);
-            const allSubjectLevelQs = (await allQuestions()).filter(
-                (q: any) => q.subjectId === ctx.params.subjectId && q.level === level
-            );
+
+            const isPrimary = ['4', '5', '6'].includes(String(level));
+            const isJhsOrBece = ['7', '8', '9', 'BECE'].includes(String(level));
+            const isShsOrWassce = ['SHS 1', 'SHS 2', 'SHS 3', 'WASSCE', 'SHS'].includes(String(level));
+
+            const allSubjectLevelQs = (await allQuestions()).filter((q: any) => {
+                if (q.subjectId !== ctx.params.subjectId) return false;
+                const qLvl = String(q.level ?? '');
+                if (qLvl === String(level)) return true;
+                if (isJhsOrBece && (qLvl === 'BECE' || ['7', '8', '9'].includes(qLvl))) return true;
+                if (isPrimary && ['4', '5', '6'].includes(qLvl)) return true;
+                if (isShsOrWassce && (qLvl === 'WASSCE' || ['SHS 1', 'SHS 2', 'SHS 3', 'SHS'].includes(qLvl))) return true;
+                return false;
+            });
             const yearParam = ctx.query?.year;
             const catParam = ctx.query?.category;
             const limitParam = Number(ctx.query?.limit) || 0;
