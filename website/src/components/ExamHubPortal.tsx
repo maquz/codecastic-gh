@@ -2339,6 +2339,9 @@ function StudentView({
         const isAnswered = selectedOption !== undefined;
         const isCorrectChoice = isAnswered && q.correctIndex !== undefined && selectedOption === q.correctIndex;
 
+        // Basic 4 - 9, BECE, SHS 1 - 3, and WASSCE are school candidates who receive explanations at the end
+        const isSchoolCandidate = level !== 'GES-PROMO' && activeSlug !== 'ges-promotion' && level !== 'GTLE' && activeSlug !== 'gtle';
+
         // Calculate live score
         const liveScore = questions.reduce((acc, curr) => {
             const ans = answers[curr.id];
@@ -2348,13 +2351,13 @@ function StudentView({
         const livePercent = answeredCount > 0 ? Math.round((liveScore / answeredCount) * 100) : 0;
 
         const handleSelectOption = (optIdx: number) => {
-            if (isAnswered) return; // Locked once answered to show instant grading
+            if (!isSchoolCandidate && isAnswered) return; // Locked once answered only for adult study tracks
             setAnswers((prev) => ({ ...prev, [q.id]: optIdx }));
         };
 
         return (
             <div className="mx-auto max-w-2xl">
-                {/* Live Exam Header with Real-time Scoring */}
+                {/* Live Exam Header */}
                 <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
                     <span className="flex items-center gap-2 font-bold text-[#364c83] flex-wrap">
                         <SubjectIcon name={subject.name} size={18} />
@@ -2404,10 +2407,13 @@ function StudentView({
                             </div>
                         )}
 
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-[#364c83]">
-                            <Sparkles size={13} />
-                            Score: {liveScore} / {answeredCount} ({livePercent}%)
-                        </span>
+                        {/* Running score is only shown during study/promo modes; school candidates get final score & explanations at the end */}
+                        {!isSchoolCandidate && (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-[#364c83]">
+                                <Sparkles size={13} />
+                                Score: {liveScore} / {answeredCount} ({livePercent}%)
+                            </span>
+                        )}
                         <span className="text-xs font-semibold text-slate-500">
                             {answeredCount}/{questions.length} answered
                         </span>
@@ -2452,16 +2458,23 @@ function StudentView({
                                 Question {index + 1} of {questions.length}
                             </span>
                             {isAnswered && (
-                                <span
-                                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-bold ${
-                                        isCorrectChoice
-                                            ? 'bg-emerald-100 text-emerald-800'
-                                            : 'bg-rose-100 text-rose-800'
-                                    }`}
-                                >
-                                    {isCorrectChoice ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
-                                    {isCorrectChoice ? 'Scored: +1 Mark' : 'Scored: 0 Marks'}
-                                </span>
+                                isSchoolCandidate ? (
+                                    <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2.5 py-1 text-xs font-bold text-[#364c83]">
+                                        <CheckCircle2 size={13} />
+                                        Option {LETTERS[selectedOption]} Selected
+                                    </span>
+                                ) : (
+                                    <span
+                                        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-bold ${
+                                            isCorrectChoice
+                                                ? 'bg-emerald-100 text-emerald-800'
+                                                : 'bg-rose-100 text-rose-800'
+                                        }`}
+                                    >
+                                        {isCorrectChoice ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
+                                        {isCorrectChoice ? 'Scored: +1 Mark' : 'Scored: 0 Marks'}
+                                    </span>
+                                )
                             )}
                         </div>
                         {(q.year || q.category) && (
@@ -2484,7 +2497,7 @@ function StudentView({
                         <FormattedQuestionText text={q.text} className="text-base sm:text-lg font-semibold text-slate-900" />
                     </div>
 
-                    {/* Answer Options with Instant Feedback */}
+                    {/* Answer Options */}
                     <div className="mt-5 space-y-2.5">
                         {(Array.isArray(q.options) ? q.options : []).map((opt, i) => {
                             const isSelected = selectedOption === i;
@@ -2493,7 +2506,17 @@ function StudentView({
                             let btnStyle = 'border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-800';
                             let badgeStyle = 'bg-slate-100 text-slate-600';
 
-                            if (isAnswered) {
+                            if (isSchoolCandidate) {
+                                // School Candidate mode: highlight selection without spoiling correctness or explanation
+                                if (isSelected) {
+                                    btnStyle = 'border-[#364c83] bg-indigo-50/80 text-[#364c83] font-semibold ring-2 ring-[#364c83]/20';
+                                    badgeStyle = 'bg-[#364c83] text-white';
+                                } else {
+                                    btnStyle = 'border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-800';
+                                    badgeStyle = 'bg-slate-100 text-slate-600';
+                                }
+                            } else if (isAnswered) {
+                                // Adult study / GES Promotion instant grading mode
                                 if (isThisCorrect) {
                                     btnStyle =
                                         'border-emerald-500 bg-emerald-50 text-emerald-950 font-medium ring-1 ring-emerald-500/30';
@@ -2512,7 +2535,7 @@ function StudentView({
                                 <button
                                     key={i}
                                     type="button"
-                                    disabled={isAnswered}
+                                    disabled={!isSchoolCandidate && isAnswered}
                                     onClick={() => handleSelectOption(i)}
                                     className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3.5 text-left text-sm transition-all ${btnStyle}`}
                                 >
@@ -2524,13 +2547,19 @@ function StudentView({
                                         </span>
                                         <span className="leading-snug">{opt}</span>
                                     </div>
-                                    {isAnswered && isThisCorrect && (
+                                    {isSchoolCandidate && isSelected && (
+                                        <span className="flex items-center gap-1 text-xs font-bold text-[#364c83]">
+                                            <CheckCircle2 size={16} />
+                                            Selected
+                                        </span>
+                                    )}
+                                    {!isSchoolCandidate && isAnswered && isThisCorrect && (
                                         <span className="flex items-center gap-1 text-xs font-bold text-emerald-700">
                                             <CheckCircle2 size={16} />
                                             Correct Answer
                                         </span>
                                     )}
-                                    {isAnswered && isSelected && !isThisCorrect && (
+                                    {!isSchoolCandidate && isAnswered && isSelected && !isThisCorrect && (
                                         <span className="flex items-center gap-1 text-xs font-bold text-rose-600">
                                             <XCircle size={16} />
                                             Your Answer
@@ -2541,8 +2570,8 @@ function StudentView({
                         })}
                     </div>
 
-                    {/* Instant Explanation & Scoring Card once answered */}
-                    {isAnswered && (
+                    {/* Instant Explanation & Scoring Card (only for adult study tracks; candidates from Basic 4 - 9 and SHS receive explanations at the end) */}
+                    {!isSchoolCandidate && isAnswered && (
                         <div
                             className={`mt-5 rounded-xl border p-4.5 text-xs transition-all ${
                                 isCorrectChoice
@@ -2789,22 +2818,21 @@ function StudentView({
                 </div>
 
                 <h3 className="mt-8 text-sm font-semibold text-slate-900">
-                    Review your answers ({questions.filter((q) => { const r = reviewById.get(q.id); return r && r.chosen !== null && r.chosen !== undefined; }).length} completed)
+                    Review your answers &amp; explanations ({questions.length} question{questions.length === 1 ? '' : 's'})
                 </h3>
-                <div className="mt-3 space-y-3">
-                    {questions
-                        .filter((q) => {
-                            const r = reviewById.get(q.id);
-                            // Do not provide summary of questions not taken
-                            return r && r.chosen !== null && r.chosen !== undefined;
-                        })
-                        .map((q, i) => {
-                            const r = reviewById.get(q.id);
-                            if (!r) return null;
+                <div className="mt-3 space-y-3.5">
+                    {questions.map((q, i) => {
+                        const r = reviewById.get(q.id);
+                        const chosen = r ? r.chosen : answers[q.id];
+                        const isAnswered = chosen !== undefined && chosen !== null && chosen !== -1;
+                        const correctIndex = typeof q.correctIndex === 'number' ? q.correctIndex : (r?.correctIndex ?? 0);
+                        const isCorrect = r ? r.correct : (isAnswered && chosen === correctIndex);
+                        const explanationText = (r && r.explanation) || q.explanation || '';
+
                         return (
-                            <div key={q.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                            <div key={q.id} className="rounded-xl border border-slate-200 bg-white p-4.5 shadow-2xs">
                                 <div className="flex items-start gap-2.5">
-                                    {r.correct ? (
+                                    {isCorrect ? (
                                         <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-600" size={18} />
                                     ) : (
                                         <XCircle className="mt-0.5 shrink-0 text-red-500" size={18} />
@@ -2814,38 +2842,53 @@ function StudentView({
                                         <FormattedQuestionText text={q.text} />
                                     </div>
                                 </div>
-                                <div className="mt-2.5 space-y-1.5 pl-6">
+                                <div className="mt-3 space-y-1.5 pl-6">
                                     {(Array.isArray(q.options) ? q.options : []).map((opt, oi) => {
-                                        const isCorrect = oi === r.correctIndex;
-                                        const isChosenWrong = oi === r.chosen && !r.correct;
+                                        const isCorrectChoice = oi === correctIndex;
+                                        const isChosenWrong = isAnswered && oi === chosen && !isCorrect;
                                         return (
                                             <p
                                                 key={oi}
                                                 className={`rounded-md px-2.5 py-1.5 text-sm ${
-                                                    isCorrect
+                                                    isCorrectChoice
                                                         ? 'bg-emerald-50 font-medium text-emerald-800'
                                                         : isChosenWrong
-                                                        ? 'bg-red-50 text-red-700'
+                                                        ? 'bg-red-50 text-red-700 font-medium'
                                                         : 'text-slate-500'
                                                 }`}
                                             >
-                                                {LETTERS[oi]}. {opt}
-                                                {isCorrect && ' (correct)'}
+                                                <span className="font-bold mr-1.5">{LETTERS[oi]}.</span>
+                                                {opt}
+                                                {isCorrectChoice && ' (correct answer)'}
                                                 {isChosenWrong && ' (your answer)'}
                                             </p>
                                         );
                                     })}
-                                    {r.chosen === null && <p className="text-xs text-amber-600">Not answered</p>}
-                                    {r.explanation && <p className="pt-1 text-xs text-slate-500">{r.explanation}</p>}
-                                    <div className="pt-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => openAiTutor(q, r.chosen)}
-                                            className="inline-flex items-center gap-1.5 rounded-full bg-linear-to-r from-indigo-50 to-purple-50 border border-indigo-200/80 px-2.5 py-1 text-[11px] font-bold text-[#364c83] hover:from-indigo-100 hover:to-purple-100 transition shadow-2xs"
-                                        >
-                                            <Sparkles size={11} className="text-purple-600" />
-                                            <span>Ask AI Tutor to explain why</span>
-                                        </button>
+                                    {!isAnswered && (
+                                        <p className="mt-1 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 border border-amber-200/70 inline-block">
+                                            Question was not answered
+                                        </p>
+                                    )}
+
+                                    {/* Prominent explanation block at the end */}
+                                    <div className="mt-3.5 rounded-xl border border-indigo-100 bg-indigo-50/70 p-3.5 text-xs text-slate-700 shadow-2xs">
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <span className="font-bold uppercase tracking-wider text-[#364c83] flex items-center gap-1.5">
+                                                <BookOpen size={14} />
+                                                Explanation &amp; Solution:
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => openAiTutor(q, isAnswered ? chosen : null)}
+                                                className="inline-flex items-center gap-1.5 rounded-full bg-white border border-indigo-200/90 px-2.5 py-0.5 text-[11px] font-bold text-[#364c83] hover:bg-indigo-50 transition shadow-2xs"
+                                            >
+                                                <Sparkles size={11} className="text-purple-600" />
+                                                <span>Ask AI Tutor</span>
+                                            </button>
+                                        </div>
+                                        <p className="leading-relaxed text-slate-800 text-xs">
+                                            {explanationText || 'No additional explanation provided for this question.'}
+                                        </p>
                                     </div>
                                 </div>
                             </div>
