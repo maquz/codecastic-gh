@@ -2044,8 +2044,24 @@ function StudentView({
             return subjects.filter((s) => s.name.toLowerCase().includes('professional studies'));
         }
         // Basic 4-9, BECE, SHS 1-3, and WASSCE must never display Professional Studies
-        return subjects.filter((s) => !s.name.toLowerCase().includes('professional studies'));
-    }, [level, user.promotionRank, subjects]);
+        let list = subjects.filter((s) => !s.name.toLowerCase().includes('professional studies'));
+
+        const isBasicLevel = level === 'BECE' || activeSlug === 'basic' || activeSlug === 'bece' || (typeof level === 'number' && level >= 4 && level <= 9);
+        const isShsLevel = level === 'WASSCE' || activeSlug === 'shs' || activeSlug === 'wassce' || level === 'SHS 1' || level === 'SHS 2' || level === 'SHS 3';
+
+        if (isBasicLevel) {
+            // ICT is only written at SHS and WASSCE — Basic level writes Computing and must NOT display ICT
+            list = list.filter((s) => {
+                const n = s.name.toLowerCase();
+                return !(n === 'ict' || n.includes('information and communications technology') || n.startsWith('ict '));
+            });
+        } else if (isShsLevel) {
+            // SHS writes Information and Communications Technology (ICT), not Basic Computing
+            list = list.filter((s) => s.name.toLowerCase() !== 'computing');
+        }
+
+        return list;
+    }, [level, activeSlug, user.promotionRank, subjects]);
 
 
     const displayedYears = useMemo(() => {
@@ -2689,17 +2705,17 @@ function StudentView({
                     )}
                 </div>
 
-                {/* End Quiz Confirmation Modal */}
+                {/* Exit Quiz Confirmation Modal (Terminates without grading) */}
                 {showEndConfirm && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs animate-in fade-in duration-150">
                         <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-slate-200">
                             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 text-rose-600 mb-3">
                                 <StopCircle size={26} />
                             </div>
-                            <h3 className="text-base font-bold text-slate-900">End &amp; Submit Quiz Early?</h3>
+                            <h3 className="text-base font-bold text-slate-900">Exit Quiz Without Grading?</h3>
                             <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
                                 You have answered <strong>{answeredCount}</strong> of <strong>{questions.length}</strong> questions.
-                                Ending the quiz will submit your current answers for grading immediately and display your results and review.
+                                Exiting now will terminate this quiz attempt immediately without grading or recording any score in your student record.
                             </p>
                             <div className="mt-5 flex items-center justify-end gap-2.5">
                                 <button
@@ -2713,13 +2729,11 @@ function StudentView({
                                     type="button"
                                     onClick={() => {
                                         setShowEndConfirm(false);
-                                        submitExam(true);
+                                        backToStart();
                                     }}
-                                    disabled={submitting}
                                     className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 shadow-xs"
                                 >
-                                    {submitting && <Loader2 className="animate-spin" size={13} />}
-                                    Yes, End &amp; Grade Quiz
+                                    Yes, Terminate Quiz
                                 </button>
                             </div>
                         </div>

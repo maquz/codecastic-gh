@@ -35,6 +35,10 @@
     {
       "name": "Religious & Moral Education (RME)",
       "id": "d718290e-436f-474c-8181-a9fbc735e076"
+    },
+    {
+      "name": "Information and Communications Technology (ICT)",
+      "id": "f8a12e34-5b67-4890-a123-cdef456789ab"
     }
   ],
   "questions": [
@@ -13397,6 +13401,108 @@
       "explanation": "A computer worm spreads autonomously through network vulnerabilities.",
       "id": "9d00fc33-4843-4969-8061-7145bd22971c",
       "createdAt": 1794170827803
+    },
+    {
+      "subjectId": "f8a12e34-5b67-4890-a123-cdef456789ab",
+      "level": "WASSCE",
+      "text": "Which network topology connects all nodes to a central connecting device such as a switch or hub?",
+      "options": [
+        "Ring topology",
+        "Star topology",
+        "Bus topology",
+        "Mesh topology"
+      ],
+      "correctIndex": 1,
+      "explanation": "In a Star topology, all network nodes connect individually to a central hub or switch. If one cable fails, only that node is disconnected.",
+      "category": "Computer Networking",
+      "year": "2024",
+      "createdAt": 1794177431851,
+      "id": "ict-wassce-net-001"
+    },
+    {
+      "subjectId": "f8a12e34-5b67-4890-a123-cdef456789ab",
+      "level": "WASSCE",
+      "text": "Which SQL command is used to retrieve data from a relational database table?",
+      "options": [
+        "INSERT",
+        "UPDATE",
+        "SELECT",
+        "DELETE"
+      ],
+      "correctIndex": 2,
+      "explanation": "The SELECT command in SQL is the fundamental query statement used to retrieve rows and columns from database tables.",
+      "category": "Databases & Information Systems",
+      "year": "2024",
+      "createdAt": 1794177431851,
+      "id": "ict-wassce-db-002"
+    },
+    {
+      "subjectId": "f8a12e34-5b67-4890-a123-cdef456789ab",
+      "level": "WASSCE",
+      "text": "What does HTML stand for in web page development and design?",
+      "options": [
+        "HyperText Markup Language",
+        "High-Tech Modern Language",
+        "Hyperlink Text Management Layout",
+        "Home Tool Markup Logic"
+      ],
+      "correctIndex": 0,
+      "explanation": "HTML stands for HyperText Markup Language, which forms the building block and structure of pages on the World Wide Web.",
+      "category": "Internet & Web Technologies",
+      "year": "2023",
+      "createdAt": 1794177431851,
+      "id": "ict-wassce-web-003"
+    },
+    {
+      "subjectId": "f8a12e34-5b67-4890-a123-cdef456789ab",
+      "level": "WASSCE",
+      "text": "Which security device or software monitors incoming and outgoing network traffic and blocks unauthorized access?",
+      "options": [
+        "Repeater",
+        "Firewall",
+        "Compiler",
+        "Modem"
+      ],
+      "correctIndex": 1,
+      "explanation": "A firewall establishes a barrier between a trusted internal network and untrusted external networks (such as the Internet) to block malicious traffic.",
+      "category": "Information Security & Ethics",
+      "year": "2023",
+      "createdAt": 1794177431851,
+      "id": "ict-wassce-sec-004"
+    },
+    {
+      "subjectId": "f8a12e34-5b67-4890-a123-cdef456789ab",
+      "level": "SHS 3",
+      "text": "Which type of software translates high-level programming language code into machine code all at once before execution?",
+      "options": [
+        "Interpreter",
+        "Compiler",
+        "Assembler",
+        "Debugger"
+      ],
+      "correctIndex": 1,
+      "explanation": "A compiler translates the entire source code written in a high-level language into machine code at once, generating an executable program file.",
+      "category": "Software Concepts & Programming Logic",
+      "year": "2022",
+      "createdAt": 1794177431851,
+      "id": "ict-shs3-soft-005"
+    },
+    {
+      "subjectId": "f8a12e34-5b67-4890-a123-cdef456789ab",
+      "level": "SHS 2",
+      "text": "Which computer memory type is non-volatile and permanently stores firmware such as the BIOS/UEFI?",
+      "options": [
+        "Random Access Memory (RAM)",
+        "Cache Memory",
+        "Read Only Memory (ROM)",
+        "Virtual Memory"
+      ],
+      "correctIndex": 2,
+      "explanation": "ROM (Read Only Memory) is non-volatile and retains its contents even when the computer is powered off, making it ideal for startup instructions (firmware).",
+      "category": "Computer Hardware & Architecture",
+      "year": "2022",
+      "createdAt": 1794177431851,
+      "id": "ict-shs2-hw-006"
     }
   ],
   "settings": [

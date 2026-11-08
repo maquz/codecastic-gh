@@ -14989,10 +14989,16 @@ var handler = router({
       const schoolCode = String(u.schoolCode || "");
       const name2 = String(b.name || "").trim();
       if (!name2) return error("Student name is required", 400);
+      const { items: allUsers } = await db.list("users", { limit: 5e3 });
+      const existingSchoolStudents = allUsers.filter(
+        (usr) => (String(usr.schoolId) === schoolId || String(usr.schoolCode) === schoolCode) && (usr.role === "student" || usr.accountType === "student")
+      );
+      const regNumber = existingSchoolStudents.length + 1;
+      const cleanPrefix = schoolCode || "SCH";
       const studentId = crypto9.randomUUID();
       let studentCode = String(b.studentCode || b.studentId || "").trim();
-      if (!studentCode) {
-        studentCode = "STU-" + studentId.slice(0, 6).toUpperCase();
+      if (!studentCode || studentCode.startsWith("STU-")) {
+        studentCode = `${cleanPrefix}-${String(regNumber).padStart(3, "0")}`;
       }
       let email = String(b.email || "").trim().toLowerCase();
       const cleanSchool = (schoolCode || "sch").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -15033,6 +15039,11 @@ var handler = router({
       const schoolName = String(u.schoolName || "");
       const schoolCode = String(u.schoolCode || "");
       const cleanSchool = (schoolCode || "sch").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const cleanPrefix = schoolCode || "SCH";
+      const { items: allUsers } = await db.list("users", { limit: 5e3 });
+      let existingCount = allUsers.filter(
+        (usr) => (String(usr.schoolId) === schoolId || String(usr.schoolCode) === schoolCode) && (usr.role === "student" || usr.accountType === "student")
+      ).length;
       const studentRows = Array.isArray(b.students) ? b.students : [];
       if (studentRows.length === 0) return error("No student records provided", 400);
       const added = [];
@@ -15045,10 +15056,11 @@ var handler = router({
           skipped.push({ row: i + 1, reason: "Student name is required" });
           continue;
         }
+        existingCount++;
         const sid = crypto9.randomUUID();
         let studentCode = String(row.studentCode || row.studentId || "").trim();
-        if (!studentCode) {
-          studentCode = "STU-" + sid.slice(0, 6).toUpperCase();
+        if (!studentCode || studentCode.startsWith("STU-")) {
+          studentCode = `${cleanPrefix}-${String(existingCount).padStart(3, "0")}`;
         }
         let email = String(row.email || "").trim().toLowerCase();
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -15207,6 +15219,162 @@ var handler = router({
         totalExams,
         overallPassRate,
         avgScore
+      });
+    }
+  ],
+  "POST /api/teacher/performance": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      const u = await getUserByToken(b.token);
+      if (!u || !["teacher", "school_admin", "admin", "superadmin"].includes(u.role)) {
+        return error("Not authorised as teacher", 403);
+      }
+      const schoolId = String(u.schoolId || "");
+      const assignedLevels = Array.isArray(u.assignedLevels) ? u.assignedLevels.map(String) : [];
+      const assignedSubjects = Array.isArray(u.assignedSubjects) ? u.assignedSubjects.map(String) : [];
+      const { items: allUsers } = await db.list("users", { limit: 1e4 });
+      const { items: allResults } = await db.list("results", { limit: 2e4 });
+      const schoolStudents = allUsers.filter(
+        (usr) => String(usr.schoolId) === schoolId && (usr.role === "student" || usr.accountType === "student")
+      );
+      const myStudents = schoolStudents.filter((stud) => {
+        if (assignedLevels.length === 0) return true;
+        const gl = String(stud.gradeLevel ?? "");
+        const cs = String(stud.classSection ?? "");
+        return assignedLevels.some((al) => al === gl || cs && al.includes(cs));
+      });
+      const myStudentIds = new Set(myStudents.map((s) => String(s.id)));
+      const myStudentEmails = new Set(myStudents.map((s) => String(s.email || "").toLowerCase()).filter(Boolean));
+      const teacherResults = allResults.filter((r) => {
+        if (schoolId && String(r.schoolId || "") !== schoolId) return false;
+        const isMyStudent = r.userId && myStudentIds.has(String(r.userId)) || r.studentEmail && myStudentEmails.has(String(r.studentEmail).toLowerCase());
+        if (!isMyStudent && myStudents.length > 0) return false;
+        if (assignedSubjects.length > 0) {
+          const subName = String(r.subjectName || "");
+          const subId = String(r.subjectId || "");
+          const matchSub = assignedSubjects.some(
+            (as) => as.toLowerCase() === subName.toLowerCase() || as === subId
+          );
+          if (!matchSub) return false;
+        }
+        if (assignedLevels.length > 0) {
+          const rLvl = String(r.level ?? "");
+          const matchLvl = assignedLevels.some((al) => al === rLvl || rLvl.includes(al));
+          if (!matchLvl) return false;
+        }
+        return true;
+      });
+      teacherResults.sort((a, b2) => (Number(b2.createdAt) || 0) - (Number(a.createdAt) || 0));
+      const totalExams = teacherResults.length;
+      const passedCount = teacherResults.filter((r) => r.passed || (Number(r.percent) || 0) >= 50).length;
+      const overallPassRate = totalExams > 0 ? Math.round(passedCount / totalExams * 100) : 0;
+      const overallAvg = totalExams > 0 ? Math.round(teacherResults.reduce((sum, r) => sum + (Number(r.percent) || 0), 0) / totalExams) : 0;
+      const classMap = {};
+      for (const r of teacherResults) {
+        const cKey = r.classSection || (typeof r.level === "number" ? `Basic ${r.level}` : String(r.level || "General"));
+        if (!classMap[cKey]) classMap[cKey] = { total: 0, sumPercent: 0, passed: 0 };
+        classMap[cKey].total++;
+        classMap[cKey].sumPercent += Number(r.percent) || 0;
+        if (r.passed || (Number(r.percent) || 0) >= 50) classMap[cKey].passed++;
+      }
+      const classBreakdown = Object.entries(classMap).map(([classLabel, data]) => ({
+        classLabel,
+        examsCount: data.total,
+        avgPercent: data.total > 0 ? Math.round(data.sumPercent / data.total) : 0,
+        passRate: data.total > 0 ? Math.round(data.passed / data.total * 100) : 0
+      }));
+      const studentResultsMap = {};
+      const studentSubjectScores = {};
+      const topicStats = {};
+      const questionMissMap = {};
+      for (const tr of teacherResults) {
+        const sKey = String(tr.userId || tr.studentName || "");
+        if (!studentResultsMap[sKey]) studentResultsMap[sKey] = [];
+        studentResultsMap[sKey].push(tr);
+        const sub = String(tr.subjectName || "General");
+        if (!studentSubjectScores[sKey]) studentSubjectScores[sKey] = {};
+        if (!studentSubjectScores[sKey][sub]) studentSubjectScores[sKey][sub] = [];
+        studentSubjectScores[sKey][sub].push(Number(tr.percent) || 0);
+        if (Array.isArray(tr.details)) {
+          for (const det of tr.details) {
+            const topic = String(det.category || sub).trim() || sub;
+            if (!topicStats[topic]) topicStats[topic] = { topic, total: 0, correct: 0 };
+            topicStats[topic].total++;
+            const isCor = !!(det.isCorrect || det.correct);
+            if (isCor) {
+              topicStats[topic].correct++;
+            } else {
+              const qId = String(det.id || det.text || "");
+              if (!questionMissMap[qId]) {
+                questionMissMap[qId] = {
+                  text: det.text || "Diagnostic Question",
+                  explanation: det.explanation || "",
+                  missCount: 0
+                };
+              }
+              questionMissMap[qId].missCount++;
+            }
+          }
+        }
+      }
+      const studentRoster = myStudents.map((stud) => {
+        const sKey = String(stud.id);
+        const sAttempts = studentResultsMap[sKey] || studentResultsMap[stud.name] || [];
+        const examsTaken = sAttempts.length;
+        let avgScore = 0;
+        let passRate = 0;
+        const strengths = [];
+        const weaknesses = [];
+        if (examsTaken > 0) {
+          const pcts = sAttempts.map((a) => Number(a.percent) || 0);
+          avgScore = Math.round(pcts.reduce((a, b2) => a + b2, 0) / pcts.length);
+          const passed = sAttempts.filter((a) => a.passed || (Number(a.percent) || 0) >= 50).length;
+          passRate = Math.round(passed / examsTaken * 100);
+          const subScores = studentSubjectScores[sKey] || studentSubjectScores[stud.name] || {};
+          for (const [subName, scores] of Object.entries(subScores)) {
+            const subAvg = Math.round(scores.reduce((a, b2) => a + b2, 0) / scores.length);
+            if (subAvg >= 70) {
+              strengths.push(`${subName} (${subAvg}%)`);
+            } else if (subAvg < 50) {
+              weaknesses.push(`${subName} (${subAvg}%)`);
+            }
+          }
+        }
+        return {
+          ...publicUser(stud),
+          examsTaken,
+          avgScore,
+          passRate,
+          strengths,
+          weaknesses,
+          recentResults: sAttempts.slice(0, 5)
+        };
+      });
+      const competencyDiagnostics = Object.values(topicStats).map((tStat) => {
+        const accuracy = tStat.total > 0 ? Math.round(tStat.correct / tStat.total * 100) : 0;
+        const status = accuracy >= 70 ? "strength" : accuracy < 50 ? "weakness" : "moderate";
+        return {
+          topic: tStat.topic,
+          accuracy,
+          totalQuestions: tStat.total,
+          correctCount: tStat.correct,
+          status
+        };
+      });
+      competencyDiagnostics.sort((a, b2) => a.accuracy - b2.accuracy);
+      const topMissedQuestions = Object.values(questionMissMap).sort((a, b2) => b2.missCount - a.missCount);
+      return json({
+        ok: true,
+        teacher: publicUser(u),
+        myStudentsCount: myStudents.length,
+        totalExams,
+        overallAvg,
+        overallPassRate,
+        classBreakdown,
+        studentRoster,
+        competencyDiagnostics,
+        results: teacherResults.slice(0, 100),
+        topMissedQuestions: topMissedQuestions.slice(0, 15)
       });
     }
   ],

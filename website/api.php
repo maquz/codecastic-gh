@@ -3321,8 +3321,17 @@ if ($route === 'school/students/add' && $method === 'POST') {
     if ($name === '') errorOut('Student name is required', 400);
 
     $studentId = generateUuid();
-    if ($studentCode === '') {
-        $studentCode = 'STU-' . strtoupper(substr($studentId, 0, 6));
+    if ($studentCode === '' || stripos($studentCode, 'STU-') === 0) {
+        $existingCount = 0;
+        foreach ($db['users'] as $su) {
+            if ((($su['schoolId'] ?? '') === $schoolId || ($su['schoolCode'] ?? '') === $schoolCode) &&
+                (($su['role'] ?? '') === 'student' || ($su['accountType'] ?? '') === 'student')) {
+                $existingCount++;
+            }
+        }
+        $regNumber = $existingCount + 1;
+        $cleanPrefix = $schoolCode !== '' ? $schoolCode : 'SCH';
+        $studentCode = $cleanPrefix . '-' . str_pad((string)$regNumber, 3, '0', STR_PAD_LEFT);
     }
 
     $cleanSchool = strtolower(preg_replace('/[^a-z0-9]/', '', $schoolCode ?: 'sch'));
@@ -3374,6 +3383,15 @@ if ($route === 'school/students/bulk' && $method === 'POST') {
     $added = [];
     $skipped = [];
     $cleanSchool = strtolower(preg_replace('/[^a-z0-9]/', '', $schoolCode ?: 'sch'));
+    $cleanPrefix = $schoolCode !== '' ? $schoolCode : 'SCH';
+
+    $existingCount = 0;
+    foreach ($db['users'] as $su) {
+        if ((($su['schoolId'] ?? '') === $schoolId || ($su['schoolCode'] ?? '') === $schoolCode) &&
+            (($su['role'] ?? '') === 'student' || ($su['accountType'] ?? '') === 'student')) {
+            $existingCount++;
+        }
+    }
 
     foreach ($studentRows as $idx => $row) {
         $name = trim((string)($row['name'] ?? ''));
@@ -3382,7 +3400,12 @@ if ($route === 'school/students/bulk' && $method === 'POST') {
             continue;
         }
 
+        $existingCount++;
         $studentCode = trim((string)($row['studentCode'] ?? ($row['studentId'] ?? '')));
+        if ($studentCode === '' || stripos($studentCode, 'STU-') === 0) {
+            $studentCode = $cleanPrefix . '-' . str_pad((string)$existingCount, 3, '0', STR_PAD_LEFT);
+        }
+
         $rawLevel = $row['gradeLevel'] ?? 4;
         $lvl = normLevel($rawLevel) ?? 4;
         $section = trim((string)($row['classSection'] ?? ''));
@@ -3390,10 +3413,6 @@ if ($route === 'school/students/bulk' && $method === 'POST') {
         if ($pw === '') $pw = 'Student2026#';
 
         $sid = generateUuid();
-        if ($studentCode === '') {
-            $studentCode = 'STU-' . strtoupper(substr($sid, 0, 6));
-        }
-
         $email = strtolower(trim((string)($row['email'] ?? '')));
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $email = $cleanSchool . '.' . substr($sid, 0, 8) . '@student.codecasticgh.com';
@@ -3746,6 +3765,93 @@ if ($route === 'teacher/performance' && $method === 'POST') {
     $overallAvg = count($allPercents) > 0 ? round(array_sum($allPercents) / count($allPercents)) : 0;
     $overallPassRate = $totalExams > 0 ? round(($totalPassed / $totalExams) * 100) : 0;
 
+    // Group results by student for individual Strengths and Weaknesses profiling
+    $studentResultsMap = [];
+    $studentSubjectScores = [];
+    $topicStats = [];
+
+    foreach ($teacherResults as $tr) {
+        $sid = (string)($tr['userId'] ?? '');
+        $sName = $tr['studentName'] ?? '';
+        $sKey = $sid !== '' ? $sid : $sName;
+
+        if (!isset($studentResultsMap[$sKey])) {
+            $studentResultsMap[$sKey] = [];
+        }
+        $studentResultsMap[$sKey][] = $tr;
+
+        $sub = $tr['subjectName'] ?: 'General';
+        if (!isset($studentSubjectScores[$sKey][$sub])) {
+            $studentSubjectScores[$sKey][$sub] = [];
+        }
+        $studentSubjectScores[$sKey][$sub][] = $tr['percent'];
+
+        if (!empty($tr['details']) && is_array($tr['details'])) {
+            foreach ($tr['details'] as $det) {
+                $topic = trim((string)($det['category'] ?? ''));
+                if ($topic === '') $topic = $sub;
+                if (!isset($topicStats[$topic])) {
+                    $topicStats[$topic] = ['topic' => $topic, 'total' => 0, 'correct' => 0];
+                }
+                $topicStats[$topic]['total']++;
+                if (!empty($det['isCorrect']) || !empty($det['correct'])) {
+                    $topicStats[$topic]['correct']++;
+                }
+            }
+        }
+    }
+
+    // Enhance student roster with actionable strengths and weaknesses
+    foreach ($myStudents as &$stud) {
+        $sid = $stud['id'];
+        $sName = $stud['name'];
+        $sKey = isset($studentResultsMap[$sid]) ? $sid : (isset($studentResultsMap[$sName]) ? $sName : null);
+        $sAttempts = $sKey !== null ? $studentResultsMap[$sKey] : [];
+
+        $stud['examsTaken'] = count($sAttempts);
+        $stud['avgScore'] = 0;
+        $stud['passRate'] = 0;
+        $stud['strengths'] = [];
+        $stud['weaknesses'] = [];
+        $stud['recentResults'] = array_slice($sAttempts, 0, 5);
+
+        if (count($sAttempts) > 0) {
+            $sPercents = array_column($sAttempts, 'percent');
+            $stud['avgScore'] = round(array_sum($sPercents) / count($sPercents));
+            $sPassed = count(array_filter($sAttempts, function($a) { return !empty($a['passed']) || $a['percent'] >= 50; }));
+            $stud['passRate'] = round(($sPassed / count($sAttempts)) * 100);
+
+            if (isset($studentSubjectScores[$sKey])) {
+                foreach ($studentSubjectScores[$sKey] as $subName => $pcts) {
+                    $subAvg = round(array_sum($pcts) / count($pcts));
+                    if ($subAvg >= 70) {
+                        $stud['strengths'][] = "$subName ($subAvg%)";
+                    } elseif ($subAvg < 50) {
+                        $stud['weaknesses'][] = "$subName ($subAvg%)";
+                    }
+                }
+            }
+        }
+    }
+    unset($stud);
+
+    // Class-wide competency diagnostics (strengths vs weaknesses)
+    $competencyDiagnostics = [];
+    foreach ($topicStats as $tStat) {
+        $acc = $tStat['total'] > 0 ? round(($tStat['correct'] / $tStat['total']) * 100) : 0;
+        $status = $acc >= 70 ? 'strength' : ($acc < 50 ? 'weakness' : 'moderate');
+        $competencyDiagnostics[] = [
+            'topic' => $tStat['topic'],
+            'accuracy' => $acc,
+            'totalQuestions' => $tStat['total'],
+            'correctCount' => $tStat['correct'],
+            'status' => $status
+        ];
+    }
+    usort($competencyDiagnostics, function($a, $b) {
+        return $a['accuracy'] <=> $b['accuracy'];
+    });
+
     jsonOut([
         'ok' => true,
         'teacher' => publicUser($u),
@@ -3755,8 +3861,9 @@ if ($route === 'teacher/performance' && $method === 'POST') {
         'overallPassRate' => $overallPassRate,
         'classBreakdown' => $classBreakdown,
         'studentRoster' => $myStudents,
+        'competencyDiagnostics' => $competencyDiagnostics,
         'results' => array_slice($teacherResults, 0, 100),
-        'topMissedQuestions' => array_slice($topMissedQuestions, 0, 10)
+        'topMissedQuestions' => array_slice($topMissedQuestions, 0, 15)
     ]);
 }
 

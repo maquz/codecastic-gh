@@ -23,7 +23,12 @@ import {
     GraduationCap,
     Eye,
     BarChart3,
-    HardDrive
+    HardDrive,
+    Target,
+    TrendingUp,
+    TrendingDown,
+    AlertTriangle,
+    Award
 } from 'lucide-react';
 import type { Level } from './ExamHubPortal';
 
@@ -387,15 +392,30 @@ export function TeacherPortalView({
         overallAvg: number;
         overallPassRate: number;
         classBreakdown: { classLabel: string; examsCount: number; avgPercent: number; passRate: number }[];
-        studentRoster: PortalUser[];
+        studentRoster: (PortalUser & {
+            examsTaken?: number;
+            avgScore?: number;
+            passRate?: number;
+            strengths?: string[];
+            weaknesses?: string[];
+            recentResults?: any[];
+        })[];
+        competencyDiagnostics?: {
+            topic: string;
+            accuracy: number;
+            totalQuestions: number;
+            correctCount: number;
+            status: 'strength' | 'weakness' | 'moderate';
+        }[];
         results: any[];
         topMissedQuestions: any[];
     } | null>(null);
 
-    const [activeTab, setActiveTab] = useState<'results' | 'roster' | 'diagnostics'>('results');
+    const [activeTab, setActiveTab] = useState<'results' | 'roster' | 'strengths-weaknesses' | 'diagnostics'>('results');
     const [classFilter, setClassFilter] = useState<string>('all');
     const [search, setSearch] = useState('');
     const [selectedReview, setSelectedReview] = useState<any | null>(null);
+    const [selectedStudentDiagnostic, setSelectedStudentDiagnostic] = useState<any | null>(null);
     const [refreshing, setRefreshing] = useState(false);
 
     const loadData = useCallback(async () => {
@@ -601,21 +621,31 @@ export function TeacherPortalView({
             </div>
 
             {/* Navigation Tabs */}
-            <div className="flex border-b border-slate-200 gap-6">
+            <div className="flex border-b border-slate-200 gap-2 sm:gap-6 overflow-x-auto">
                 <button
                     type="button"
                     onClick={() => setActiveTab('results')}
-                    className={`pb-3 text-sm font-bold border-b-2 transition flex items-center gap-2 ${
+                    className={`pb-3 text-xs sm:text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${
                         activeTab === 'results' ? 'border-[#364c83] text-[#364c83]' : 'border-transparent text-slate-500 hover:text-slate-800'
                     }`}
                 >
                     <BookOpen size={16} />
-                    Student Test Attempts ({stats?.results?.length || 0})
+                    Test Attempts ({stats?.results?.length || 0})
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('strengths-weaknesses')}
+                    className={`pb-3 text-xs sm:text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${
+                        activeTab === 'strengths-weaknesses' ? 'border-[#364c83] text-[#364c83]' : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                >
+                    <Target size={16} />
+                    Strengths &amp; Weaknesses (Intervention Hub)
                 </button>
                 <button
                     type="button"
                     onClick={() => setActiveTab('roster')}
-                    className={`pb-3 text-sm font-bold border-b-2 transition flex items-center gap-2 ${
+                    className={`pb-3 text-xs sm:text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${
                         activeTab === 'roster' ? 'border-[#364c83] text-[#364c83]' : 'border-transparent text-slate-500 hover:text-slate-800'
                     }`}
                 >
@@ -625,12 +655,12 @@ export function TeacherPortalView({
                 <button
                     type="button"
                     onClick={() => setActiveTab('diagnostics')}
-                    className={`pb-3 text-sm font-bold border-b-2 transition flex items-center gap-2 ${
+                    className={`pb-3 text-xs sm:text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${
                         activeTab === 'diagnostics' ? 'border-[#364c83] text-[#364c83]' : 'border-transparent text-slate-500 hover:text-slate-800'
                     }`}
                 >
                     <Sparkles size={16} />
-                    Curriculum &amp; Question Insights
+                    Common Question Misconceptions
                 </button>
             </div>
 
@@ -689,7 +719,7 @@ export function TeacherPortalView({
                                         <th className="px-4 py-3">Percent</th>
                                         <th className="px-4 py-3">Status</th>
                                         <th className="px-4 py-3">Date</th>
-                                        <th className="px-4 py-3 text-right">Action</th>
+                                        <th className="px-4 py-3 text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
@@ -724,7 +754,32 @@ export function TeacherPortalView({
                                             <td className="px-4 py-3 text-slate-400">
                                                 {r.createdAt ? new Date(r.createdAt).toLocaleDateString() : 'Recent'}
                                             </td>
-                                            <td className="px-4 py-3 text-right">
+                                            <td className="px-4 py-3 text-right space-x-1.5 whitespace-nowrap">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const matched = stats?.studentRoster?.find((s) => s.id === r.userId || s.name === r.studentName);
+                                                        setSelectedStudentDiagnostic(matched || {
+                                                            id: r.userId || '',
+                                                            name: r.studentName,
+                                                            email: r.studentEmail || '',
+                                                            gradeLevel: r.level,
+                                                            classSection: r.classSection || '',
+                                                            schoolName: user.schoolName,
+                                                            examsTaken: 1,
+                                                            avgScore: r.percent,
+                                                            passRate: r.percent >= 50 ? 100 : 0,
+                                                            strengths: r.percent >= 70 ? [`${r.subjectName} (${r.percent}%)`] : [],
+                                                            weaknesses: r.percent < 50 ? [`${r.subjectName} (${r.percent}%)`] : [],
+                                                            recentResults: [r]
+                                                        });
+                                                    }}
+                                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                                    title="View strengths and weaknesses for this student"
+                                                >
+                                                    <Target size={12} className="text-[#364c83]" />
+                                                    Diagnostic
+                                                </button>
                                                 <button
                                                     type="button"
                                                     onClick={() => setSelectedReview(r)}
@@ -750,38 +805,320 @@ export function TeacherPortalView({
                 </div>
             )}
 
-            {/* Tab 2: Class Roster */}
+            {/* Tab 2: Strengths & Weaknesses (Intervention Hub) */}
+            {activeTab === 'strengths-weaknesses' && (
+                <div className="space-y-6">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                                    <Target className="text-[#364c83]" size={18} />
+                                    Student Competency Diagnostics &amp; Intervention Hub
+                                </h2>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Real-time tracking of curriculum topics and individual student mastery against national standards (≥ 70% Mastery, &lt; 50% Remediation Alert).
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* High-level topic cards: Strengths vs Weaknesses */}
+                        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* Class Strengths */}
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-900 uppercase tracking-wider">
+                                        <Award size={15} className="text-emerald-700" />
+                                        Class Strengths (≥ 70% Accuracy)
+                                    </span>
+                                    <span className="rounded-full bg-emerald-200/70 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                                        Mastery Achieved
+                                    </span>
+                                </div>
+                                <p className="text-xs text-slate-600 mb-3">
+                                    Topics where your students demonstrate solid conceptual understanding and problem-solving readiness.
+                                </p>
+                                <div className="space-y-2">
+                                    {stats?.competencyDiagnostics?.filter((c) => c.status === 'strength').map((c) => (
+                                        <div key={c.topic} className="flex items-center justify-between rounded-lg bg-white p-2.5 border border-emerald-100 shadow-2xs">
+                                            <span className="text-xs font-bold text-slate-800">{c.topic}</span>
+                                            <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                                                {c.accuracy}% ({c.correctCount}/{c.totalQuestions})
+                                            </span>
+                                        </div>
+                                    ))}
+                                    {(!stats?.competencyDiagnostics || stats.competencyDiagnostics.filter((c) => c.status === 'strength').length === 0) && (
+                                        <p className="text-xs text-slate-400 italic py-2">
+                                            No topics reached 70% mastery yet. Encourage students to attempt more targeted practice.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Priority Weaknesses & Remediation */}
+                            <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-4">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="flex items-center gap-1.5 text-xs font-bold text-rose-900 uppercase tracking-wider">
+                                        <AlertTriangle size={15} className="text-rose-700" />
+                                        Intervention Areas (&lt; 50% Accuracy)
+                                    </span>
+                                    <span className="rounded-full bg-rose-200/70 px-2 py-0.5 text-[10px] font-bold text-rose-800">
+                                        Action Required
+                                    </span>
+                                </div>
+                                <p className="text-xs text-slate-600 mb-3">
+                                    Topics requiring teacher-led revision, practical demonstrations, or concept clarification before the next assessment.
+                                </p>
+                                <div className="space-y-2">
+                                    {stats?.competencyDiagnostics?.filter((c) => c.status === 'weakness').map((c) => (
+                                        <div key={c.topic} className="rounded-lg bg-white p-2.5 border border-rose-100 shadow-2xs">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs font-bold text-slate-800">{c.topic}</span>
+                                                <span className="text-xs font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded">
+                                                    {c.accuracy}% ({c.correctCount}/{c.totalQuestions})
+                                                </span>
+                                            </div>
+                                            <p className="mt-1 text-[11px] text-slate-500">
+                                                💡 <strong>Teacher Tip:</strong> Reteach foundational definitions and conduct step-by-step worked examples.
+                                            </p>
+                                        </div>
+                                    ))}
+                                    {(!stats?.competencyDiagnostics || stats.competencyDiagnostics.filter((c) => c.status === 'weakness').length === 0) && (
+                                        <p className="text-xs text-slate-400 italic py-2">
+                                            Great news! No topics have fallen below 50% accuracy across your student cohort.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Complete Topics Breakdown Table */}
+                        <div className="mt-6">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
+                                Topic Competency Diagnostic Table
+                            </h3>
+                            <div className="overflow-x-auto rounded-xl border border-slate-200">
+                                <table className="w-full text-left text-xs">
+                                    <thead className="bg-slate-50 text-slate-600 font-bold uppercase border-b border-slate-200">
+                                        <tr>
+                                            <th className="px-4 py-2.5">Topic / Sub-Strand</th>
+                                            <th className="px-4 py-2.5">Class Accuracy</th>
+                                            <th className="px-4 py-2.5">Questions Tested</th>
+                                            <th className="px-4 py-2.5">Correct Answers</th>
+                                            <th className="px-4 py-2.5 text-right">Pedagogical Recommendation</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {stats?.competencyDiagnostics?.map((c) => (
+                                            <tr key={c.topic} className="hover:bg-slate-50/70">
+                                                <td className="px-4 py-2.5 font-bold text-slate-900">{c.topic}</td>
+                                                <td className="px-4 py-2.5">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-16 h-2 rounded-full bg-slate-200 overflow-hidden">
+                                                            <div
+                                                                className={`h-full rounded-full ${
+                                                                    c.accuracy >= 70 ? 'bg-emerald-600' : c.accuracy < 50 ? 'bg-rose-600' : 'bg-amber-500'
+                                                                }`}
+                                                                style={{ width: `${c.accuracy}%` }}
+                                                            />
+                                                        </div>
+                                                        <span className="font-bold text-slate-800">{c.accuracy}%</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-2.5 text-slate-600">{c.totalQuestions}</td>
+                                                <td className="px-4 py-2.5 text-slate-600">{c.correctCount}</td>
+                                                <td className="px-4 py-2.5 text-right">
+                                                    <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                                        c.accuracy >= 70
+                                                            ? 'bg-emerald-50 text-emerald-800'
+                                                            : c.accuracy < 50
+                                                            ? 'bg-rose-50 text-rose-800'
+                                                            : 'bg-amber-50 text-amber-800'
+                                                    }`}>
+                                                        {c.accuracy >= 70
+                                                            ? 'Ready for Extension'
+                                                            : c.accuracy < 50
+                                                            ? 'Immediate Lesson Remediation'
+                                                            : 'Reinforce Key Concepts'}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {(!stats?.competencyDiagnostics || stats.competencyDiagnostics.length === 0) && (
+                                            <tr>
+                                                <td colSpan={5} className="py-6 text-center text-slate-400">
+                                                    No topic diagnostics recorded yet. As students take quizzes, accuracy will populate here.
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* Student Performance Matrix */}
+                        <div className="mt-8">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
+                                Individual Student Action List (Click any student for detailed diagnostic)
+                            </h3>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {/* Ready for Extension */}
+                                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
+                                    <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5 mb-2">
+                                        <TrendingUp size={14} />
+                                        High Achievers (≥ 70% Avg)
+                                    </span>
+                                    <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                                        {stats?.studentRoster?.filter((s) => (s.avgScore || 0) >= 70).map((s) => (
+                                            <button
+                                                key={s.id}
+                                                type="button"
+                                                onClick={() => setSelectedStudentDiagnostic(s)}
+                                                className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-emerald-300 transition text-xs flex items-center justify-between shadow-2xs"
+                                            >
+                                                <span className="font-semibold text-slate-800 truncate">{s.name}</span>
+                                                <span className="font-bold text-emerald-700">{s.avgScore}%</span>
+                                            </button>
+                                        ))}
+                                        {(!stats?.studentRoster || stats.studentRoster.filter((s) => (s.avgScore || 0) >= 70).length === 0) && (
+                                            <p className="text-[11px] text-slate-400 py-2">No students currently in this tier.</p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* On Track */}
+                                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
+                                    <span className="text-xs font-bold text-amber-800 flex items-center gap-1.5 mb-2">
+                                        <Target size={14} />
+                                        On Track (50% - 69% Avg)
+                                    </span>
+                                    <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                                        {stats?.studentRoster?.filter((s) => (s.avgScore || 0) >= 50 && (s.avgScore || 0) < 70).map((s) => (
+                                            <button
+                                                key={s.id}
+                                                type="button"
+                                                onClick={() => setSelectedStudentDiagnostic(s)}
+                                                className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-amber-300 transition text-xs flex items-center justify-between shadow-2xs"
+                                            >
+                                                <span className="font-semibold text-slate-800 truncate">{s.name}</span>
+                                                <span className="font-bold text-amber-700">{s.avgScore}%</span>
+                                            </button>
+                                        ))}
+                                        {(!stats?.studentRoster || stats.studentRoster.filter((s) => (s.avgScore || 0) >= 50 && (s.avgScore || 0) < 70).length === 0) && (
+                                            <p className="text-[11px] text-slate-400 py-2">No students currently in this tier.</p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Priority Intervention */}
+                                <div className="rounded-xl border border-rose-200 bg-rose-50/40 p-3.5">
+                                    <span className="text-xs font-bold text-rose-800 flex items-center gap-1.5 mb-2">
+                                        <TrendingDown size={14} />
+                                        Priority Support Needed (&lt; 50% Avg)
+                                    </span>
+                                    <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                                        {stats?.studentRoster?.filter((s) => (s.examsTaken || 0) > 0 && (s.avgScore || 0) < 50).map((s) => (
+                                            <button
+                                                key={s.id}
+                                                type="button"
+                                                onClick={() => setSelectedStudentDiagnostic(s)}
+                                                className="w-full text-left p-2 rounded-lg bg-white border border-rose-200 hover:border-rose-400 transition text-xs flex items-center justify-between shadow-2xs"
+                                            >
+                                                <span className="font-semibold text-slate-800 truncate">{s.name}</span>
+                                                <span className="font-bold text-rose-700">{s.avgScore}%</span>
+                                            </button>
+                                        ))}
+                                        {(!stats?.studentRoster || stats.studentRoster.filter((s) => (s.examsTaken || 0) > 0 && (s.avgScore || 0) < 50).length === 0) && (
+                                            <p className="text-[11px] text-slate-400 py-2">No students needing urgent intervention.</p>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Tab 3: Class Roster */}
             {activeTab === 'roster' && (
                 <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
-                    <h3 className="text-sm font-bold text-slate-900 mb-3">Enrolled Students in Your Assigned Classes</h3>
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h3 className="text-sm font-bold text-slate-900">Enrolled Students in Your Assigned Classes</h3>
+                            <p className="text-xs text-slate-500">
+                                Click "Diagnostic Profile" on any student to view their individual strengths, weaknesses, and remediation advice.
+                            </p>
+                        </div>
+                    </div>
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs">
                             <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase">
                                 <tr>
-                                    <th className="px-4 py-2.5">Name</th>
-                                    <th className="px-4 py-2.5">Email</th>
+                                    <th className="px-4 py-2.5">Student Name &amp; ID</th>
                                     <th className="px-4 py-2.5">Grade Level</th>
                                     <th className="px-4 py-2.5">Section</th>
                                     <th className="px-4 py-2.5">Tests Taken</th>
                                     <th className="px-4 py-2.5">Average Score</th>
+                                    <th className="px-4 py-2.5">Strengths (≥ 70%)</th>
+                                    <th className="px-4 py-2.5">Weaknesses (&lt; 50%)</th>
+                                    <th className="px-4 py-2.5 text-right">Action</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {stats?.studentRoster?.map((s) => (
                                     <tr key={s.id} className="hover:bg-slate-50/60">
-                                        <td className="px-4 py-2.5 font-semibold text-slate-900">{s.name}</td>
-                                        <td className="px-4 py-2.5 text-slate-600">{s.email}</td>
+                                        <td className="px-4 py-2.5">
+                                            <span className="font-semibold text-slate-900 block">{s.name}</span>
+                                            <span className="text-[11px] font-mono text-slate-500 font-normal">
+                                                ID: {s.studentCode || s.id?.slice(0, 8)?.toUpperCase()}
+                                            </span>
+                                        </td>
                                         <td className="px-4 py-2.5 text-slate-700">{isNumeric(s.gradeLevel) ? `Basic ${s.gradeLevel}` : s.gradeLevel}</td>
                                         <td className="px-4 py-2.5 text-slate-700">{s.classSection || '--'}</td>
-                                        <td className="px-4 py-2.5 font-bold text-slate-900">{(s as any).examsTaken ?? '--'}</td>
+                                        <td className="px-4 py-2.5 font-bold text-slate-900">{s.examsTaken ?? '--'}</td>
                                         <td className="px-4 py-2.5 font-bold text-[#364c83]">
-                                            {(s as any).avgScore ? `${(s as any).avgScore}%` : '--'}
+                                            {s.avgScore ? `${s.avgScore}%` : '--'}
+                                        </td>
+                                        <td className="px-4 py-2.5">
+                                            {s.strengths && s.strengths.length > 0 ? (
+                                                <div className="flex flex-wrap gap-1">
+                                                    {s.strengths.map((str, idx) => (
+                                                        <span key={idx} className="rounded bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-medium">
+                                                            {str}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <span className="text-slate-400 text-[11px]">--</span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-2.5">
+                                            {s.weaknesses && s.weaknesses.length > 0 ? (
+                                                <div className="flex flex-wrap gap-1">
+                                                    {s.weaknesses.map((wk, idx) => (
+                                                        <span key={idx} className="rounded bg-rose-50 text-rose-800 border border-rose-200 px-1.5 py-0.5 text-[10px] font-medium">
+                                                            {wk}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <span className="text-slate-400 text-[11px]">None identified</span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-2.5 text-right">
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedStudentDiagnostic(s)}
+                                                className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50/80 px-2.5 py-1 text-xs font-bold text-[#364c83] hover:bg-indigo-100 shadow-2xs whitespace-nowrap"
+                                            >
+                                                <Target size={12} />
+                                                Diagnostic Profile
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}
                                 {(!stats?.studentRoster || stats.studentRoster.length === 0) && (
                                     <tr>
-                                        <td colSpan={6} className="py-6 text-center text-slate-400">
+                                        <td colSpan={8} className="py-6 text-center text-slate-400">
                                             No students mounted in your assigned classes yet. Ask your School Head to mount students.
                                         </td>
                                     </tr>
@@ -792,7 +1129,7 @@ export function TeacherPortalView({
                 </div>
             )}
 
-            {/* Tab 3: Diagnostics */}
+            {/* Tab 4: Diagnostics */}
             {activeTab === 'diagnostics' && (
                 <div className="space-y-4">
                     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
@@ -823,6 +1160,144 @@ export function TeacherPortalView({
                                 </p>
                             )}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Individual Student Diagnostic Profile Modal */}
+            {selectedStudentDiagnostic && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+                    <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div className="flex items-center gap-3">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-[#364c83]">
+                                    <Target size={24} />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">
+                                        {selectedStudentDiagnostic.name}
+                                    </h3>
+                                    <p className="text-xs text-slate-500 font-mono">
+                                        ID: <strong>{selectedStudentDiagnostic.studentCode || selectedStudentDiagnostic.id?.slice(0, 8)?.toUpperCase()}</strong> &middot;{' '}
+                                        Class: <strong>{isNumeric(selectedStudentDiagnostic.gradeLevel) ? `Basic ${selectedStudentDiagnostic.gradeLevel}` : selectedStudentDiagnostic.gradeLevel} {selectedStudentDiagnostic.classSection ? `(${selectedStudentDiagnostic.classSection})` : ''}</strong>
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setSelectedStudentDiagnostic(null)}
+                                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Summary Score Cards */}
+                        <div className="mt-4 grid grid-cols-3 gap-3">
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center">
+                                <span className="text-[11px] text-slate-500 font-medium block">Tests Taken</span>
+                                <span className="text-xl font-bold text-slate-900 mt-0.5 block">
+                                    {selectedStudentDiagnostic.examsTaken || 0}
+                                </span>
+                            </div>
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center">
+                                <span className="text-[11px] text-slate-500 font-medium block">Average Score</span>
+                                <span className="text-xl font-bold text-[#364c83] mt-0.5 block">
+                                    {selectedStudentDiagnostic.avgScore ? `${selectedStudentDiagnostic.avgScore}%` : '--%'}
+                                </span>
+                            </div>
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center">
+                                <span className="text-[11px] text-slate-500 font-medium block">Pass Rate</span>
+                                <span className="text-xl font-bold text-emerald-700 mt-0.5 block">
+                                    {selectedStudentDiagnostic.passRate ? `${selectedStudentDiagnostic.passRate}%` : '--%'}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Strengths & Weaknesses Section */}
+                        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {/* Strengths */}
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+                                <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-900 uppercase tracking-wider mb-2">
+                                    <Award size={14} className="text-emerald-700" />
+                                    Strengths (Mastered ≥ 70%)
+                                </span>
+                                {selectedStudentDiagnostic.strengths && selectedStudentDiagnostic.strengths.length > 0 ? (
+                                    <ul className="space-y-1.5">
+                                        {selectedStudentDiagnostic.strengths.map((str: string, i: number) => (
+                                            <li key={i} className="flex items-center gap-1.5 text-xs text-slate-800 bg-white p-2 rounded-lg border border-emerald-100 shadow-2xs">
+                                                <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+                                                <span className="font-semibold">{str}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p className="text-xs text-slate-500 italic py-2">
+                                        No strong subjects recorded yet. More test attempts will reveal mastery areas.
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Weaknesses */}
+                            <div className="rounded-xl border border-rose-200 bg-rose-50/40 p-4">
+                                <span className="flex items-center gap-1.5 text-xs font-bold text-rose-900 uppercase tracking-wider mb-2">
+                                    <AlertTriangle size={14} className="text-rose-700" />
+                                    Weaknesses (Needs Support &lt; 50%)
+                                </span>
+                                {selectedStudentDiagnostic.weaknesses && selectedStudentDiagnostic.weaknesses.length > 0 ? (
+                                    <ul className="space-y-1.5">
+                                        {selectedStudentDiagnostic.weaknesses.map((wk: string, i: number) => (
+                                            <li key={i} className="flex items-center gap-1.5 text-xs text-slate-800 bg-white p-2 rounded-lg border border-rose-100 shadow-2xs">
+                                                <XCircle size={13} className="text-rose-600 shrink-0" />
+                                                <span className="font-semibold">{wk}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p className="text-xs text-slate-500 italic py-2">
+                                        No critical weaknesses detected (&lt; 50%). Student is performing well!
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Pedagogical Guidance for the Teacher */}
+                        <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-xs">
+                            <span className="font-bold text-[#364c83] block mb-1">
+                                👨‍🏫 Teacher Intervention &amp; Action Plan:
+                            </span>
+                            <p className="text-slate-700 leading-relaxed">
+                                {selectedStudentDiagnostic.weaknesses && selectedStudentDiagnostic.weaknesses.length > 0
+                                    ? `This student will benefit from targeted remediation in ${selectedStudentDiagnostic.weaknesses.join(', ')}. Review past quiz items with the student using the built-in AI Tutor for step-by-step explanations.`
+                                    : (selectedStudentDiagnostic.avgScore || 0) >= 70
+                                    ? 'Student is excelling across current assessments. Challenge them with higher-order thinking past questions and peer-tutoring leadership roles.'
+                                    : 'Student shows average comprehension. Provide regular practice quizzes and encourage using the AI Tutor for post-quiz review.'}
+                            </p>
+                        </div>
+
+                        {/* Recent Test Attempts */}
+                        {selectedStudentDiagnostic.recentResults && selectedStudentDiagnostic.recentResults.length > 0 && (
+                            <div className="mt-5">
+                                <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-2">
+                                    Recent Test History
+                                </span>
+                                <div className="space-y-2">
+                                    {selectedStudentDiagnostic.recentResults.map((r: any, idx: number) => (
+                                        <div key={idx} className="flex items-center justify-between p-2.5 rounded-lg border border-slate-200 bg-slate-50/50 text-xs">
+                                            <div>
+                                                <span className="font-bold text-slate-900">{r.subjectName}</span>
+                                                <span className="text-slate-500 block text-[11px]">
+                                                    {r.createdAt ? new Date(r.createdAt).toLocaleDateString() : 'Recent'} &middot; Score: {r.score}/{r.total}
+                                                </span>
+                                            </div>
+                                            <span className={`font-bold px-2 py-0.5 rounded ${r.percent >= 50 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                                {r.percent}% {r.passed ? '✓' : '✗'}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -1620,15 +2095,15 @@ export function SchoolAdminPortalView({
                                     />
                                 </div>
                                 <div>
-                                    <label className="block font-semibold text-slate-700 mb-1">Student ID / Index No. (Optional)</label>
+                                    <label className="block font-semibold text-slate-700 mb-1">Student ID (Auto-Generated from School Code)</label>
                                     <input
                                         value={sId}
                                         onChange={(e) => setSId(e.target.value)}
-                                        placeholder="e.g. STU-001 or Index Number"
-                                        className="input text-xs"
+                                        placeholder={`e.g. ${user.schoolCode || 'SCH'}-${String(students.length + 1).padStart(3, '0')}`}
+                                        className="input text-xs font-mono"
                                     />
                                     <span className="text-[10px] text-slate-400 mt-0.5 block">
-                                        Assigned automatically if left blank.
+                                        Auto-generated from your school code and sequence (e.g. {user.schoolCode || 'SCH'}-{String(students.length + 1).padStart(3, '0')}). Leave blank to generate automatically.
                                     </span>
                                 </div>
                                 <div>
@@ -1874,12 +2349,12 @@ export function SchoolAdminPortalView({
                                     </button>
                                 </div>
                                 <pre className="mt-1 font-mono text-[11px] text-[#364c83] bg-white/80 p-2 rounded border border-indigo-100">
-{`Kwame Osei, Basic 8, 8A, STU-001
-Abena Mensah, Basic 9, 9B, STU-002
-Yaw Boakye, SHS 2, Science 1, STU-003`}
+{`Kwame Osei, Basic 8, 8A
+Abena Mensah, Basic 9, 9B
+Yaw Boakye, SHS 2, Science 1`}
                                 </pre>
                                 <span className="text-[10px] text-slate-500 mt-1 block">
-                                    Columns: <strong>Student Full Name, Grade Level (Basic 4-9 or SHS 1-3), Class Section (optional), Student ID (optional)</strong>. No emails needed — students join using school code <span className="font-mono font-bold text-[#364c83]">{user.schoolCode}</span>.
+                                    Columns: <strong>Student Full Name, Grade Level (Basic 4-9 or SHS 1-3), Class Section (optional), Student ID (optional)</strong>. Student IDs are automatically generated from your school code and registration sequence (e.g. {user.schoolCode || 'SCH'}-001, {user.schoolCode || 'SCH'}-002) if left blank. No emails needed — students join using school code <span className="font-mono font-bold text-[#364c83]">{user.schoolCode}</span>.
                                 </span>
                             </div>
 
