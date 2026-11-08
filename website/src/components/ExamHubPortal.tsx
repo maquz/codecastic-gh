@@ -67,6 +67,10 @@ import {
     ShieldCheck,
     Crown,
     UserPlus,
+    Home,
+    Star,
+    Wallet,
+    User,
 } from 'lucide-react';
 import {
     saveOfflinePack,
@@ -131,6 +135,8 @@ type ExamQ = {
     year?: string;
     category?: string;
     rank?: string;
+    subjectId?: string;
+    subjectName?: string;
 };
 type AdminQ = ExamQ & { subjectId: string; level: Level; correctIndex: number; explanation: string };
 type ReviewItem = { id: string; correctIndex: number; chosen: number | null; correct: boolean; explanation: string };
@@ -648,7 +654,7 @@ export default function ExamHubPortal({
                 </div>
             </header>
 
-            <main className={`mx-auto w-full min-w-0 flex-1 px-4 py-8 sm:px-6 max-w-full ${tab === 'admin' || tab === 'school' || tab === 'teacher' ? 'max-w-6xl' : 'max-w-4xl'}`}>
+            <main className={`mx-auto w-full min-w-0 flex-1 px-4 py-8 sm:px-6 max-w-full ${tab === 'admin' || tab === 'school' || tab === 'teacher' ? 'max-w-6xl' : 'max-w-4xl'} ${user ? 'pb-24' : ''}`}>
                 {tab === 'admin' ? (
                     <AdminView
                         user={user}
@@ -745,9 +751,69 @@ export default function ExamHubPortal({
                         token={token}
                         activeSlug={activeSlug}
                         sectionLabel={sectionLabel}
+                        onLogout={handleStudentLogout}
+                        onSwitchPortal={(newTab) => setTab(newTab)}
                     />
                 )}
             </main>
+
+            {/* Bottom Bar for Staff/Admin when not in Student tab */}
+            {user && tab !== 'student' && !checkingAuth && (
+                <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-[0_-4px_16px_rgba(0,0,0,0.06)] px-3 py-2 pb-safe">
+                    <div className="mx-auto max-w-md flex items-center justify-between relative">
+                        <button
+                            type="button"
+                            onClick={() => setTab('student')}
+                            className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 hover:text-[#364c83] font-medium transition"
+                            title="Return to Student Practice"
+                        >
+                            <Home size={20} />
+                            <span className="text-[10px] mt-1">Home</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setTab('student')}
+                            className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 hover:text-amber-600 font-medium transition"
+                            title="Starred Questions"
+                        >
+                            <Star size={20} />
+                            <span className="text-[10px] mt-1">Star</span>
+                        </button>
+                        <div className="flex-1 flex justify-center -mt-5">
+                            <button
+                                type="button"
+                                onClick={() => setTab('student')}
+                                className="group flex flex-col items-center focus:outline-none"
+                                title="Go to Exams Practice"
+                            >
+                                <div className="flex h-12 w-12 sm:h-13 sm:w-13 items-center justify-center rounded-full bg-[#364c83] text-white shadow-lg ring-4 ring-white hover:bg-[#1f2d57] transition transform group-hover:scale-105 active:scale-95">
+                                    <TrendingUp size={22} className="stroke-[2.5]" />
+                                </div>
+                                <span className="text-[10px] font-bold text-[#364c83] mt-0.5 tracking-tight">Practice</span>
+                            </button>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setTab('student')}
+                            className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 hover:text-[#364c83] font-medium transition"
+                            title="View Exams Taken"
+                        >
+                            <Wallet size={20} />
+                            <span className="text-[10px] mt-1">Exams Taken</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleStudentLogout}
+                            className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 hover:text-rose-600 font-medium transition"
+                            title="Sign out of portal"
+                        >
+                            <User size={20} />
+                            <span className="text-[10px] mt-1">Profile</span>
+                        </button>
+                    </div>
+                </nav>
+            )}
+
             <SchoolAuthModal
                 isOpen={showSchoolAuthModal}
                 onClose={() => setShowSchoolAuthModal(false)}
@@ -1733,11 +1799,15 @@ function StudentView({
     token,
     activeSlug,
     sectionLabel,
+    onLogout,
+    onSwitchPortal,
 }: {
     user: StudentUser;
     token: string;
     activeSlug?: string;
     sectionLabel?: string;
+    onLogout?: () => void;
+    onSwitchPortal?: (newTab: Tab) => void;
 }) {
     const [stage, setStage] = useState<'select' | 'exam' | 'result'>('select');
     const isStaffOrAdmin = isSchoolStaffOrAdmin(user);
@@ -1790,6 +1860,51 @@ function StudentView({
         recentResults: any[];
     }>({ examsTaken: 0, avgScore: 0, passRate: 0, recentResults: [] });
     const [showRecentModal, setShowRecentModal] = useState<boolean>(false);
+
+    // Starred questions state persisted in localStorage
+    const [starredQuestions, setStarredQuestions] = useState<ExamQ[]>(() => {
+        try {
+            const raw = localStorage.getItem(`codecastic_starred_${user.id}`);
+            return raw ? JSON.parse(raw) : [];
+        } catch {
+            return [];
+        }
+    });
+
+    const isStarred = (qId: string) => starredQuestions.some((q) => q.id === qId);
+
+    const toggleStar = (q: ExamQ) => {
+        setStarredQuestions((prev) => {
+            const exists = prev.some((x) => x.id === q.id);
+            let next: ExamQ[];
+            if (exists) {
+                next = prev.filter((x) => x.id !== q.id);
+            } else {
+                next = [
+                    ...prev,
+                    {
+                        ...q,
+                        starredAt: Date.now(),
+                        subjectName: (q as any).subjectName || subject?.name || 'General',
+                    } as any,
+                ];
+            }
+            try {
+                localStorage.setItem(`codecastic_starred_${user.id}`, JSON.stringify(next));
+            } catch {
+                // ignore
+            }
+            return next;
+        });
+    };
+
+    // Bottom Navigation Modals
+    const [showStarredModal, setShowStarredModal] = useState<boolean>(false);
+    const [showLauncherModal, setShowLauncherModal] = useState<boolean>(false);
+    const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
+    const [starredSubjectFilter, setStarredSubjectFilter] = useState<string>('all');
+    const [launcherSubjectId, setLauncherSubjectId] = useState<string>('all');
+    const [copiedId, setCopiedId] = useState<boolean>(false);
 
     // Number of exam questions limit: Dropbox selection (10, 20, 30, 40, 50, 60, 70, 75, 100, or all)
     const [questionLimit, setQuestionLimit] = useState<number | 'all'>(20);
@@ -2047,7 +2162,6 @@ function StudentView({
         let list = subjects.filter((s) => !s.name.toLowerCase().includes('professional studies'));
 
         const isBasicLevel = level === 'BECE' || activeSlug === 'basic' || activeSlug === 'bece' || (typeof level === 'number' && level >= 4 && level <= 9);
-        const isShsLevel = level === 'WASSCE' || activeSlug === 'shs' || activeSlug === 'wassce' || level === 'SHS 1' || level === 'SHS 2' || level === 'SHS 3';
 
         if (isBasicLevel) {
             // ICT is only written at SHS and WASSCE — Basic level writes Computing and must NOT display ICT
@@ -2055,10 +2169,8 @@ function StudentView({
                 const n = s.name.toLowerCase();
                 return !(n === 'ict' || n.includes('information and communications technology') || n.startsWith('ict '));
             });
-        } else if (isShsLevel) {
-            // SHS writes Information and Communications Technology (ICT), not Basic Computing
-            list = list.filter((s) => s.name.toLowerCase() !== 'computing');
         }
+        // At SHS 1-3 and WASSCE: Both ICT and Computing are available subjects taken by candidates
 
         return list;
     }, [level, activeSlug, user.promotionRank, subjects]);
@@ -2338,6 +2450,54 @@ function StudentView({
         loadStudentStats().catch(() => undefined);
     };
 
+    const startStarredPractice = (filterSubId?: string) => {
+        let pool = starredQuestions;
+        if (filterSubId && filterSubId !== 'all') {
+            pool = pool.filter((q) => q.subjectId === filterSubId || (q as any).subjectName === filterSubId);
+        }
+        if (pool.length === 0) return;
+        setShowStarredModal(false);
+        setStage('exam');
+        setSubject({ id: 'starred', name: 'Starred Questions Revision' });
+        setQuestions(pool);
+        setAnswers({});
+        setIndex(0);
+        setResult(null);
+        setNotice('');
+        setQuestionSecondsLeft(perQuestionSeconds);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const handleQuickLaunch = async (mode: 'sprint10' | 'weakness' | 'mock40', customSubId?: string) => {
+        setShowLauncherModal(false);
+        let targetSub = availableItems.find((s) => s.id === customSubId);
+        if (!targetSub) {
+            targetSub = availableItems[0];
+        }
+        if (!targetSub) return;
+
+        let limit = 20;
+        if (mode === 'sprint10') limit = 10;
+        else if (mode === 'mock40') limit = 40;
+        else if (mode === 'weakness') limit = 15;
+
+        setQuestionLimit(limit);
+        await startExam(targetSub);
+    };
+
+    const handleHomeClick = () => {
+        setShowStarredModal(false);
+        setShowLauncherModal(false);
+        setShowRecentModal(false);
+        setShowProfileModal(false);
+        if (stage === 'exam') {
+            setShowEndConfirm(true);
+        } else {
+            backToStart();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    };
+
     if (loading) {
         return (
             <div className="flex items-center justify-center gap-2 py-24 text-slate-400">
@@ -2372,7 +2532,7 @@ function StudentView({
         };
 
         return (
-            <div className="mx-auto max-w-2xl">
+            <div className="mx-auto max-w-2xl pb-24">
                 {/* Live Exam Header */}
                 <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
                     <span className="flex items-center gap-2 font-bold text-[#364c83] flex-wrap">
@@ -2492,6 +2652,19 @@ function StudentView({
                                     </span>
                                 )
                             )}
+                            <button
+                                type="button"
+                                onClick={() => toggleStar(q)}
+                                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-semibold transition ${
+                                    isStarred(q.id)
+                                        ? 'bg-amber-50 text-amber-600 border border-amber-200'
+                                        : 'text-slate-400 hover:text-amber-500 hover:bg-slate-50'
+                                }`}
+                                title={isStarred(q.id) ? 'Remove from Starred' : 'Star this question for revision'}
+                            >
+                                <Star size={13} className={isStarred(q.id) ? 'fill-amber-400 text-amber-500' : ''} />
+                                <span>{isStarred(q.id) ? 'Starred' : 'Star'}</span>
+                            </button>
                         </div>
                         {(q.year || q.category) && (
                             <div className="flex flex-wrap items-center gap-1.5">
@@ -2777,7 +2950,7 @@ function StudentView({
             : [];
         const reviewById = new Map(reviewList.map((r: any) => [r.id, r]));
         return (
-            <div className="mx-auto max-w-2xl">
+            <div className="mx-auto max-w-2xl pb-24">
                 <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
                     <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-indigo-50 text-[#364c83]">
                         <Trophy size={22} />
@@ -2891,14 +3064,28 @@ function StudentView({
                                                 <BookOpen size={14} />
                                                 Explanation &amp; Solution:
                                             </span>
-                                            <button
-                                                type="button"
-                                                onClick={() => openAiTutor(q, isAnswered ? chosen : null)}
-                                                className="inline-flex items-center gap-1.5 rounded-full bg-white border border-indigo-200/90 px-2.5 py-0.5 text-[11px] font-bold text-[#364c83] hover:bg-indigo-50 transition shadow-2xs"
-                                            >
-                                                <Sparkles size={11} className="text-purple-600" />
-                                                <span>Ask AI Tutor</span>
-                                            </button>
+                                            <div className="flex items-center gap-1.5">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleStar(q)}
+                                                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold transition shadow-2xs ${
+                                                        isStarred(q.id)
+                                                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-amber-50 hover:text-amber-700'
+                                                    }`}
+                                                >
+                                                    <Star size={11} className={isStarred(q.id) ? 'fill-amber-400 text-amber-500' : ''} />
+                                                    <span>{isStarred(q.id) ? 'Starred' : 'Star'}</span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openAiTutor(q, isAnswered ? chosen : null)}
+                                                    className="inline-flex items-center gap-1.5 rounded-full bg-white border border-indigo-200/90 px-2.5 py-0.5 text-[11px] font-bold text-[#364c83] hover:bg-indigo-50 transition shadow-2xs"
+                                                >
+                                                    <Sparkles size={11} className="text-purple-600" />
+                                                    <span>Ask AI Tutor</span>
+                                                </button>
+                                            </div>
                                         </div>
                                         <p className="leading-relaxed text-slate-800 text-xs">
                                             {explanationText || 'No additional explanation provided for this question.'}
@@ -2929,7 +3116,7 @@ function StudentView({
     /* ---------------- Select ---------------- */
 
     return (
-        <div className="mx-auto max-w-2xl space-y-5">
+        <div className="mx-auto max-w-2xl space-y-5 pb-24">
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -3629,6 +3816,495 @@ function StudentView({
                     </div>
                 </div>
             )}
+
+            {/* Starred Questions Revision Modal */}
+            {showStarredModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+                    <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 max-h-[85vh] flex flex-col">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div className="flex items-center gap-2.5">
+                                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                                    <Star size={20} className="fill-amber-400" />
+                                </span>
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Starred Questions &amp; Revision Hub</h3>
+                                    <p className="text-xs text-slate-500">
+                                        Review questions you have bookmarked for high-yield revision
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowStarredModal(false)}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Subject Filter Chips if starred questions span multiple subjects */}
+                        {starredQuestions.length > 0 && (
+                            <div className="pt-3 pb-2 flex items-center gap-1.5 overflow-x-auto border-b border-slate-100">
+                                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">Filter:</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setStarredSubjectFilter('all')}
+                                    className={`rounded-full px-2.5 py-0.5 text-xs font-semibold transition ${
+                                        starredSubjectFilter === 'all'
+                                            ? 'bg-[#364c83] text-white'
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                    }`}
+                                >
+                                    All ({starredQuestions.length})
+                                </button>
+                                {Array.from(new Set(starredQuestions.map((q) => (q as any).subjectName || 'General'))).map((sName) => {
+                                    const count = starredQuestions.filter((q) => ((q as any).subjectName || 'General') === sName).length;
+                                    return (
+                                        <button
+                                            key={sName}
+                                            type="button"
+                                            onClick={() => setStarredSubjectFilter(sName)}
+                                            className={`rounded-full px-2.5 py-0.5 text-xs font-semibold transition whitespace-nowrap ${
+                                                starredSubjectFilter === sName
+                                                    ? 'bg-[#364c83] text-white'
+                                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                            }`}
+                                        >
+                                            {sName} ({count})
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        <div className="flex-1 overflow-y-auto py-4 space-y-3">
+                            {starredQuestions.filter((q) => starredSubjectFilter === 'all' || ((q as any).subjectName || 'General') === starredSubjectFilter).map((q, idx) => (
+                                <div key={q.id || idx} className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 text-xs">
+                                    <div className="flex items-center justify-between font-bold text-slate-700 mb-2">
+                                        <div className="flex items-center gap-2">
+                                            <span className="rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-[#364c83]">
+                                                {(q as any).subjectName || 'Practice'}
+                                            </span>
+                                            <span>Question #{idx + 1}</span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleStar(q)}
+                                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:underline"
+                                        >
+                                            <Trash2 size={12} />
+                                            Remove
+                                        </button>
+                                    </div>
+                                    <p className="font-semibold text-slate-900 mb-2">{q.text}</p>
+                                    <div className="space-y-1 mb-2">
+                                        {q.options?.map((opt, oi) => (
+                                            <div
+                                                key={oi}
+                                                className={`px-2.5 py-1 rounded text-[11px] ${
+                                                    oi === q.correctIndex
+                                                        ? 'bg-emerald-100 text-emerald-900 font-bold border border-emerald-300'
+                                                        : 'bg-white text-slate-600'
+                                                }`}
+                                            >
+                                                {LETTERS[oi]}. {opt} {oi === q.correctIndex ? '✓ (Correct Answer)' : ''}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {q.explanation && (
+                                        <p className="mt-2 text-[11px] text-slate-600 bg-white p-2 rounded border border-slate-100">
+                                            <strong>Explanation:</strong> {q.explanation}
+                                        </p>
+                                    )}
+                                </div>
+                            ))}
+
+                            {starredQuestions.length === 0 && (
+                                <div className="py-12 text-center text-xs text-slate-400">
+                                    <Star size={32} className="mx-auto mb-2 text-slate-300" />
+                                    <p className="font-semibold text-slate-600">No Starred Questions Yet</p>
+                                    <p className="mt-1 text-[11px] text-slate-400 max-w-sm mx-auto">
+                                        Tap the ⭐ Star button on any question card during a quiz or test review to save it here for targeted revision.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
+                            {starredQuestions.length > 0 ? (
+                                <button
+                                    type="button"
+                                    onClick={() => startStarredPractice(starredSubjectFilter)}
+                                    className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 text-xs font-bold shadow-xs transition"
+                                >
+                                    <Sparkles size={13} />
+                                    Practice Starred Questions ({starredQuestions.filter((q) => starredSubjectFilter === 'all' || ((q as any).subjectName || 'General') === starredSubjectFilter).length})
+                                </button>
+                            ) : <div />}
+                            <button
+                                type="button"
+                                onClick={() => setShowStarredModal(false)}
+                                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Express Exam Practice Launcher Modal */}
+            {showLauncherModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+                    <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div className="flex items-center gap-2.5">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#364c83] text-white shadow-xs">
+                                    <TrendingUp size={22} className="stroke-[2.5]" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Express Exam Practice</h3>
+                                    <p className="text-xs text-slate-500">1-Tap rapid drill for {levelLabel(level)}</p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowLauncherModal(false)}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="mt-4 space-y-3.5 text-xs">
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Target Subject</label>
+                                <select
+                                    value={launcherSubjectId}
+                                    onChange={(e) => setLauncherSubjectId(e.target.value)}
+                                    className="input text-xs w-full font-semibold"
+                                >
+                                    <option value="all">Auto: First Available Subject</option>
+                                    {availableItems.map((s) => (
+                                        <option key={s.id} value={s.id}>{s.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <span className="block font-bold text-slate-700">Select Practice Mode:</span>
+
+                                {/* Option 1: Sprint */}
+                                <button
+                                    type="button"
+                                    onClick={() => handleQuickLaunch('sprint10', launcherSubjectId !== 'all' ? launcherSubjectId : undefined)}
+                                    className="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-[#364c83] bg-slate-50/50 hover:bg-indigo-50/40 transition group"
+                                >
+                                    <div className="flex items-center justify-between font-bold text-slate-900 group-hover:text-[#364c83]">
+                                        <span className="flex items-center gap-1.5">
+                                            ⚡ Instant 10-Question Sprint
+                                        </span>
+                                        <span className="rounded bg-indigo-100 text-[#364c83] px-2 py-0.5 text-[10px]">
+                                            10 Qs &middot; 5 Mins
+                                        </span>
+                                    </div>
+                                    <p className="mt-1 text-[11px] text-slate-500">
+                                        Fast-paced timed drill to test speed, recall, and accuracy under pressure.
+                                    </p>
+                                </button>
+
+                                {/* Option 2: Weak areas */}
+                                <button
+                                    type="button"
+                                    onClick={() => handleQuickLaunch('weakness', launcherSubjectId !== 'all' ? launcherSubjectId : undefined)}
+                                    className="w-full text-left p-3 rounded-xl border border-rose-200 hover:border-rose-400 bg-rose-50/40 hover:bg-rose-50/70 transition group"
+                                >
+                                    <div className="flex items-center justify-between font-bold text-slate-900 group-hover:text-rose-700">
+                                        <span className="flex items-center gap-1.5 text-rose-900">
+                                            🎯 Weak Areas Remediation Drill
+                                        </span>
+                                        <span className="rounded bg-rose-100 text-rose-800 px-2 py-0.5 text-[10px]">
+                                            15 Targeted Qs
+                                        </span>
+                                    </div>
+                                    <p className="mt-1 text-[11px] text-slate-500">
+                                        Focuses on questions and topics with high misconception rates to turn weak points into strengths.
+                                    </p>
+                                </button>
+
+                                {/* Option 3: Full Mock */}
+                                <button
+                                    type="button"
+                                    onClick={() => handleQuickLaunch('mock40', launcherSubjectId !== 'all' ? launcherSubjectId : undefined)}
+                                    className="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-emerald-500 bg-slate-50/50 hover:bg-emerald-50/40 transition group"
+                                >
+                                    <div className="flex items-center justify-between font-bold text-slate-900 group-hover:text-emerald-700">
+                                        <span className="flex items-center gap-1.5">
+                                            📝 Standard 40-Question Mock Paper
+                                        </span>
+                                        <span className="rounded bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px]">
+                                            40 Qs &middot; Standard Paper
+                                        </span>
+                                    </div>
+                                    <p className="mt-1 text-[11px] text-slate-500">
+                                        Full simulated exam mirroring official WAEC / BECE paper timing and weighting.
+                                    </p>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
+                            <button
+                                type="button"
+                                onClick={() => setShowLauncherModal(false)}
+                                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Candidate Profile & Settings Modal */}
+            {showProfileModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+                    <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 max-h-[85vh] overflow-y-auto">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div className="flex items-center gap-2.5">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-[#364c83]">
+                                    <User size={24} />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">{user.name}</h3>
+                                    <p className="text-xs text-slate-500">Candidate Profile &amp; Portal Account</p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowProfileModal(false)}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="mt-4 space-y-3 text-xs">
+                            {/* Student ID Card */}
+                            <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3.5 flex items-center justify-between">
+                                <div>
+                                    <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                                        Auto-Generated Student ID
+                                    </span>
+                                    <span className="text-base font-mono font-bold text-[#364c83] mt-0.5 block">
+                                        {user.studentCode || user.id?.slice(0, 8)?.toUpperCase()}
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const code = user.studentCode || user.id?.slice(0, 8)?.toUpperCase();
+                                        if (code) {
+                                            navigator.clipboard.writeText(code);
+                                            setCopiedId(true);
+                                            setTimeout(() => setCopiedId(false), 2000);
+                                        }
+                                    }}
+                                    className="rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-[11px] font-bold text-[#364c83] hover:bg-indigo-50 transition shadow-2xs"
+                                >
+                                    {copiedId ? 'Copied!' : 'Copy ID'}
+                                </button>
+                            </div>
+
+                            {/* Details List */}
+                            <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+                                <div className="flex items-center justify-between p-3 bg-white">
+                                    <span className="text-slate-500">School Code</span>
+                                    <span className="font-mono font-bold text-slate-800">{user.schoolCode || 'Self-Registered'}</span>
+                                </div>
+                                <div className="flex items-center justify-between p-3 bg-white">
+                                    <span className="text-slate-500">School Name</span>
+                                    <span className="font-semibold text-slate-800">{user.schoolName || 'Codecastic GH'}</span>
+                                </div>
+                                <div className="flex items-center justify-between p-3 bg-white">
+                                    <span className="text-slate-500">Grade Level</span>
+                                    <span className="font-semibold text-slate-800">{levelLabel(level)}</span>
+                                </div>
+                                {user.classSection && (
+                                    <div className="flex items-center justify-between p-3 bg-white">
+                                        <span className="text-slate-500">Class Section</span>
+                                        <span className="font-semibold text-slate-800">{user.classSection}</span>
+                                    </div>
+                                )}
+                                <div className="flex items-center justify-between p-3 bg-white">
+                                    <span className="text-slate-500">Offline Pack</span>
+                                    <span className={`inline-flex items-center gap-1 font-bold ${offlinePackCached ? 'text-emerald-700' : 'text-slate-400'}`}>
+                                        {offlinePackCached ? <CheckCircle2 size={13} /> : null}
+                                        {offlinePackCached ? 'Cached Locally' : 'Not Cached'}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Switch Portal buttons if Staff/Admin */}
+                            {isStaffOrAdmin && (
+                                <div className="pt-2 space-y-1.5">
+                                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                                        Staff Portal Navigation:
+                                    </span>
+                                    {user.role === 'school_admin' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShowProfileModal(false);
+                                                if (onSwitchPortal) onSwitchPortal('school');
+                                            }}
+                                            className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-[#364c83] bg-indigo-50/70 py-2 text-xs font-bold text-[#364c83] hover:bg-indigo-100"
+                                        >
+                                            <School size={13} />
+                                            Open School Admin Portal
+                                        </button>
+                                    )}
+                                    {user.role === 'teacher' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShowProfileModal(false);
+                                                if (onSwitchPortal) onSwitchPortal('teacher');
+                                            }}
+                                            className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-[#364c83] bg-indigo-50/70 py-2 text-xs font-bold text-[#364c83] hover:bg-indigo-100"
+                                        >
+                                            <UserCheck size={13} />
+                                            Open Teacher Performance Portal
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Sign Out Button */}
+                            <div className="pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowProfileModal(false);
+                                        if (onLogout) onLogout();
+                                    }}
+                                    className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50/60 py-2.5 text-xs font-bold text-rose-700 hover:bg-rose-100 transition"
+                                >
+                                    <LogOut size={13} />
+                                    Sign Out of Account
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Logged-In Bottom Navigation Bar */}
+            <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-[0_-4px_16px_rgba(0,0,0,0.06)] px-3 py-2 pb-safe">
+                <div className="mx-auto max-w-md flex items-center justify-between relative">
+                    {/* 1. Home (house icon) */}
+                    <button
+                        type="button"
+                        onClick={handleHomeClick}
+                        className={`flex flex-col items-center justify-center flex-1 py-1 transition ${
+                            stage === 'select' && !showStarredModal && !showRecentModal && !showProfileModal && !showLauncherModal
+                                ? 'text-[#364c83] font-bold'
+                                : 'text-slate-500 hover:text-slate-800 font-medium'
+                        }`}
+                        title="Return to Home / Lobby"
+                    >
+                        <Home size={20} className={stage === 'select' && !showStarredModal && !showRecentModal && !showProfileModal && !showLauncherModal ? 'stroke-[2.5]' : ''} />
+                        <span className="text-[10px] mt-1">Home</span>
+                    </button>
+
+                    {/* 2. Star (star icon) */}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setShowLauncherModal(false);
+                            setShowRecentModal(false);
+                            setShowProfileModal(false);
+                            setShowStarredModal(true);
+                        }}
+                        className={`flex flex-col items-center justify-center flex-1 py-1 relative transition ${
+                            showStarredModal
+                                ? 'text-amber-500 font-bold'
+                                : 'text-slate-500 hover:text-amber-600 font-medium'
+                        }`}
+                        title="Starred Questions Revision"
+                    >
+                        <div className="relative">
+                            <Star size={20} className={showStarredModal ? 'stroke-[2.5] fill-amber-500' : ''} />
+                            {starredQuestions.length > 0 && (
+                                <span className="absolute -top-1 -right-2 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-500 text-[9px] font-bold text-white">
+                                    {starredQuestions.length}
+                                </span>
+                            )}
+                        </div>
+                        <span className="text-[10px] mt-1">Star</span>
+                    </button>
+
+                    {/* 3. Central Action Button (blue circle with rising arrow graph TrendingUp icon) */}
+                    <div className="flex-1 flex justify-center -mt-5">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setShowStarredModal(false);
+                                setShowRecentModal(false);
+                                setShowProfileModal(false);
+                                setShowLauncherModal(true);
+                            }}
+                            className="group flex flex-col items-center focus:outline-none"
+                            title="Quick Exams Practice"
+                        >
+                            <div className="flex h-12 w-12 sm:h-13 sm:w-13 items-center justify-center rounded-full bg-[#364c83] text-white shadow-lg ring-4 ring-white hover:bg-[#1f2d57] transition transform group-hover:scale-105 active:scale-95">
+                                <TrendingUp size={22} className="stroke-[2.5]" />
+                            </div>
+                            <span className="text-[10px] font-bold text-[#364c83] mt-0.5 tracking-tight">Practice</span>
+                        </button>
+                    </div>
+
+                    {/* 4. Exams Taken (card or wallet icon) */}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setShowStarredModal(false);
+                            setShowLauncherModal(false);
+                            setShowProfileModal(false);
+                            setShowRecentModal(true);
+                        }}
+                        className={`flex flex-col items-center justify-center flex-1 py-1 transition ${
+                            showRecentModal
+                                ? 'text-[#364c83] font-bold'
+                                : 'text-slate-500 hover:text-slate-800 font-medium'
+                        }`}
+                        title="View Completed Exams & Scores"
+                    >
+                        <Wallet size={20} className={showRecentModal ? 'stroke-[2.5]' : ''} />
+                        <span className="text-[10px] mt-1">Exams Taken</span>
+                    </button>
+
+                    {/* 5. Profile (user icon) */}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setShowStarredModal(false);
+                            setShowLauncherModal(false);
+                            setShowRecentModal(false);
+                            setShowProfileModal(true);
+                        }}
+                        className={`flex flex-col items-center justify-center flex-1 py-1 transition ${
+                            showProfileModal
+                                ? 'text-[#364c83] font-bold'
+                                : 'text-slate-500 hover:text-slate-800 font-medium'
+                        }`}
+                        title="Candidate Profile & Settings"
+                    >
+                        <User size={20} className={showProfileModal ? 'stroke-[2.5]' : ''} />
+                        <span className="text-[10px] mt-1">Profile</span>
+                    </button>
+                </div>
+            </nav>
         </div>
     );
 }
