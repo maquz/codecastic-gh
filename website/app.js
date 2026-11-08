@@ -13465,11 +13465,21 @@ function verifyPassword(password, stored) {
   if (derivedBuf.length !== keyBuf.length) return false;
   return crypto9.timingSafeEqual(derivedBuf, keyBuf);
 }
+function isSuperAdminEmail(email) {
+  return typeof email === "string" && email.trim().toLowerCase() === "anibrikamark@gmail.com";
+}
 function publicUser(u) {
+  const em = String(u.email || "").trim().toLowerCase();
+  const isSuper = isSuperAdminEmail(em) || u.adminRole === "superadmin" || u.role === "superadmin";
+  const adminRole = isSuper ? "superadmin" : u.adminRole || (["admin", "editor"].includes(u.role) ? u.role : null);
+  const role = isSuper ? "superadmin" : adminRole === "admin" ? "admin" : adminRole === "editor" ? "editor" : u.role || (u.accountType === "ges-promo" ? "ges-promo" : "student");
   return {
     id: u.id,
     name: u.name,
     email: u.email,
+    role,
+    adminRole: adminRole || null,
+    isSuperAdmin: isSuper,
     accountType: u.accountType || "student",
     schoolName: u.schoolName || "",
     gradeLevel: u.gradeLevel ?? 4,
@@ -13772,9 +13782,30 @@ async function getAdminCode() {
   const doc = items.find((i) => i.key === "admin");
   return doc ? doc.passcode : null;
 }
-async function isAdmin(code) {
+async function isSuperAdmin(code) {
+  if (!code || typeof code !== "string") return false;
   const saved = await getAdminCode();
-  return !!saved && typeof code === "string" && code === saved;
+  if (saved && code === saved) return true;
+  const u = await getUserByToken(code);
+  if (!u) return false;
+  if (isSuperAdminEmail(u.email)) return true;
+  return u.adminRole === "superadmin" || u.role === "superadmin";
+}
+async function isAdmin(code) {
+  if (!code || typeof code !== "string") return false;
+  const saved = await getAdminCode();
+  if (saved && code === saved) return true;
+  const u = await getUserByToken(code);
+  if (!u) return false;
+  if (isSuperAdminEmail(u.email)) return true;
+  return ["admin", "superadmin"].includes(u.adminRole || u.role);
+}
+async function isEditor(code) {
+  if (!code || typeof code !== "string") return false;
+  if (await isAdmin(code)) return true;
+  const u = await getUserByToken(code);
+  if (!u) return false;
+  return ["editor", "admin", "superadmin"].includes(u.adminRole || u.role);
 }
 var DEFAULT_TIMERS = {
   "ges-promotion": 45,
@@ -14903,14 +14934,16 @@ var handler = router({
   "POST /api/admin/login": [
     async (ctx) => {
       const b = ctx.body || {};
-      if (!await isAdmin(b.passcode)) return error("Incorrect passcode", 401);
-      return json({ ok: true });
+      const pass = b.passcode;
+      if (!await isEditor(pass)) return error("Incorrect passcode", 401);
+      const role = await isSuperAdmin(pass) ? "superadmin" : await isAdmin(pass) ? "admin" : "editor";
+      return json({ ok: true, role });
     }
   ],
   "POST /api/admin/subjects": [
     async (ctx) => {
       const b = ctx.body || {};
-      if (!await isAdmin(b.passcode)) return error("Not authorised", 401);
+      if (!await isEditor(b.passcode)) return error("Not authorised", 401);
       const name2 = String(b.name || "").trim();
       if (!name2) return error("Subject name is required", 400);
       const { items } = await db.list("subjects", { limit: 100 });
@@ -14937,16 +14970,19 @@ var handler = router({
   "POST /api/admin/questions/list": [
     async (ctx) => {
       const b = ctx.body || {};
-      if (!await isAdmin(b.passcode)) return error("Not authorised", 401);
+      if (!await isEditor(b.passcode)) return error("Not authorised", 401);
       await ensureGesPromoRankSeed();
-      const qs = await allQuestions();
+      const qs = (await allQuestions()).map((q2) => ({
+        ...q2,
+        options: Array.isArray(q2.options) ? q2.options.map(String) : []
+      }));
       return json({ questions: qs });
     }
   ],
   "POST /api/admin/questions": [
     async (ctx) => {
       const b = ctx.body || {};
-      if (!await isAdmin(b.passcode)) return error("Not authorised", 401);
+      if (!await isEditor(b.passcode)) return error("Not authorised", 401);
       const subjectId = String(b.subjectId || "");
       const level = normLevel(b.level);
       const text = String(b.text || "").trim();
@@ -14983,7 +15019,7 @@ var handler = router({
   "POST /api/admin/questions/bulk": [
     async (ctx) => {
       const b = ctx.body || {};
-      if (!await isAdmin(b.passcode)) return error("Not authorised", 401);
+      if (!await isEditor(b.passcode)) return error("Not authorised", 401);
       const defaultSubjectId = String(b.subjectId || "").trim();
       const defaultLevel = normLevel(b.level);
       const { items: subjects } = await db.list("subjects", { limit: 100 });
@@ -15007,12 +15043,15 @@ var handler = router({
         if (targetLevel === null) {
           return error("Choose a valid class level or exam section before uploading.", 400);
         }
+        const rawOpts = Array.isArray(item.options) ? item.options.map(String) : [];
+        while (rawOpts.length < 4) rawOpts.push("");
+        const cleanOpts = rawOpts.slice(0, 4);
         records.push({
           subjectId: targetSubjectId,
           level: targetLevel,
           text: item.text,
-          options: item.options,
-          correctIndex: item.correctIndex,
+          options: cleanOpts,
+          correctIndex: Math.max(0, Math.min(3, Number(item.correctIndex) || 0)),
           explanation: item.explanation || "",
           ...item.year ? { year: item.year } : {},
           ...item.category ? { category: item.category } : {},
@@ -15033,7 +15072,7 @@ var handler = router({
   "POST /api/admin/questions/:id/update": [
     async (ctx) => {
       const b = ctx.body || {};
-      if (!await isAdmin(b.passcode)) return error("Not authorised", 401);
+      if (!await isEditor(b.passcode)) return error("Not authorised", 401);
       const id = ctx.params.id;
       const subjectId = String(b.subjectId || "");
       const level = normLevel(b.level);
@@ -15152,6 +15191,8 @@ var handler = router({
           id: u.id,
           name: u.name,
           email: u.email,
+          adminRole: isSuperAdminEmail(u.email) ? "superadmin" : u.adminRole || (["admin", "editor"].includes(u.role) ? u.role : null),
+          isSuperAdmin: isSuperAdminEmail(u.email),
           accountType: u.accountType,
           gradeLevel: u.gradeLevel,
           region: u.region || "",
@@ -15189,6 +15230,166 @@ var handler = router({
         passRate,
         distinctionRate
       });
+    }
+  ],
+  "POST /api/admin/roles/list": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      if (!await isAdmin(b.passcode)) return error("Not authorised", 401);
+      const { items: rawUsers } = await db.list("users", { limit: 1e3 });
+      const adminsList = [];
+      let hasMark = false;
+      for (const u of rawUsers) {
+        const em = String(u.email || "").trim().toLowerCase();
+        const isMark = isSuperAdminEmail(em);
+        const role = isMark ? "superadmin" : u.adminRole || u.role;
+        if (isMark) {
+          hasMark = true;
+          adminsList.push({
+            id: u.id,
+            name: u.name || "Mark Anibrika",
+            email: u.email,
+            role: "superadmin",
+            isPrimarySuperAdmin: true,
+            createdAt: u.createdAt || null,
+            promotionRank: u.promotionRank || ""
+          });
+        } else if (["admin", "editor", "superadmin"].includes(role)) {
+          adminsList.push({
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            role,
+            isPrimarySuperAdmin: false,
+            createdAt: u.createdAt || null,
+            promotionRank: u.promotionRank || ""
+          });
+        }
+      }
+      if (!hasMark) {
+        adminsList.push({
+          id: "1eb911c4-ea55-4317-82a8-081a2c971668",
+          name: "Mark Anibrika",
+          email: "anibrikamark@gmail.com",
+          role: "superadmin",
+          isPrimarySuperAdmin: true,
+          createdAt: 1792321771016,
+          promotionRank: "Deputy Director (DD)"
+        });
+      }
+      return json({ ok: true, admins: adminsList, superAdminEmail: "anibrikamark@gmail.com" });
+    }
+  ],
+  "POST /api/admin/roles/promote": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      if (!await isSuperAdmin(b.passcode)) {
+        return error("Only Super Admin (Mark Anibrika) can promote or demote quiz admins and editors.", 403);
+      }
+      const targetEmail = String(b.targetEmail || "").trim().toLowerCase();
+      const targetUserId = String(b.targetUserId || "").trim();
+      const newRole = String(b.newRole || "admin").trim().toLowerCase();
+      if (!["admin", "editor", "candidate"].includes(newRole)) {
+        return error("Role must be admin, editor, or candidate", 400);
+      }
+      if (targetEmail === "anibrikamark@gmail.com") {
+        return error("Mark Anibrika is the primary Super Admin and cannot have his role altered.", 400);
+      }
+      const { items: users } = await db.list("users", { limit: 1e3 });
+      const target = users.find(
+        (u) => targetUserId && String(u.id) === targetUserId || targetEmail && String(u.email || "").trim().toLowerCase() === targetEmail
+      );
+      if (!target) return error("Candidate not found with provided ID or email", 404);
+      if (isSuperAdminEmail(target.email)) {
+        return error("Mark Anibrika is the primary Super Admin and cannot have his role altered.", 400);
+      }
+      const updateData = {
+        updatedAt: Date.now()
+      };
+      if (newRole === "candidate") {
+        updateData.adminRole = null;
+        updateData.role = target.accountType === "ges-promo" ? "ges-promo" : "student";
+      } else {
+        updateData.adminRole = newRole;
+        updateData.role = newRole;
+      }
+      await db.update("users", target.id, updateData);
+      const updated = { ...target, ...updateData };
+      return json({
+        ok: true,
+        user: publicUser(updated),
+        message: newRole === "candidate" ? `Removed admin privileges from ${target.name}.` : `Successfully assigned ${target.name} as ${newRole === "admin" ? "Quiz Admin" : "Quiz Editor"}!`
+      });
+    }
+  ],
+  "POST /api/admin/roles/create": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      if (!await isSuperAdmin(b.passcode)) {
+        return error("Only Super Admin (Mark Anibrika) can create new Admins or Editors.", 403);
+      }
+      const name2 = String(b.name || "").trim();
+      const email = String(b.email || "").trim().toLowerCase();
+      const password = String(b.password || "");
+      const role = String(b.role || "admin").trim().toLowerCase();
+      if (!name2) return error("Full name is required", 400);
+      if (!email.includes("@")) return error("Valid email address is required", 400);
+      if (password.length < 6) return error("Password must be at least 6 characters", 400);
+      if (!["admin", "editor"].includes(role)) return error("Role must be admin or editor", 400);
+      const { items: users } = await db.list("users", { limit: 1e3 });
+      if (users.some((u) => String(u.email || "").trim().toLowerCase() === email)) {
+        return error("An account with this email already exists. You can promote this existing user instead.", 409);
+      }
+      const passwordHash = hashPassword(password);
+      const newUser = {
+        name: name2,
+        email,
+        role,
+        adminRole: role,
+        accountType: "admin",
+        schoolName: "Codecastic Administration",
+        gradeLevel: 4,
+        passwordPlain: password,
+        passwordHash,
+        createdAt: Date.now()
+      };
+      const created = await db.add("users", [newUser]);
+      const createdRecord = created && created[0] ? created[0] : newUser;
+      return json(
+        {
+          ok: true,
+          user: publicUser(createdRecord),
+          message: `Successfully created ${role === "admin" ? "Quiz Admin" : "Quiz Editor"} account for ${name2}!`
+        },
+        201
+      );
+    }
+  ],
+  "POST /api/admin/roles/revoke": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      if (!await isSuperAdmin(b.passcode)) {
+        return error("Only Super Admin (Mark Anibrika) can revoke admin roles.", 403);
+      }
+      const targetUserId = String(b.targetUserId || "").trim();
+      const targetEmail = String(b.targetEmail || "").trim().toLowerCase();
+      if (targetEmail === "anibrikamark@gmail.com") {
+        return error("Mark Anibrika is the primary Super Admin and cannot be revoked.", 400);
+      }
+      const { items: users } = await db.list("users", { limit: 1e3 });
+      const target = users.find(
+        (u) => targetUserId && String(u.id) === targetUserId || targetEmail && String(u.email || "").trim().toLowerCase() === targetEmail
+      );
+      if (!target) return error("User not found", 404);
+      if (isSuperAdminEmail(target.email)) {
+        return error("Mark Anibrika is the primary Super Admin and cannot be revoked.", 400);
+      }
+      await db.update("users", target.id, {
+        adminRole: null,
+        role: target.accountType === "ges-promo" ? "ges-promo" : "student",
+        updatedAt: Date.now()
+      });
+      return json({ ok: true, message: "Admin privileges revoked successfully." });
     }
   ],
   "POST /api/admin/messages": [

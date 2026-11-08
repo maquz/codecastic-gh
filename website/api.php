@@ -361,13 +361,41 @@ $PROMOTION_RANK_ITEMS = [
 // -------------------------------------------------------------
 // Auth & User Helpers
 // -------------------------------------------------------------
+function isSuperAdminEmail($email) {
+    return strtolower(trim((string)$email)) === 'anibrikamark@gmail.com';
+}
+
+function isSuperAdminUser($user) {
+    if (!$user || !is_array($user)) return false;
+    if (isSuperAdminEmail($user['email'] ?? '')) return true;
+    $r = (string)($user['adminRole'] ?? ($user['role'] ?? ''));
+    return $r === 'superadmin';
+}
+
 function publicUser($u) {
+    $em = strtolower(trim((string)($u['email'] ?? '')));
+    $isSuper = isSuperAdminEmail($em) || ($u['adminRole'] ?? '') === 'superadmin' || ($u['role'] ?? '') === 'superadmin';
+    $adminRole = $isSuper ? 'superadmin' : (string)($u['adminRole'] ?? '');
+    if ($adminRole === '' && in_array($u['role'] ?? '', ['admin', 'editor'], true)) {
+        $adminRole = $u['role'];
+    }
+
     $role = (string)($u['role'] ?? (($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student'));
+    if ($isSuper) {
+        $role = 'superadmin';
+    } elseif ($adminRole === 'admin') {
+        $role = 'admin';
+    } elseif ($adminRole === 'editor') {
+        $role = 'editor';
+    }
+
     return [
         'id' => (string)($u['id'] ?? ''),
         'name' => (string)($u['name'] ?? ''),
         'email' => (string)($u['email'] ?? ''),
         'role' => $role,
+        'adminRole' => $adminRole ?: null,
+        'isSuperAdmin' => $isSuper,
         'accountType' => ($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student',
         'schoolId' => (string)($u['schoolId'] ?? ''),
         'schoolName' => (string)($u['schoolName'] ?? ''),
@@ -408,9 +436,32 @@ function getAdminCode($db) {
     return null;
 }
 
-function isAdmin($db, $code) {
+function isSuperAdmin($db, $code) {
+    if (empty($code)) return false;
     $saved = getAdminCode($db);
-    return !empty($saved) && is_string($code) && $code === $saved;
+    if (!empty($saved) && is_string($code) && $code === $saved) return true;
+    $u = getUserByToken($db, $code);
+    return isSuperAdminUser($u);
+}
+
+function isAdmin($db, $code) {
+    if (empty($code)) return false;
+    $saved = getAdminCode($db);
+    if (!empty($saved) && is_string($code) && $code === $saved) return true;
+    $u = getUserByToken($db, $code);
+    if (!$u) return false;
+    if (isSuperAdminUser($u)) return true;
+    $r = (string)($u['adminRole'] ?? ($u['role'] ?? ''));
+    return in_array($r, ['admin', 'superadmin'], true);
+}
+
+function isEditor($db, $code) {
+    if (empty($code)) return false;
+    if (isAdmin($db, $code)) return true;
+    $u = getUserByToken($db, $code);
+    if (!$u) return false;
+    $r = (string)($u['adminRole'] ?? ($u['role'] ?? ''));
+    return in_array($r, ['editor', 'admin', 'superadmin'], true);
 }
 
 function getInboxCode($db) {
@@ -1361,14 +1412,16 @@ if ($route === 'admin/setup' && $method === 'POST') {
 // Admin Login
 if ($route === 'admin/login' && $method === 'POST') {
     $b = getJsonBody();
-    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Incorrect passcode', 401);
-    jsonOut(['ok' => true]);
+    $pass = $b['passcode'] ?? null;
+    if (!isEditor($db, $pass)) errorOut('Incorrect passcode', 401);
+    $role = isSuperAdmin($db, $pass) ? 'superadmin' : (isAdmin($db, $pass) ? 'admin' : 'editor');
+    jsonOut(['ok' => true, 'role' => $role]);
 }
 
 // Admin Subjects - Add
 if ($route === 'admin/subjects' && $method === 'POST') {
     $b = getJsonBody();
-    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+    if (!isEditor($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
     $name = trim((string)($b['name'] ?? ''));
     if ($name === '') errorOut('Subject name is required', 400);
 
@@ -1410,12 +1463,22 @@ if (preg_match('#^admin/subjects/([^/]+)/delete$#', $route, $m) && $method === '
 // Admin Questions List
 if ($route === 'admin/questions/list' && $method === 'POST') {
     $b = getJsonBody();
-    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+    if (!isEditor($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
     $qs = $db['questions'];
-    usort($qs, function($a, $b) {
+    $cleanQs = [];
+    foreach ($qs as $q) {
+        $rawOpts = is_array($q['options'] ?? null) ? $q['options'] : [];
+        $cleanOpts = [];
+        foreach ($rawOpts as $o) {
+            $cleanOpts[] = (string)$o;
+        }
+        $q['options'] = array_values($cleanOpts);
+        $cleanQs[] = $q;
+    }
+    usort($cleanQs, function($a, $b) {
         return ($a['createdAt'] ?? 0) - ($b['createdAt'] ?? 0);
     });
-    jsonOut(['questions' => $qs]);
+    jsonOut(['questions' => $cleanQs]);
 }
 
 // Admin Add Question
@@ -1895,7 +1958,7 @@ function parseBulkQuestionsPayload($b) {
 // Admin Bulk Upload Questions
 if ($route === 'admin/questions/bulk' && $method === 'POST') {
     $b = getJsonBody();
-    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+    if (!isEditor($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
 
     global $PROMOTION_RANK_ITEMS;
     $defaultSubjectId = trim((string)($b['subjectId'] ?? ''));
@@ -1939,14 +2002,24 @@ if ($route === 'admin/questions/bulk' && $method === 'POST') {
             errorOut('Choose a valid class level or exam section before uploading.', 400);
         }
 
+        $rawOpts = is_array($item['options'] ?? null) ? $item['options'] : [];
+        $cleanOpts = [];
+        foreach ($rawOpts as $o) {
+            $cleanOpts[] = trim((string)$o);
+        }
+        while (count($cleanOpts) < 4) {
+            $cleanOpts[] = '';
+        }
+        $cleanOpts = array_slice($cleanOpts, 0, 4);
+
         $newQ = [
             'id' => generateUuid(),
             'subjectId' => $targetSubjectId,
             'level' => $targetLevel,
-            'text' => $item['text'],
-            'options' => $item['options'],
-            'correctIndex' => $item['correctIndex'],
-            'explanation' => $item['explanation'] ?? '',
+            'text' => trim((string)$item['text']),
+            'options' => array_values($cleanOpts),
+            'correctIndex' => max(0, min(3, (int)$item['correctIndex'])),
+            'explanation' => trim((string)($item['explanation'] ?? '')),
             'year' => $item['year'] ?? null,
             'category' => $item['category'] ?? null,
             'rank' => $item['rank'] ?? null,
@@ -2070,6 +2143,8 @@ if ($route === 'admin/candidates' && $method === 'POST') {
             'region' => $u['region'] ?? '',
             'promotionRank' => $u['promotionRank'] ?? '',
             'schoolName' => $u['schoolName'] ?? '',
+            'adminRole' => isSuperAdminEmail($u['email'] ?? '') ? 'superadmin' : ($u['adminRole'] ?? ($u['role'] ?? null)),
+            'isSuperAdmin' => isSuperAdminEmail($u['email'] ?? ''),
             'registeredAt' => $u['createdAt'] ?? 0,
             'examsTaken' => $examsTaken,
             'avgPercent' => $avgPercent,
@@ -2089,6 +2164,204 @@ if ($route === 'admin/candidates' && $method === 'POST') {
         'totalExams' => $totalExamsOverall,
         'overallAverage' => $overallAvg
     ]);
+}
+
+// Admin Roles: List All Admins & Editors
+if ($route === 'admin/roles/list' && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+
+    $adminsList = [];
+    $hasMarkInList = false;
+
+    foreach ($db['users'] as $u) {
+        $em = strtolower(trim((string)($u['email'] ?? '')));
+        $isMark = isSuperAdminEmail($em);
+        $role = $isMark ? 'superadmin' : (string)($u['adminRole'] ?? ($u['role'] ?? ''));
+
+        if ($isMark) {
+            $hasMarkInList = true;
+            $adminsList[] = [
+                'id' => $u['id'],
+                'name' => $u['name'] ?: 'Mark Anibrika',
+                'email' => $u['email'],
+                'role' => 'superadmin',
+                'isPrimarySuperAdmin' => true,
+                'createdAt' => $u['createdAt'] ?? null,
+                'promotionRank' => $u['promotionRank'] ?? ''
+            ];
+        } elseif (in_array($role, ['admin', 'editor', 'superadmin'], true)) {
+            $adminsList[] = [
+                'id' => $u['id'],
+                'name' => $u['name'],
+                'email' => $u['email'],
+                'role' => $role,
+                'isPrimarySuperAdmin' => false,
+                'createdAt' => $u['createdAt'] ?? null,
+                'promotionRank' => $u['promotionRank'] ?? ''
+            ];
+        }
+    }
+
+    if (!$hasMarkInList) {
+        $adminsList[] = [
+            'id' => '1eb911c4-ea55-4317-82a8-081a2c971668',
+            'name' => 'Mark Anibrika',
+            'email' => 'anibrikamark@gmail.com',
+            'role' => 'superadmin',
+            'isPrimarySuperAdmin' => true,
+            'createdAt' => 1792321771016,
+            'promotionRank' => 'Deputy Director (DD)'
+        ];
+    }
+
+    jsonOut([
+        'ok' => true,
+        'admins' => $adminsList,
+        'superAdminEmail' => 'anibrikamark@gmail.com'
+    ]);
+}
+
+// Admin Roles: Promote / Demote Candidate
+if ($route === 'admin/roles/promote' && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isSuperAdmin($db, $b['passcode'] ?? null)) {
+        errorOut('Only Super Admin (Mark Anibrika) can promote or demote quiz admins and editors.', 403);
+    }
+
+    $targetEmail = strtolower(trim((string)($b['targetEmail'] ?? '')));
+    $targetUserId = trim((string)($b['targetUserId'] ?? ''));
+    $newRole = strtolower(trim((string)($b['newRole'] ?? 'admin'))); // 'admin', 'editor', or 'candidate'
+
+    if (!in_array($newRole, ['admin', 'editor', 'candidate'], true)) {
+        errorOut('Role must be admin, editor, or candidate', 400);
+    }
+
+    if ($targetEmail === 'anibrikamark@gmail.com') {
+        errorOut('Mark Anibrika is the primary Super Admin and cannot have his role altered.', 400);
+    }
+
+    $found = false;
+    $affectedUser = null;
+    foreach ($db['users'] as &$u) {
+        $uEm = strtolower(trim((string)($u['email'] ?? '')));
+        $uId = (string)($u['id'] ?? '');
+        if (($targetUserId !== '' && $uId === $targetUserId) || ($targetEmail !== '' && $uEm === $targetEmail)) {
+            if ($uEm === 'anibrikamark@gmail.com') {
+                errorOut('Mark Anibrika is the primary Super Admin and cannot have his role altered.', 400);
+            }
+            if ($newRole === 'candidate') {
+                $u['adminRole'] = null;
+                $u['role'] = ($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student';
+            } else {
+                $u['adminRole'] = $newRole;
+                $u['role'] = $newRole;
+            }
+            $u['updatedAt'] = round(microtime(true) * 1000);
+            $found = true;
+            $affectedUser = $u;
+            break;
+        }
+    }
+    unset($u);
+
+    if (!$found) {
+        errorOut('User not found with provided ID or email', 404);
+    }
+
+    saveDb($db);
+    jsonOut([
+        'ok' => true,
+        'user' => publicUser($affectedUser),
+        'message' => ($newRole === 'candidate')
+            ? "Removed admin privileges from {$affectedUser['name']}."
+            : "Successfully assigned {$affectedUser['name']} as " . ($newRole === 'admin' ? 'Quiz Admin' : 'Quiz Editor') . "!"
+    ]);
+}
+
+// Admin Roles: Create New Admin / Editor
+if ($route === 'admin/roles/create' && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isSuperAdmin($db, $b['passcode'] ?? null)) {
+        errorOut('Only Super Admin (Mark Anibrika) can create new Admins or Editors.', 403);
+    }
+
+    $name = trim((string)($b['name'] ?? ''));
+    $email = strtolower(trim((string)($b['email'] ?? '')));
+    $password = (string)($b['password'] ?? '');
+    $role = strtolower(trim((string)($b['role'] ?? 'admin')));
+
+    if ($name === '') errorOut('Full name is required', 400);
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) errorOut('Valid email address is required', 400);
+    if (strlen($password) < 6) errorOut('Password must be at least 6 characters', 400);
+    if (!in_array($role, ['admin', 'editor'], true)) errorOut('Role must be admin or editor', 400);
+
+    foreach ($db['users'] as $u) {
+        if (strtolower(trim((string)($u['email'] ?? ''))) === $email) {
+            errorOut('An account with this email already exists. You can promote this existing user instead.', 409);
+        }
+    }
+
+    $now = round(microtime(true) * 1000);
+    $newUser = [
+        'id' => generateUuid(),
+        'name' => $name,
+        'email' => $email,
+        'role' => $role,
+        'adminRole' => $role,
+        'accountType' => 'admin',
+        'schoolName' => 'Codecastic Administration',
+        'gradeLevel' => 4,
+        'passwordPlain' => $password,
+        'passwordHash' => password_hash($password, PASSWORD_BCRYPT),
+        'createdAt' => $now
+    ];
+
+    $db['users'][] = $newUser;
+    saveDb($db);
+
+    jsonOut([
+        'ok' => true,
+        'user' => publicUser($newUser),
+        'message' => "Successfully created " . ($role === 'admin' ? 'Quiz Admin' : 'Quiz Editor') . " account for $name!"
+    ], 201);
+}
+
+// Admin Roles: Revoke Privileges
+if ($route === 'admin/roles/revoke' && $method === 'POST') {
+    $b = getJsonBody();
+    if (!isSuperAdmin($db, $b['passcode'] ?? null)) {
+        errorOut('Only Super Admin (Mark Anibrika) can revoke admin roles.', 403);
+    }
+
+    $targetUserId = trim((string)($b['targetUserId'] ?? ''));
+    $targetEmail = strtolower(trim((string)($b['targetEmail'] ?? '')));
+
+    if ($targetEmail === 'anibrikamark@gmail.com') {
+        errorOut('Mark Anibrika is the primary Super Admin and cannot be revoked.', 400);
+    }
+
+    $revoked = false;
+    foreach ($db['users'] as &$u) {
+        $uEm = strtolower(trim((string)($u['email'] ?? '')));
+        $uId = (string)($u['id'] ?? '');
+        if (($targetUserId !== '' && $uId === $targetUserId) || ($targetEmail !== '' && $uEm === $targetEmail)) {
+            if ($uEm === 'anibrikamark@gmail.com') {
+                errorOut('Mark Anibrika is the primary Super Admin and cannot be revoked.', 400);
+            }
+            $u['adminRole'] = null;
+            $u['role'] = ($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student';
+            $u['updatedAt'] = round(microtime(true) * 1000);
+            $revoked = true;
+            break;
+        }
+    }
+    unset($u);
+
+    if (!$revoked) errorOut('User not found', 404);
+
+    saveDb($db);
+    jsonOut(['ok' => true, 'message' => 'Admin privileges revoked successfully.']);
 }
 
 // Admin Database Backup Download

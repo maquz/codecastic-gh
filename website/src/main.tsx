@@ -1,7 +1,14 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
+
+// Prevent unwanted browser file navigation when dragging & dropping files onto the window
+if (typeof window !== 'undefined') {
+  window.addEventListener('dragover', (e) => e.preventDefault(), false);
+  window.addEventListener('drop', (e) => e.preventDefault(), false);
+}
 
 // Register PWA Service Worker for Offline ExamHub
 if ('serviceWorker' in navigator && typeof window !== 'undefined') {
@@ -14,6 +21,8 @@ if ('serviceWorker' in navigator && typeof window !== 'undefined') {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>
 );

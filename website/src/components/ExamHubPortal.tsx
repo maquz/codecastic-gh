@@ -64,6 +64,11 @@ import {
     WifiOff,
     CloudOff,
     RefreshCw,
+    Shield,
+    ShieldAlert,
+    ShieldCheck,
+    Crown,
+    UserPlus,
 } from 'lucide-react';
 import {
     saveOfflinePack,
@@ -148,6 +153,9 @@ type CandidateRow = {
     id: string;
     name: string;
     email: string;
+    role?: string;
+    adminRole?: 'superadmin' | 'admin' | 'editor' | null;
+    isSuperAdmin?: boolean;
     accountType: 'ges-promo' | 'student';
     gradeLevel: Level;
     region: string;
@@ -183,7 +191,9 @@ type StudentUser = {
     id: string;
     name: string;
     email: string;
-    role?: 'student' | 'teacher' | 'school_admin' | 'ges-promo' | 'admin';
+    role?: 'student' | 'teacher' | 'school_admin' | 'ges-promo' | 'admin' | 'superadmin' | 'editor';
+    adminRole?: 'superadmin' | 'admin' | 'editor';
+    isSuperAdmin?: boolean;
     accountType?: 'student' | 'ges-promo' | 'teacher' | 'school_admin';
     schoolId?: string;
     schoolName: string;
@@ -411,6 +421,20 @@ export default function ExamHubPortal({
     const requiresAuth = !user || !userMatchesSection(user, activeSlug);
     const currentTrack = TRACKS.find((t) => t.slug === activeSlug);
 
+    const isMarkAnibrika = Boolean(
+        user?.email && user.email.trim().toLowerCase() === 'anibrikamark@gmail.com'
+    );
+    const isSuperAdmin = Boolean(
+        isMarkAnibrika || user?.isSuperAdmin || user?.adminRole === 'superadmin' || user?.role === 'superadmin'
+    );
+    const isAdmin = Boolean(
+        isSuperAdmin || user?.adminRole === 'admin' || user?.role === 'admin'
+    );
+    const isEditor = Boolean(
+        user?.adminRole === 'editor' || user?.role === 'editor'
+    );
+    const hasAdminAccess = Boolean(isSuperAdmin || isAdmin || isEditor);
+
     return (
         <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col w-full max-w-full overflow-x-hidden">
             {/* Full-screen Portal Top Bar */}
@@ -515,15 +539,32 @@ export default function ExamHubPortal({
                                 </button>
                             )}
 
-                            <button
-                                type="button"
-                                onClick={() => setTab('admin')}
-                                className={`rounded-md px-3 py-1.5 text-xs sm:text-sm font-semibold capitalize transition ${
-                                    tab === 'admin' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                                }`}
-                            >
-                                Super Admin
-                            </button>
+                            {hasAdminAccess && (
+                                <button
+                                    type="button"
+                                    onClick={() => setTab('admin')}
+                                    className={`rounded-md px-3 py-1.5 text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 ${
+                                        tab === 'admin' ? 'bg-[#364c83] text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                >
+                                    {isSuperAdmin ? (
+                                        <>
+                                            <Crown size={13} className="text-amber-400" />
+                                            Super Admin
+                                        </>
+                                    ) : isEditor ? (
+                                        <>
+                                            <Pencil size={13} />
+                                            Quiz Editor
+                                        </>
+                                    ) : (
+                                        <>
+                                            <ShieldCheck size={13} />
+                                            Admin Portal
+                                        </>
+                                    )}
+                                </button>
+                            )}
                         </nav>
                     </div>
                 </div>
@@ -594,7 +635,11 @@ export default function ExamHubPortal({
 
             <main className={`mx-auto w-full min-w-0 flex-1 px-4 py-8 sm:px-6 max-w-full ${tab === 'admin' || tab === 'school' || tab === 'teacher' ? 'max-w-6xl' : 'max-w-4xl'}`}>
                 {tab === 'admin' ? (
-                    <AdminView />
+                    <AdminView
+                        user={user}
+                        token={token}
+                        onSwitchToStudent={() => setTab('student')}
+                    />
                 ) : tab === 'school' ? (
                     user && user.role === 'school_admin' ? (
                         <SchoolAdminPortalView
@@ -1465,7 +1510,7 @@ function AiTutorDialog({
                     <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 text-xs">
                         <p className="font-semibold text-slate-900 leading-snug">{question.text}</p>
                         <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
-                            {question.options.map((opt, i) => {
+                            {(Array.isArray(question.options) ? question.options : []).map((opt, i) => {
                                 const isCorrect = i === question.correctIndex;
                                 const isChosen = i === question.chosen;
                                 return (
@@ -2336,7 +2381,7 @@ function StudentView({
 
                     {/* Answer Options with Instant Feedback */}
                     <div className="mt-5 space-y-2.5">
-                        {q.options.map((opt, i) => {
+                        {(Array.isArray(q.options) ? q.options : []).map((opt, i) => {
                             const isSelected = selectedOption === i;
                             const isThisCorrect = q.correctIndex === i;
 
@@ -2665,7 +2710,7 @@ function StudentView({
                                     </div>
                                 </div>
                                 <div className="mt-2.5 space-y-1.5 pl-6">
-                                    {q.options.map((opt, oi) => {
+                                    {(Array.isArray(q.options) ? q.options : []).map((opt, oi) => {
                                         const isCorrect = oi === r.correctIndex;
                                         const isChosenWrong = oi === r.chosen && !r.correct;
                                         return (
@@ -3409,7 +3454,19 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 /* Admin                                                               */
 /* ------------------------------------------------------------------ */
 
-function AdminView() {
+function AdminView({
+    user,
+    token,
+    onSwitchToStudent,
+}: {
+    user?: StudentUser | null;
+    token?: string;
+    onSwitchToStudent?: () => void;
+}) {
+    const isMark = Boolean(user?.email && user.email.trim().toLowerCase() === 'anibrikamark@gmail.com');
+    const isSuper = Boolean(isMark || user?.isSuperAdmin || user?.adminRole === 'superadmin' || user?.role === 'superadmin');
+    const hasPrivilege = Boolean(isSuper || user?.adminRole === 'admin' || user?.adminRole === 'editor' || user?.role === 'admin' || user?.role === 'editor');
+
     const [status, setStatus] = useState<'loading' | 'setup' | 'login' | 'in'>('loading');
     const [code, setCode] = useState('');
     const [input, setInput] = useState('');
@@ -3417,10 +3474,29 @@ function AdminView() {
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
+        // If current user already has verified admin/superadmin privileges with an active session token, auto-sign-in
+        if (token && hasPrivilege) {
+            api.post('/api/admin/login', { passcode: token })
+                .then((r) => {
+                    if (r.data?.ok) {
+                        setCode(token);
+                        setStatus('in');
+                    } else {
+                        return api.get('/api/admin/status').then((res) => setStatus(res.data.configured ? 'login' : 'setup'));
+                    }
+                })
+                .catch(() => {
+                    api.get('/api/admin/status')
+                        .then((res) => setStatus(res.data.configured ? 'login' : 'setup'))
+                        .catch(() => setErr('Could not reach the server. Please refresh.'));
+                });
+            return;
+        }
+
         api.get('/api/admin/status')
             .then((r) => setStatus(r.data.configured ? 'login' : 'setup'))
             .catch(() => setErr('Could not reach the server. Please refresh.'));
-    }, []);
+    }, [token, hasPrivilege]);
 
     const handleAuth = async (e: FormEvent) => {
         e.preventDefault();
@@ -3498,17 +3574,33 @@ function AdminView() {
     return (
         <AdminPanel
             code={code}
+            user={user}
+            token={token}
             onLogout={() => {
                 setCode('');
                 setStatus('login');
+                if (onSwitchToStudent) onSwitchToStudent();
             }}
         />
     );
 }
 
-type AdminTab = 'candidates' | 'questions' | 'subjects' | 'results' | 'messages' | 'timers' | 'ai';
+type AdminTab = 'candidates' | 'questions' | 'subjects' | 'results' | 'messages' | 'timers' | 'ai' | 'admins';
 
-function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) {
+function AdminPanel({
+    code,
+    onLogout,
+    user,
+    token: _token,
+}: {
+    code: string;
+    onLogout: () => void;
+    user?: StudentUser | null;
+    token?: string;
+}) {
+    const isMark = Boolean(user?.email && user.email.trim().toLowerCase() === 'anibrikamark@gmail.com');
+    const isSuperAdmin = Boolean(isMark || user?.isSuperAdmin || user?.adminRole === 'superadmin' || user?.role === 'superadmin');
+
     const [tab, setTab] = useState<AdminTab>('candidates');
     const [subjects, setSubjects] = useState<Subject[]>([]);
     const [questions, setQuestions] = useState<AdminQ[]>([]);
@@ -3581,6 +3673,9 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
         { id: 'timers', label: 'ExamHub Timers', icon: Clock },
         { id: 'ai', label: 'AI & Settings', icon: Sparkles },
     ];
+    if (isSuperAdmin) {
+        tabs.push({ id: 'admins', label: 'Admins & Editors', icon: ShieldCheck });
+    }
 
     return (
         <div className="w-full max-w-full min-w-0">
@@ -3656,6 +3751,7 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
                         stats={candidateStats}
                         reload={loadCandidates}
                         flash={flash}
+                        isSuperAdmin={isSuperAdmin}
                     />
                 )}
                 {tab === 'questions' && (
@@ -3684,6 +3780,14 @@ function AdminPanel({ code, onLogout }: { code: string; onLogout: () => void }) 
                 )}
                 {tab === 'timers' && <AdminTimers code={code} flash={flash} />}
                 {tab === 'ai' && <AdminAiSettings code={code} flash={flash} />}
+                {tab === 'admins' && isSuperAdmin && (
+                    <AdminsRolesAdmin
+                        code={code}
+                        flash={flash}
+                        candidates={candidates}
+                        reloadCandidates={loadCandidates}
+                    />
+                )}
             </div>
         </div>
     );
@@ -4220,6 +4324,563 @@ function AdminAiSettings({
 
 type Flash = (ok: boolean, text: string) => void;
 
+/* ------------------------------------------------------------------ */
+/* Super Admin - Admins & Editors Role Management                     */
+/* ------------------------------------------------------------------ */
+
+function AdminsRolesAdmin({
+    code,
+    flash,
+    candidates,
+    reloadCandidates,
+}: {
+    code: string;
+    flash: Flash;
+    candidates: CandidateRow[];
+    reloadCandidates: () => Promise<void>;
+}) {
+    const [admins, setAdmins] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [busyId, setBusyId] = useState<string | null>(null);
+
+    // Promote candidate state
+    const [candSearch, setCandSearch] = useState('');
+    const [selectedCandEmail, setSelectedCandEmail] = useState('');
+    const [promoteRole, setPromoteRole] = useState<'admin' | 'editor'>('admin');
+    const [promoting, setPromoting] = useState(false);
+
+    // Create new staff account state
+    const [name, setName] = useState('');
+    const [email, setEmail] = useState('');
+    const [phone, setPhone] = useState('');
+    const [password, setPassword] = useState('');
+    const [role, setRole] = useState<'admin' | 'editor'>('admin');
+    const [creating, setCreating] = useState(false);
+
+    const loadAdmins = useCallback(async () => {
+        try {
+            setLoading(true);
+            const r = await api.post('/api/admin/roles/list', { passcode: code });
+            setAdmins(r.data?.admins || []);
+        } catch (e) {
+            flash(false, errMsg(e, 'Could not load staff list.'));
+        } finally {
+            setLoading(false);
+        }
+    }, [code, flash]);
+
+    useEffect(() => {
+        loadAdmins();
+    }, [loadAdmins]);
+
+    const handlePromoteCandidate = async (e: FormEvent) => {
+        e.preventDefault();
+        if (!selectedCandEmail) {
+            flash(false, 'Please select a registered candidate to promote.');
+            return;
+        }
+        setPromoting(true);
+        try {
+            const res = await api.post('/api/admin/roles/promote', {
+                passcode: code,
+                targetEmail: selectedCandEmail,
+                newRole: promoteRole,
+            });
+            flash(true, res.data?.message || 'Candidate role successfully updated!');
+            setSelectedCandEmail('');
+            setCandSearch('');
+            await Promise.all([loadAdmins(), reloadCandidates()]);
+        } catch (e: any) {
+            flash(false, errMsg(e, 'Could not update candidate role.'));
+        } finally {
+            setPromoting(false);
+        }
+    };
+
+    const handleCreateStaff = async (e: FormEvent) => {
+        e.preventDefault();
+        if (!name.trim() || !email.trim() || !password.trim()) {
+            flash(false, 'Please fill in name, email, and password.');
+            return;
+        }
+        setCreating(true);
+        try {
+            const res = await api.post('/api/admin/roles/create', {
+                passcode: code,
+                name: name.trim(),
+                email: email.trim(),
+                phone: phone.trim(),
+                password: password.trim(),
+                role,
+            });
+            flash(true, res.data?.message || 'Staff account created successfully!');
+            setName('');
+            setEmail('');
+            setPhone('');
+            setPassword('');
+            await Promise.all([loadAdmins(), reloadCandidates()]);
+        } catch (e: any) {
+            flash(false, errMsg(e, 'Could not create staff account.'));
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    const handleRevokeRole = async (adminItem: any) => {
+        if (adminItem.isPrimarySuperAdmin || adminItem.email?.toLowerCase() === 'anibrikamark@gmail.com') {
+            flash(false, 'Mark Anibrika is the primary Super Admin and cannot be demoted.');
+            return;
+        }
+        if (!window.confirm(`Are you sure you want to revoke privileges from ${adminItem.name} (${adminItem.email})?`)) {
+            return;
+        }
+        setBusyId(adminItem.id);
+        try {
+            const res = await api.post('/api/admin/roles/revoke', {
+                passcode: code,
+                targetEmail: adminItem.email,
+                targetUserId: adminItem.id,
+            });
+            flash(true, res.data?.message || 'Privileges revoked.');
+            await Promise.all([loadAdmins(), reloadCandidates()]);
+        } catch (e: any) {
+            flash(false, errMsg(e, 'Could not revoke role.'));
+        } finally {
+            setBusyId(null);
+        }
+    };
+
+    const handleQuickRoleChange = async (adminItem: any, newRole: 'admin' | 'editor') => {
+        if (adminItem.isPrimarySuperAdmin || adminItem.email?.toLowerCase() === 'anibrikamark@gmail.com') {
+            flash(false, 'Mark Anibrika is the primary Super Admin and cannot have his role altered.');
+            return;
+        }
+        setBusyId(adminItem.id);
+        try {
+            const res = await api.post('/api/admin/roles/promote', {
+                passcode: code,
+                targetEmail: adminItem.email,
+                targetUserId: adminItem.id,
+                newRole,
+            });
+            flash(true, res.data?.message || `Role updated to ${newRole === 'admin' ? 'Quiz Admin' : 'Quiz Editor'}.`);
+            await Promise.all([loadAdmins(), reloadCandidates()]);
+        } catch (e: any) {
+            flash(false, errMsg(e, 'Could not change role.'));
+        } finally {
+            setBusyId(null);
+        }
+    };
+
+    const nonAdminCandidates = candidates.filter((c) => {
+        const em = c.email?.toLowerCase();
+        if (em === 'anibrikamark@gmail.com') return false;
+        if (admins.some((a) => a.email?.toLowerCase() === em)) return false;
+        if (candSearch.trim()) {
+            const q = candSearch.toLowerCase();
+            return c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q) || (c.schoolName || '').toLowerCase().includes(q);
+        }
+        return true;
+    });
+
+    return (
+        <div className="space-y-6">
+            {/* Super Admin Status Banner */}
+            <div className="rounded-2xl border-2 border-amber-300 bg-linear-to-r from-amber-50/80 via-indigo-50/30 to-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-500 text-white shadow-sm ring-4 ring-amber-100">
+                            <Crown size={24} />
+                        </span>
+                        <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <h2 className="text-lg font-bold text-slate-900">Mark Anibrika</h2>
+                                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-0.5 text-xs font-bold text-amber-900 border border-amber-200 shadow-2xs">
+                                    <Crown size={12} className="text-amber-600" />
+                                    Primary Super Admin
+                                </span>
+                            </div>
+                            <p className="mt-0.5 text-xs text-slate-600">
+                                <strong>anibrikamark@gmail.com</strong> &middot; Deputy Director (DD) &middot; Greater Accra
+                            </p>
+                            <p className="mt-1 text-[11px] text-slate-500">
+                                Protected Primary Super Administrator with exclusive authority to appoint, promote, or revoke Quiz Admins and Editors.
+                            </p>
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={loadAdmins}
+                        disabled={loading}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-[#364c83] hover:text-[#364c83] shadow-xs"
+                    >
+                        <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+                        <span>Refresh Staff List</span>
+                    </button>
+                </div>
+            </div>
+
+            {/* Current Staff & Assigned Roles Table */}
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="border-b border-slate-100 bg-slate-50/70 p-4 sm:flex sm:items-center sm:justify-between">
+                    <div>
+                        <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                            <ShieldCheck size={16} className="text-[#364c83]" />
+                            Authorized Admins &amp; Editors
+                        </h3>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                            Users with privileged administrative or quiz editing access across ExamHub.
+                        </p>
+                    </div>
+                    <span className="mt-2 inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-[#364c83] sm:mt-0">
+                        {admins.length} Staff Member{admins.length === 1 ? '' : 's'}
+                    </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                    <table className="w-full min-w-[620px] text-left text-sm">
+                        <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50/50 text-[11px] uppercase tracking-wider text-slate-500">
+                                <th className="py-3 px-4 font-semibold">User</th>
+                                <th className="py-3 px-3 font-semibold">Email</th>
+                                <th className="py-3 px-3 font-semibold">Privilege Level</th>
+                                <th className="py-3 px-3 font-semibold">Appointed Date</th>
+                                <th className="py-3 px-4 font-semibold text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {admins.map((adm) => {
+                                const isMark = adm.isPrimarySuperAdmin || adm.email?.toLowerCase() === 'anibrikamark@gmail.com';
+                                const isBusy = busyId === adm.id;
+
+                                return (
+                                    <tr key={adm.id} className="transition hover:bg-slate-50/60">
+                                        <td className="py-3 px-4">
+                                            <div className="font-semibold text-slate-900">{adm.name}</div>
+                                            {adm.promotionRank && (
+                                                <div className="text-[11px] text-slate-500">{adm.promotionRank}</div>
+                                            )}
+                                        </td>
+                                        <td className="py-3 px-3 text-xs text-slate-600">
+                                            {adm.email}
+                                        </td>
+                                        <td className="py-3 px-3">
+                                            {isMark ? (
+                                                <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-900 border border-amber-200">
+                                                    <Crown size={12} className="text-amber-600" />
+                                                    Super Admin
+                                                </span>
+                                            ) : adm.role === 'admin' ? (
+                                                <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-900 border border-indigo-200">
+                                                    <ShieldCheck size={12} className="text-[#364c83]" />
+                                                    Quiz Admin
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1 rounded bg-purple-100 px-2 py-0.5 text-xs font-bold text-purple-900 border border-purple-200">
+                                                    <Pencil size={12} className="text-purple-600" />
+                                                    Quiz Editor
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="py-3 px-3 text-xs text-slate-500">
+                                            {adm.createdAt ? new Date(adm.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Primary Lead'}
+                                        </td>
+                                        <td className="py-3 px-4 text-right">
+                                            {isMark ? (
+                                                <span className="text-[11px] font-semibold text-amber-700">Permanent Protected</span>
+                                            ) : (
+                                                <div className="flex items-center justify-end gap-1.5">
+                                                    {adm.role === 'editor' ? (
+                                                        <button
+                                                            type="button"
+                                                            disabled={isBusy}
+                                                            onClick={() => handleQuickRoleChange(adm, 'admin')}
+                                                            className="rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-[#364c83] hover:bg-indigo-100 transition"
+                                                            title="Upgrade to Quiz Admin (Full Admin Privileges)"
+                                                        >
+                                                            Promote to Admin
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            disabled={isBusy}
+                                                            onClick={() => handleQuickRoleChange(adm, 'editor')}
+                                                            className="rounded-md border border-purple-200 bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition"
+                                                            title="Set role to Quiz Editor"
+                                                        >
+                                                            Set to Editor
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        disabled={isBusy}
+                                                        onClick={() => handleRevokeRole(adm)}
+                                                        className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition"
+                                                        title="Revoke all administrative access"
+                                                    >
+                                                        {isBusy ? <Loader2 size={13} className="animate-spin" /> : 'Revoke'}
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* Two Action Panels: Promote Existing Candidate vs Create New Staff */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                {/* Panel 1: Promote Registered Candidate */}
+                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-[#364c83]">
+                            <UserCheck size={18} />
+                        </span>
+                        <div>
+                            <h3 className="text-sm font-bold text-slate-900">Promote Registered Candidate</h3>
+                            <p className="text-xs text-slate-500">
+                                Select an existing candidate from ExamHub and elevate them to Quiz Admin or Quiz Editor.
+                            </p>
+                        </div>
+                    </div>
+
+                    <form onSubmit={handlePromoteCandidate} className="mt-4 space-y-4">
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                Search Candidate Name or Email
+                            </label>
+                            <div className="relative">
+                                <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                                <input
+                                    type="text"
+                                    value={candSearch}
+                                    onChange={(e) => setCandSearch(e.target.value)}
+                                    placeholder="Type name, email, or school to filter..."
+                                    className="input pl-8 text-xs"
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                Choose Candidate ({nonAdminCandidates.length} available)
+                            </label>
+                            <select
+                                value={selectedCandEmail}
+                                onChange={(e) => setSelectedCandEmail(e.target.value)}
+                                className="input text-xs"
+                                required
+                            >
+                                <option value="">-- Select a registered candidate --</option>
+                                {nonAdminCandidates.map((c) => (
+                                    <option key={c.id} value={c.email}>
+                                        {c.name} ({c.email}) {c.promotionRank ? `· ${c.promotionRank}` : c.schoolName ? `· ${c.schoolName}` : ''}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                Role to Assign
+                            </label>
+                            <div className="grid grid-cols-2 gap-3">
+                                <label
+                                    className={`flex items-start gap-2.5 rounded-xl border p-3 cursor-pointer transition ${
+                                        promoteRole === 'admin'
+                                            ? 'border-[#364c83] bg-indigo-50/40 ring-1 ring-[#364c83]'
+                                            : 'border-slate-200 bg-white hover:bg-slate-50'
+                                    }`}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="promoteRole"
+                                        checked={promoteRole === 'admin'}
+                                        onChange={() => setPromoteRole('admin')}
+                                        className="mt-0.5 accent-[#364c83]"
+                                    />
+                                    <div>
+                                        <div className="text-xs font-bold text-slate-900 flex items-center gap-1">
+                                            <ShieldCheck size={12} className="text-[#364c83]" />
+                                            Quiz Admin
+                                        </div>
+                                        <p className="mt-0.5 text-[11px] text-slate-500 leading-tight">
+                                            Can manage subjects, questions, timers, and view full exam records.
+                                        </p>
+                                    </div>
+                                </label>
+
+                                <label
+                                    className={`flex items-start gap-2.5 rounded-xl border p-3 cursor-pointer transition ${
+                                        promoteRole === 'editor'
+                                            ? 'border-purple-600 bg-purple-50/40 ring-1 ring-purple-600'
+                                            : 'border-slate-200 bg-white hover:bg-slate-50'
+                                    }`}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="promoteRole"
+                                        checked={promoteRole === 'editor'}
+                                        onChange={() => setPromoteRole('editor')}
+                                        className="mt-0.5 accent-purple-600"
+                                    />
+                                    <div>
+                                        <div className="text-xs font-bold text-slate-900 flex items-center gap-1">
+                                            <Pencil size={12} className="text-purple-600" />
+                                            Quiz Editor
+                                        </div>
+                                        <p className="mt-0.5 text-[11px] text-slate-500 leading-tight">
+                                            Can create, edit, audit questions, and bulk import exam questions.
+                                        </p>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={promoting || !selectedCandEmail}
+                            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#364c83] py-2.5 text-xs font-bold text-white shadow-sm hover:bg-[#1f2d57] disabled:opacity-50 transition"
+                        >
+                            {promoting ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                            <span>Promote Selected Candidate</span>
+                        </button>
+                    </form>
+                </div>
+
+                {/* Panel 2: Directly Create New Staff Account */}
+                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                            <UserPlus size={18} />
+                        </span>
+                        <div>
+                            <h3 className="text-sm font-bold text-slate-900">Create New Staff Account</h3>
+                            <p className="text-xs text-slate-500">
+                                Provision a new account directly with designated Quiz Admin or Editor credentials.
+                            </p>
+                        </div>
+                    </div>
+
+                    <form onSubmit={handleCreateStaff} className="mt-4 space-y-3">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                    Full Name *
+                                </label>
+                                <input
+                                    type="text"
+                                    value={name}
+                                    onChange={(e) => setName(e.target.value)}
+                                    placeholder="e.g. Samuel Boateng"
+                                    className="input text-xs"
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                    Email Address *
+                                </label>
+                                <input
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="e.g. sboateng@ges.gov.gh"
+                                    className="input text-xs"
+                                    required
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                    Phone Number (Optional)
+                                </label>
+                                <input
+                                    type="tel"
+                                    value={phone}
+                                    onChange={(e) => setPhone(e.target.value)}
+                                    placeholder="0244000000"
+                                    className="input text-xs"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                    Password *
+                                </label>
+                                <input
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="At least 6 characters"
+                                    className="input text-xs"
+                                    required
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">
+                                Staff Role
+                            </label>
+                            <div className="grid grid-cols-2 gap-3">
+                                <label
+                                    className={`flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-xs font-semibold transition ${
+                                        role === 'admin'
+                                            ? 'border-[#364c83] bg-indigo-50/50 text-[#364c83]'
+                                            : 'border-slate-200 text-slate-700'
+                                    }`}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="newStaffRole"
+                                        checked={role === 'admin'}
+                                        onChange={() => setRole('admin')}
+                                        className="accent-[#364c83]"
+                                    />
+                                    <span>Quiz Admin</span>
+                                </label>
+                                <label
+                                    className={`flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-xs font-semibold transition ${
+                                        role === 'editor'
+                                            ? 'border-purple-600 bg-purple-50/50 text-purple-700'
+                                            : 'border-slate-200 text-slate-700'
+                                    }`}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="newStaffRole"
+                                        checked={role === 'editor'}
+                                        onChange={() => setRole('editor')}
+                                        className="accent-purple-600"
+                                    />
+                                    <span>Quiz Editor</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={creating || !name.trim() || !email.trim() || !password.trim()}
+                            className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-800 disabled:opacity-50 transition"
+                        >
+                            {creating ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+                            <span>Create Staff Account</span>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+type Flash = (ok: boolean, text: string) => void;
+
 function SubjectsAdmin({
     code,
     subjects,
@@ -4456,12 +5117,16 @@ function QuestionsAdmin({
     const [filterIssuesOnly, setFilterIssuesOnly] = useState(false);
 
     const getQuestionIssue = (q: AdminQ) => {
-        const opts = (q.options || []).map((o) => (o || '').trim().toLowerCase()).filter(Boolean);
+        const rawOpts = Array.isArray(q.options) ? q.options : [];
+        if (rawOpts.length !== 4) {
+            return 'Question does not have 4 options';
+        }
+        const opts = rawOpts.map((o) => (o || '').trim().toLowerCase()).filter(Boolean);
         const set = new Set(opts);
         if (set.size < opts.length) {
             return 'Duplicate options detected';
         }
-        if ((q.options || []).some((o) => !o || !o.trim())) {
+        if (rawOpts.some((o) => !o || !o.trim())) {
             return 'Blank option(s)';
         }
         return null;
@@ -4472,7 +5137,7 @@ function QuestionsAdmin({
         setAuditLoading(true);
         setAuditResult(null);
         setAuditEditableText(q.text);
-        setAuditEditableOptions([...q.options]);
+        setAuditEditableOptions(Array.isArray(q.options) ? [...q.options] : ['', '', '', '']);
         setAuditEditableCorrect(q.correctIndex);
         setAuditEditableExplanation(q.explanation || '');
 
@@ -4507,7 +5172,7 @@ function QuestionsAdmin({
     const resetToOriginal = () => {
         if (!auditingQuestion) return;
         setAuditEditableText(auditingQuestion.text);
-        setAuditEditableOptions([...auditingQuestion.options]);
+        setAuditEditableOptions(Array.isArray(auditingQuestion.options) ? [...auditingQuestion.options] : ['', '', '', '']);
         setAuditEditableCorrect(auditingQuestion.correctIndex);
         setAuditEditableExplanation(auditingQuestion.explanation || '');
         flash(true, 'Restored original question text and options.');
@@ -4877,7 +5542,7 @@ function QuestionsAdmin({
         setEditYear(q.year || '');
         setEditCategory(q.category || '');
         setEditText(q.text);
-        setEditOptions([...q.options]);
+        setEditOptions(Array.isArray(q.options) ? [...q.options] : ['', '', '', '']);
         setEditCorrect(q.correctIndex);
         setEditExplanation(q.explanation || '');
     };
@@ -5865,7 +6530,7 @@ Level: ${levelLabel(level)}`}
                                     </div>
                                 </div>
                                 <div className="mt-2 grid gap-1 sm:grid-cols-2">
-                                    {q.options.map((o, i) => (
+                                    {(Array.isArray(q.options) ? q.options : []).map((o, i) => (
                                         <p
                                             key={i}
                                             className={`rounded px-2 py-1 text-xs ${
@@ -6838,17 +7503,19 @@ function MessagesAdmin({
 type CardKey = 'candidates' | 'exams' | 'average' | 'pass' | 'distinction';
 
 function CandidatesAdmin({
-    code: _code,
+    code,
     candidates,
     stats,
     reload,
     flash,
+    isSuperAdmin,
 }: {
     code: string;
     candidates: CandidateRow[];
     stats: CandidatesStats | null;
     reload: () => Promise<void>;
     flash: Flash;
+    isSuperAdmin?: boolean;
 }) {
     const [search, setSearch] = useState('');
     const [trackFilter, setTrackFilter] = useState<'all' | string>('all');
@@ -6856,6 +7523,25 @@ function CandidatesAdmin({
     const [selectedCandidate, setSelectedCandidate] = useState<CandidateRow | null>(null);
     const [refreshing, setRefreshing] = useState(false);
     const [activeCard, setActiveCard] = useState<CardKey | null>(null);
+    const [rolePromotingEmail, setRolePromotingEmail] = useState<string | null>(null);
+
+    const handlePromoteCandidate = async (c: CandidateRow, newRole: 'admin' | 'editor' | 'candidate') => {
+        setRolePromotingEmail(c.email);
+        try {
+            const res = await api.post('/api/admin/roles/promote', {
+                passcode: code,
+                targetEmail: c.email,
+                targetUserId: c.id,
+                newRole,
+            });
+            flash(true, res.data?.message || 'Candidate role successfully updated!');
+            await reload();
+        } catch (e: any) {
+            flash(false, errMsg(e, 'Could not update candidate role.'));
+        } finally {
+            setRolePromotingEmail(null);
+        }
+    };
 
     const handleRefresh = async () => {
         setRefreshing(true);
@@ -7738,7 +8424,25 @@ function CandidatesAdmin({
                                     return (
                                         <tr key={c.id} className="transition hover:bg-slate-50/60">
                                             <td className="py-3 px-4">
-                                                <div className="font-semibold text-slate-900">{c.name}</div>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span className="font-semibold text-slate-900">{c.name}</span>
+                                                    {c.email?.toLowerCase() === 'anibrikamark@gmail.com' ? (
+                                                        <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900 border border-amber-200">
+                                                            <Crown size={10} className="text-amber-600" />
+                                                            Super Admin
+                                                        </span>
+                                                    ) : c.adminRole === 'admin' ? (
+                                                        <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-900 border border-indigo-200">
+                                                            <ShieldCheck size={10} className="text-[#364c83]" />
+                                                            Quiz Admin
+                                                        </span>
+                                                    ) : c.adminRole === 'editor' ? (
+                                                        <span className="inline-flex items-center gap-1 rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-900 border border-purple-200">
+                                                            <Pencil size={10} className="text-purple-600" />
+                                                            Quiz Editor
+                                                        </span>
+                                                    ) : null}
+                                                </div>
                                                 <div className="text-xs text-slate-500">{c.email}</div>
                                             </td>
 
@@ -7813,14 +8517,66 @@ function CandidatesAdmin({
                                             </td>
 
                                             <td className="py-3 px-4 text-right">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setSelectedCandidate(c)}
-                                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-[#364c83] transition hover:border-[#364c83] hover:bg-indigo-50"
-                                                >
-                                                    <span>View History</span>
-                                                    <ChevronRight size={13} />
-                                                </button>
+                                                <div className="flex items-center justify-end gap-1.5">
+                                                    {isSuperAdmin && c.email?.toLowerCase() !== 'anibrikamark@gmail.com' && (
+                                                        <div className="inline-flex items-center gap-1">
+                                                            {c.adminRole === 'admin' ? (
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={rolePromotingEmail === c.email}
+                                                                    onClick={() => handlePromoteCandidate(c, 'candidate')}
+                                                                    className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition"
+                                                                    title="Demote to standard candidate"
+                                                                >
+                                                                    {rolePromotingEmail === c.email ? <Loader2 size={11} className="animate-spin" /> : <ShieldAlert size={11} />}
+                                                                    Revoke
+                                                                </button>
+                                                            ) : c.adminRole === 'editor' ? (
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={rolePromotingEmail === c.email}
+                                                                    onClick={() => handlePromoteCandidate(c, 'candidate')}
+                                                                    className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition"
+                                                                    title="Demote to standard candidate"
+                                                                >
+                                                                    {rolePromotingEmail === c.email ? <Loader2 size={11} className="animate-spin" /> : <ShieldAlert size={11} />}
+                                                                    Revoke
+                                                                </button>
+                                                            ) : (
+                                                                <>
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled={rolePromotingEmail === c.email}
+                                                                        onClick={() => handlePromoteCandidate(c, 'admin')}
+                                                                        className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-[#364c83] hover:bg-indigo-100 transition"
+                                                                        title="Promote to Quiz Admin"
+                                                                    >
+                                                                        {rolePromotingEmail === c.email ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
+                                                                        + Admin
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled={rolePromotingEmail === c.email}
+                                                                        onClick={() => handlePromoteCandidate(c, 'editor')}
+                                                                        className="inline-flex items-center gap-1 rounded-md border border-purple-200 bg-purple-50 px-2 py-1 text-[11px] font-semibold text-purple-700 hover:bg-purple-100 transition"
+                                                                        title="Promote to Quiz Editor"
+                                                                    >
+                                                                        {rolePromotingEmail === c.email ? <Loader2 size={11} className="animate-spin" /> : <Pencil size={11} />}
+                                                                        + Editor
+                                                                    </button>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSelectedCandidate(c)}
+                                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-[#364c83] transition hover:border-[#364c83] hover:bg-indigo-50"
+                                                    >
+                                                        <span>View History</span>
+                                                        <ChevronRight size={13} />
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     );
