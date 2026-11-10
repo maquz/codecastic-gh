@@ -269,8 +269,10 @@ function isSchoolStaffOrAdmin(u?: StudentUser | null): boolean {
         u.role === 'admin' ||
         u.role === 'school_admin' ||
         u.role === 'teacher' ||
+        u.role === 'editor' ||
         u.adminRole === 'superadmin' ||
-        u.adminRole === 'admin'
+        u.adminRole === 'admin' ||
+        u.adminRole === 'editor'
     );
 }
 
@@ -4487,7 +4489,7 @@ function AdminPanel({
     code,
     onLogout,
     user,
-    token: _token,
+    token,
 }: {
     code: string;
     onLogout: () => void;
@@ -4651,7 +4653,15 @@ function AdminPanel({
                     />
                 )}
                 {tab === 'questions' && (
-                    <QuestionsAdmin code={code} subjects={subjects} questions={questions} reload={loadQuestions} flash={flash} />
+                    <QuestionsAdmin
+                        code={code}
+                        token={token}
+                        subjects={subjects}
+                        questions={questions}
+                        setQuestions={setQuestions}
+                        reload={loadQuestions}
+                        flash={flash}
+                    />
                 )}
                 {tab === 'subjects' && (
                     <SubjectsAdmin
@@ -5935,25 +5945,30 @@ function SubjectsAdmin({
 }
 
 function belongsToCategory(qLevel: Level, trackCode: string | null): boolean {
+    const s = String(qLevel ?? '').trim().toUpperCase();
     if (trackCode === null) {
-        return typeof qLevel === 'number' && SCHOOL_LEVELS.includes(qLevel);
+        return (typeof qLevel === 'number' && SCHOOL_LEVELS.includes(qLevel)) || s === 'BECE' || s === 'BASIC';
     }
     if (trackCode === 'SHS') {
-        return SHS_LEVELS.includes(String(qLevel));
+        return SHS_LEVELS.some((l) => l.toUpperCase() === s) || s === 'SHS' || s === 'WASSCE';
     }
-    return qLevel === trackCode;
+    return qLevel === trackCode || s === String(trackCode ?? '').trim().toUpperCase();
 }
 
 function QuestionsAdmin({
     code,
+    token,
     subjects,
     questions,
+    setQuestions,
     reload,
     flash,
 }: {
     code: string;
+    token?: string;
     subjects: Subject[];
     questions: AdminQ[];
+    setQuestions?: React.Dispatch<React.SetStateAction<AdminQ[]>>;
     reload: () => Promise<void>;
     flash: Flash;
 }) {
@@ -5985,6 +6000,7 @@ function QuestionsAdmin({
     const [editCorrect, setEditCorrect] = useState(0);
     const [editExplanation, setEditExplanation] = useState('');
     const [updating, setUpdating] = useState(false);
+    const [lastUpdatedNotice, setLastUpdatedNotice] = useState<string | null>(null);
 
     // Bulk template & file upload state
     const [uploadingBulk, setUploadingBulk] = useState(false);
@@ -6010,6 +6026,24 @@ function QuestionsAdmin({
     const [applyingFix, setApplyingFix] = useState(false);
     const [filterIssuesOnly, setFilterIssuesOnly] = useState(false);
 
+    const authPasscode = code || token || (typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) || '' : '');
+
+    // Duplicate question text map across questions bank
+    const duplicateTextSet = useMemo(() => {
+        const counts = new Map<string, number>();
+        questions.forEach((q) => {
+            const norm = (q.text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            if (norm.length > 5) {
+                counts.set(norm, (counts.get(norm) || 0) + 1);
+            }
+        });
+        const dupes = new Set<string>();
+        counts.forEach((cnt, txt) => {
+            if (cnt > 1) dupes.add(txt);
+        });
+        return dupes;
+    }, [questions]);
+
     const getQuestionIssue = (q: AdminQ) => {
         const rawOpts = Array.isArray(q.options) ? q.options : [];
         if (rawOpts.length !== 4) {
@@ -6022,6 +6056,10 @@ function QuestionsAdmin({
         }
         if (rawOpts.some((o) => !o || !o.trim())) {
             return 'Blank option(s)';
+        }
+        const norm = (q.text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+        if (duplicateTextSet.has(norm)) {
+            return 'Duplicate question in bank (identical text found)';
         }
         return null;
     };
@@ -6037,7 +6075,7 @@ function QuestionsAdmin({
 
         try {
             const res = await api.post('/api/ai/audit-question', {
-                passcode: code,
+                passcode: authPasscode,
                 question: q,
             });
             if (res.data?.ok) {
@@ -6102,7 +6140,7 @@ function QuestionsAdmin({
         setApplyingFix(true);
         try {
             const res = await api.post('/api/ai/apply-fix', {
-                passcode: code,
+                passcode: authPasscode,
                 questionId: auditingQuestion.id,
                 fixed: {
                     text: trimmedText,
@@ -6112,7 +6150,23 @@ function QuestionsAdmin({
                 },
             });
             if (res.data?.ok) {
-                flash(true, 'Question successfully resolved and saved to database!');
+                if (setQuestions) {
+                    setQuestions((prev) =>
+                        prev.map((item) =>
+                            item.id === auditingQuestion.id
+                                ? {
+                                      ...item,
+                                      text: trimmedText,
+                                      options: trimmedOpts,
+                                      correctIndex: auditEditableCorrect,
+                                      explanation: auditEditableExplanation.trim(),
+                                  }
+                                : item
+                        )
+                    );
+                }
+                flash(true, 'Question duplicate options successfully resolved and saved to database!');
+                setLastUpdatedNotice(`Question "${trimmedText.slice(0, 45)}..." was successfully resolved.`);
                 setAuditingQuestion(null);
                 setAuditResult(null);
                 await reload();
@@ -6409,7 +6463,7 @@ function QuestionsAdmin({
             });
 
             const res = await api.post('/api/admin/questions/bulk', {
-                passcode: code,
+                passcode: authPasscode,
                 subjectId: activeSubject.id,
                 level,
                 fileName: file.name,
@@ -6431,13 +6485,14 @@ function QuestionsAdmin({
 
     const startEditing = (q: AdminQ) => {
         setEditingId(q.id);
-        setEditSubjectId(q.subjectId);
+        const targetSubId = q.subjectId || activeSubject?.id || (subjects[0]?.id ?? '');
+        setEditSubjectId(targetSubId);
         setEditLevel(q.level);
         setEditYear(q.year || '');
         setEditCategory(q.category || '');
-        setEditText(q.text);
+        setEditText(q.text || '');
         setEditOptions(Array.isArray(q.options) ? [...q.options] : ['', '', '', '']);
-        setEditCorrect(q.correctIndex);
+        setEditCorrect(typeof q.correctIndex === 'number' ? q.correctIndex : 0);
         setEditExplanation(q.explanation || '');
     };
 
@@ -6459,7 +6514,7 @@ function QuestionsAdmin({
         setSaving(true);
         try {
             await api.post('/api/admin/questions', {
-                passcode: code,
+                passcode: authPasscode,
                 subjectId: targetSubjectId,
                 level: finalLevel,
                 text: text.trim(),
@@ -6487,30 +6542,66 @@ function QuestionsAdmin({
 
     const handleUpdateQuestion = async (e: FormEvent, qId: string) => {
         e.preventDefault();
-        if (!editSubjectId || !editText.trim() || editOptions.some((o) => !o.trim())) {
+        const trimmedText = editText.trim();
+        const trimmedOpts = editOptions.map((o) => o.trim());
+
+        if (!editSubjectId || !trimmedText || trimmedOpts.some((o) => !o)) {
             flash(false, 'Fill in the question and all four answer options.');
             return;
         }
+
+        // Validate duplicate options
+        const lowerOpts = trimmedOpts.map((o) => o.toLowerCase());
+        const unique = new Set(lowerOpts);
+        if (unique.size < lowerOpts.length) {
+            flash(false, 'Duplicate options detected. All 4 choices must be distinct before updating.');
+            return;
+        }
+
         const isProfStudies = subjects.find((s) => s.id === editSubjectId)?.name.toLowerCase().includes('professional studies');
         const finalEditLevel = isProfStudies ? 'GTLE' : editLevel;
 
         setUpdating(true);
         try {
-            await api.post(`/api/admin/questions/${qId}/update`, {
-                passcode: code,
+            await api.post(`/api/admin/questions/${encodeURIComponent(qId)}/update`, {
+                passcode: authPasscode,
                 subjectId: editSubjectId,
                 level: finalEditLevel,
-                text: editText.trim(),
-                options: editOptions.map((o) => o.trim()),
+                text: trimmedText,
+                options: trimmedOpts,
                 correctIndex: editCorrect,
                 explanation: editExplanation.trim(),
                 year: editYear.trim() || undefined,
                 category: editCategory.trim() || undefined,
                 rank: finalEditLevel === 'GES-PROMO' ? (PROMOTION_RANK_CODE_BY_ID[editSubjectId] || undefined) : undefined,
             });
+
+            // Optimistic update
+            if (setQuestions) {
+                setQuestions((prev) =>
+                    prev.map((item) =>
+                        item.id === qId
+                            ? {
+                                  ...item,
+                                  subjectId: editSubjectId,
+                                  level: finalEditLevel,
+                                  text: trimmedText,
+                                  options: trimmedOpts,
+                                  correctIndex: editCorrect,
+                                  explanation: editExplanation.trim(),
+                                  year: editYear.trim() || undefined,
+                                  category: editCategory.trim() || undefined,
+                                  rank: finalEditLevel === 'GES-PROMO' ? (PROMOTION_RANK_CODE_BY_ID[editSubjectId] || undefined) : undefined,
+                              }
+                            : item
+                    )
+                );
+            }
+
             setEditingId(null);
+            setLastUpdatedNotice(`Question "${trimmedText.slice(0, 45)}..." updated successfully.`);
             await reload();
-            flash(true, 'Question updated.');
+            flash(true, 'Question updated successfully and saved to database!');
         } catch (e2) {
             flash(false, errMsg(e2, 'Could not update question.'));
         } finally {
@@ -6521,8 +6612,11 @@ function QuestionsAdmin({
     const remove = async (q: AdminQ) => {
         if (!window.confirm('Delete this question?')) return;
         try {
-            await api.post(`/api/admin/questions/${q.id}/delete`, { passcode: code });
+            await api.post(`/api/admin/questions/${encodeURIComponent(q.id)}/delete`, { passcode: authPasscode });
             if (editingId === q.id) setEditingId(null);
+            if (setQuestions) {
+                setQuestions((prev) => prev.filter((item) => item.id !== q.id));
+            }
             await reload();
             flash(true, 'Question deleted.');
         } catch (e2) {
@@ -6614,7 +6708,7 @@ function QuestionsAdmin({
     const isBasicPortal = activeTrack.code === null;
     const isShsPortal = activeTrack.code === 'SHS';
     const isMultiLevelPortal = isBasicPortal || isShsPortal;
-    const multiLevelList: Level[] = isBasicPortal ? SCHOOL_LEVELS : SHS_LEVELS;
+    const multiLevelList: Level[] = isBasicPortal ? [...SCHOOL_LEVELS, 'BECE'] : [...SHS_LEVELS, 'WASSCE'];
     const categoryQuestions = questions.filter((q) => belongsToCategory(q.level, activeTrack.code));
 
     /* ---------------- Step 2: Subject / Promotion Rank Cards View under Selected Exam Category ---------------- */
@@ -7204,6 +7298,24 @@ Level: ${levelLabel(level)}`}
                     </div>
                 </div>
 
+                {lastUpdatedNotice && (
+                    <div className="mt-3 rounded-lg border border-emerald-300 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-900 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+                            <span>{lastUpdatedNotice}</span>
+                        </div>
+                        {filterIssuesOnly && (
+                            <button
+                                type="button"
+                                onClick={() => setFilterIssuesOnly(false)}
+                                className="font-bold text-[#364c83] underline hover:text-[#1f2d57] cursor-pointer"
+                            >
+                                View in All Questions &rarr;
+                            </button>
+                        )}
+                    </div>
+                )}
+
                 <div className="mt-4 space-y-3">
                     {displayedQuestions.map((q) => {
                         const isEditing = editingId === q.id;
@@ -7461,6 +7573,22 @@ Level: ${levelLabel(level)}`}
                             </div>
                         );
                     })}
+                    {filterIssuesOnly && displayedQuestions.length === 0 && shown.length > 0 && (
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-6 text-center">
+                            <CheckCircle2 size={32} className="mx-auto text-emerald-600 mb-2" />
+                            <h3 className="text-sm font-bold text-emerald-900">All questions verified!</h3>
+                            <p className="text-xs text-emerald-700 mt-1 max-w-md mx-auto">
+                                No duplicate options, duplicate questions, or formatting issues found for {activeSubject.name} in {activeTrack.label}.
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => setFilterIssuesOnly(false)}
+                                className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#1f2d57] transition cursor-pointer"
+                            >
+                                View All ({shown.length}) Questions
+                            </button>
+                        </div>
+                    )}
                     {shown.length === 0 && (
                         <p className="text-sm text-slate-400">
                             No {activeSubject.name} questions in {activeTrack.label} yet. Use the form above to add one.

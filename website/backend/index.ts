@@ -2530,11 +2530,13 @@ export const handler = router({
             if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex > 3) {
                 return error('Choose the correct answer', 400);
             }
-            const { items: subjects } = await db.list('subjects', { limit: 100 });
+            const { items: subjects } = await db.list('subjects', { limit: 1000 });
             const validTarget =
-                subjects.some((s: any) => s.id === subjectId) ||
+                subjects.some((s: any) => s.id === subjectId || s.name?.toLowerCase() === subjectId.toLowerCase()) ||
                 PROMOTION_RANK_ITEMS.some((r) => r.id === subjectId);
             if (!validTarget) return error('Choose a valid subject or promotion rank', 400);
+
+            const rank = b.rank ? String(b.rank).trim() : (level === 'GES-PROMO' ? resolvePromotionRankId(subjectId) : undefined);
 
             const updated = await db.update('questions', id, {
                 subjectId,
@@ -2545,17 +2547,18 @@ export const handler = router({
                 explanation,
                 year,
                 category,
+                rank,
                 updatedAt: Date.now(),
             });
             if (!updated) return error('Question not found', 404);
-            return json({ question: updated });
+            return json({ ok: true, question: updated });
         },
     ],
 
     'POST /api/admin/questions/:id/delete': [
         async (ctx) => {
             const b = (ctx.body || {}) as any;
-            if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+            if (!(await isEditor(b.passcode))) return error('Not authorised', 401);
             await db.delete('questions', [ctx.params.id]);
             return json({ deleted: true });
         },
@@ -3014,7 +3017,7 @@ export const handler = router({
     'POST /api/ai/audit-question': [
         async (ctx) => {
             const b = (ctx.body || {}) as any;
-            if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+            if (!(await isEditor(b.passcode))) return error('Not authorised', 401);
 
             const q = b.question || {};
             const text = String(q.text || '').trim();
@@ -3163,7 +3166,7 @@ Provide the output strictly in valid JSON format:
     'POST /api/ai/apply-fix': [
         async (ctx) => {
             const b = (ctx.body || {}) as any;
-            if (!(await isAdmin(b.passcode))) return error('Not authorised', 401);
+            if (!(await isEditor(b.passcode))) return error('Not authorised', 401);
 
             const qId = String(b.questionId || '').trim();
             const fixed = b.fixed || {};

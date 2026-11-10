@@ -1561,7 +1561,7 @@ if ($route === 'admin/questions/list' && $method === 'POST') {
 // Admin Add Question
 if ($route === 'admin/questions' && $method === 'POST') {
     $b = getJsonBody();
-    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+    if (!isEditor($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
 
     $subjectId = (string)($b['subjectId'] ?? '');
     $level = normLevel($b['level'] ?? null);
@@ -1571,6 +1571,7 @@ if ($route === 'admin/questions' && $method === 'POST') {
     $explanation = trim((string)($b['explanation'] ?? ''));
     $year = trim((string)($b['year'] ?? ''));
     $category = trim((string)($b['category'] ?? ''));
+    $rank = trim((string)($b['rank'] ?? ''));
 
     if ($level === null) errorOut('Choose a valid level', 400);
     if ($text === '') errorOut('Question text is required', 400);
@@ -1580,6 +1581,10 @@ if ($route === 'admin/questions' && $method === 'POST') {
     // Professional Studies questions are strictly for GTLE only
     if (isProfessionalStudiesSubject($db, $subjectId)) {
         $level = 'GTLE';
+    }
+
+    if ($level === 'GES-PROMO' && empty($rank)) {
+        $rank = resolvePromotionRankId($subjectId);
     }
 
     $newQ = [
@@ -1592,23 +1597,27 @@ if ($route === 'admin/questions' && $method === 'POST') {
         'explanation' => $explanation,
         'year' => $year ?: null,
         'category' => $category ?: null,
+        'rank' => $rank ?: null,
         'createdAt' => round(microtime(true) * 1000)
     ];
 
     $db['questions'][] = $newQ;
-    saveDb($db);
+    $saved = saveDb($db);
+    if (!$saved) {
+        errorOut('Server database write failed: Please ensure data folder has write permissions.', 500);
+    }
     jsonOut($newQ, 201);
 }
 
 // Admin Update Question
 if (preg_match('#^admin/questions/([^/]+)/update$#', $route, $m) && $method === 'POST') {
     $b = getJsonBody();
-    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
-    $id = $m[1];
+    if (!isEditor($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+    $id = trim(urldecode($m[1]));
 
     $foundIdx = null;
     foreach ($db['questions'] as $i => $q) {
-        if (($q['id'] ?? '') === $id) {
+        if ((string)($q['id'] ?? '') === (string)$id) {
             $foundIdx = $i;
             break;
         }
@@ -1617,7 +1626,12 @@ if (preg_match('#^admin/questions/([^/]+)/update$#', $route, $m) && $method === 
 
     $q = $db['questions'][$foundIdx];
     if (isset($b['subjectId'])) $q['subjectId'] = trim((string)$b['subjectId']);
-    if (isset($b['level'])) $q['level'] = normLevel($b['level']);
+    if (isset($b['level'])) {
+        $lvl = normLevel($b['level']);
+        if ($lvl !== null) {
+            $q['level'] = $lvl;
+        }
+    }
     if (isProfessionalStudiesSubject($db, $q['subjectId'] ?? '')) {
         $q['level'] = 'GTLE';
     }
@@ -1627,22 +1641,32 @@ if (preg_match('#^admin/questions/([^/]+)/update$#', $route, $m) && $method === 
     if (isset($b['explanation'])) $q['explanation'] = trim((string)$b['explanation']);
     if (isset($b['year'])) $q['year'] = trim((string)$b['year']);
     if (isset($b['category'])) $q['category'] = trim((string)$b['category']);
+    if (isset($b['rank'])) $q['rank'] = trim((string)$b['rank']);
+    if (($q['level'] ?? '') === 'GES-PROMO' && empty($q['rank'])) {
+        $q['rank'] = resolvePromotionRankId($q['subjectId'] ?? '');
+    }
     $q['updatedAt'] = round(microtime(true) * 1000);
 
     $db['questions'][$foundIdx] = $q;
-    saveDb($db);
-    jsonOut(['question' => $q]);
+    $saved = saveDb($db);
+    if (!$saved) {
+        errorOut('Server database write failed: Please ensure data/db.json has write permissions.', 500);
+    }
+    jsonOut(['ok' => true, 'question' => $q]);
 }
 
 // Admin Delete Question
 if (preg_match('#^admin/questions/([^/]+)/delete$#', $route, $m) && $method === 'POST') {
     $b = getJsonBody();
-    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
-    $id = $m[1];
+    if (!isEditor($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+    $id = trim(urldecode($m[1]));
     $db['questions'] = array_values(array_filter($db['questions'], function($q) use ($id) {
-        return ($q['id'] ?? '') !== $id;
+        return (string)($q['id'] ?? '') !== (string)$id;
     }));
-    saveDb($db);
+    $saved = saveDb($db);
+    if (!$saved) {
+        errorOut('Server database write failed: Please ensure data/db.json has write permissions.', 500);
+    }
     jsonOut(['deleted' => true]);
 }
 
@@ -2755,7 +2779,7 @@ if ($route === 'admin/ai-settings' && $method === 'POST') {
 // AI Question Audit & Auto-Resolution (POST)
 if ($route === 'ai/audit-question' && $method === 'POST') {
     $b = getJsonBody();
-    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+    if (!isEditor($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
 
     $q = is_array($b['question'] ?? null) ? $b['question'] : [];
     $text = trim((string)($q['text'] ?? ''));
@@ -2900,7 +2924,7 @@ Respond strictly in valid JSON format:
 // AI Apply Question Fix (POST)
 if ($route === 'ai/apply-fix' && $method === 'POST') {
     $b = getJsonBody();
-    if (!isAdmin($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
+    if (!isEditor($db, $b['passcode'] ?? null)) errorOut('Not authorised', 401);
 
     $id = trim((string)($b['questionId'] ?? ''));
     $fixed = is_array($b['fixed'] ?? null) ? $b['fixed'] : [];
@@ -2910,7 +2934,7 @@ if ($route === 'ai/apply-fix' && $method === 'POST') {
 
     $foundIdx = null;
     foreach ($db['questions'] as $i => $q) {
-        if (($q['id'] ?? '') === $id) {
+        if ((string)($q['id'] ?? '') === (string)$id) {
             $foundIdx = $i;
             break;
         }
@@ -2925,7 +2949,10 @@ if ($route === 'ai/apply-fix' && $method === 'POST') {
     $q['updatedAt'] = round(microtime(true) * 1000);
 
     $db['questions'][$foundIdx] = $q;
-    saveDb($db);
+    $saved = saveDb($db);
+    if (!$saved) {
+        errorOut('Server database write failed: Please ensure data/db.json has write permissions.', 500);
+    }
 
     jsonOut([
         'ok' => true,
