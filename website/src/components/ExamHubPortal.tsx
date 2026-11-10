@@ -71,6 +71,7 @@ import {
     Star,
     Wallet,
     User,
+    Key,
 } from 'lucide-react';
 import {
     saveOfflinePack,
@@ -209,6 +210,7 @@ type StudentUser = {
     gradeLevel: Level;
     region?: string;
     promotionRank?: string;
+    gender?: string;
 };
 
 const TOKEN_KEY = 'codecastic_examhub_token';
@@ -1907,6 +1909,43 @@ function StudentView({
     const [starredSubjectFilter, setStarredSubjectFilter] = useState<string>('all');
     const [launcherSubjectId, setLauncherSubjectId] = useState<string>('all');
     const [copiedId, setCopiedId] = useState<boolean>(false);
+
+    // Candidate Profile Change Password State
+    const [showChangePw, setShowChangePw] = useState<boolean>(false);
+    const [candOldPw, setCandOldPw] = useState<string>('');
+    const [candNewPw, setCandNewPw] = useState<string>('');
+    const [candConfirmPw, setCandConfirmPw] = useState<string>('');
+    const [changingCandPw, setChangingCandPw] = useState<boolean>(false);
+    const [candPwMsg, setCandPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+    const handleCandChangePassword = async (e: FormEvent) => {
+        e.preventDefault();
+        if (candNewPw !== candConfirmPw) {
+            setCandPwMsg({ ok: false, text: 'New passwords do not match.' });
+            return;
+        }
+        if (candNewPw.length < 6) {
+            setCandPwMsg({ ok: false, text: 'Password must be at least 6 characters.' });
+            return;
+        }
+        setChangingCandPw(true);
+        setCandPwMsg(null);
+        try {
+            await api.post('/api/user/change-password', {
+                token,
+                oldPassword: candOldPw,
+                newPassword: candNewPw,
+            });
+            setCandPwMsg({ ok: true, text: 'Password successfully updated!' });
+            setCandOldPw('');
+            setCandNewPw('');
+            setCandConfirmPw('');
+        } catch (err: any) {
+            setCandPwMsg({ ok: false, text: err?.response?.data?.error || 'Failed to change password.' });
+        } finally {
+            setChangingCandPw(false);
+        }
+    };
 
     // Number of exam questions limit: Dropbox selection (10, 20, 30, 40, 50, 60, 70, 75, 100, or all)
     const [questionLimit, setQuestionLimit] = useState<number | 'all'>(20);
@@ -4121,6 +4160,10 @@ function StudentView({
                             {/* Details List */}
                             <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
                                 <div className="flex items-center justify-between p-3 bg-white">
+                                    <span className="text-slate-500">Gender</span>
+                                    <span className="font-semibold text-slate-800">{user.gender || 'Not specified'}</span>
+                                </div>
+                                <div className="flex items-center justify-between p-3 bg-white">
                                     <span className="text-slate-500">School Code</span>
                                     <span className="font-mono font-bold text-slate-800">{user.schoolCode || 'Self-Registered'}</span>
                                 </div>
@@ -4145,6 +4188,71 @@ function StudentView({
                                         {offlinePackCached ? 'Cached Locally' : 'Not Cached'}
                                     </span>
                                 </div>
+                            </div>
+
+                            {/* Candidate Change Password Section */}
+                            <div className="rounded-xl border border-slate-200 bg-white p-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowChangePw(!showChangePw)}
+                                    className="flex w-full items-center justify-between text-xs font-bold text-slate-700 hover:text-[#364c83] cursor-pointer"
+                                >
+                                    <span className="flex items-center gap-1.5">
+                                        <Lock size={14} className="text-[#364c83]" />
+                                        Change Password
+                                    </span>
+                                    <ChevronRight size={14} className={`transform transition-transform ${showChangePw ? 'rotate-90' : ''}`} />
+                                </button>
+                                {showChangePw && (
+                                    <form onSubmit={handleCandChangePassword} className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">Current Password</label>
+                                            <input
+                                                type="password"
+                                                required
+                                                value={candOldPw}
+                                                onChange={(e) => setCandOldPw(e.target.value)}
+                                                placeholder="Enter current password"
+                                                className="input text-xs"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">New Password</label>
+                                            <input
+                                                type="password"
+                                                required
+                                                value={candNewPw}
+                                                onChange={(e) => setCandNewPw(e.target.value)}
+                                                placeholder="Enter new password (min 6 chars)"
+                                                className="input text-xs"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">Confirm New Password</label>
+                                            <input
+                                                type="password"
+                                                required
+                                                value={candConfirmPw}
+                                                onChange={(e) => setCandConfirmPw(e.target.value)}
+                                                placeholder="Confirm new password"
+                                                className="input text-xs"
+                                            />
+                                        </div>
+                                        {candPwMsg && (
+                                            <div className={`p-2 rounded text-[11px] font-semibold ${candPwMsg.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`}>
+                                                {candPwMsg.text}
+                                            </div>
+                                        )}
+                                        <button
+                                            type="submit"
+                                            disabled={changingCandPw}
+                                            className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-[#364c83] py-2 text-xs font-bold text-white hover:bg-[#1f2d57] disabled:opacity-50 cursor-pointer"
+                                        >
+                                            {changingCandPw ? <Loader2 size={13} className="animate-spin" /> : <Key size={13} />}
+                                            Update Password
+                                        </button>
+                                    </form>
+                                )}
                             </div>
 
                             {/* Switch Portal buttons if Staff/Admin */}

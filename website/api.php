@@ -407,7 +407,8 @@ function publicUser($u) {
         'assignedSubjects' => is_array($u['assignedSubjects'] ?? null) ? $u['assignedSubjects'] : [],
         'assignedLevels' => is_array($u['assignedLevels'] ?? null) ? $u['assignedLevels'] : [],
         'region' => (string)($u['region'] ?? ''),
-        'promotionRank' => (string)($u['promotionRank'] ?? '')
+        'promotionRank' => (string)($u['promotionRank'] ?? ''),
+        'gender' => (string)($u['gender'] ?? '')
     ];
 }
 
@@ -1382,6 +1383,39 @@ if ($route === 'auth/logout' && $method === 'POST') {
         saveDb($db);
     }
     jsonOut(['ok' => true]);
+}
+
+// User Change Password (POST /api/user/change-password)
+if ($route === 'user/change-password' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u) errorOut('Not authorised', 401);
+
+    $oldPassword = (string)($b['oldPassword'] ?? '');
+    $newPassword = (string)($b['newPassword'] ?? '');
+
+    if (strlen($newPassword) < 6) {
+        errorOut('New password must be at least 6 characters long', 400);
+    }
+
+    if (!empty($u['passwordPlain']) || !empty($u['passwordHash'])) {
+        if (!verifyUserPassword($oldPassword, $u)) {
+            errorOut('Current password is incorrect', 401);
+        }
+    }
+
+    $uid = $u['id'];
+    foreach ($db['users'] as &$usr) {
+        if (($usr['id'] ?? '') === $uid) {
+            $usr['passwordPlain'] = $newPassword;
+            $usr['passwordHash'] = password_hash($newPassword, PASSWORD_BCRYPT);
+            $usr['updatedAt'] = round(microtime(true) * 1000);
+            break;
+        }
+    }
+    unset($usr);
+    saveDb($db);
+    jsonOut(['ok' => true, 'message' => 'Password changed successfully']);
 }
 
 // Contact Form
@@ -3236,6 +3270,7 @@ if ($route === 'school/teachers/add' && $method === 'POST') {
     $schoolCode = (string)($u['schoolCode'] ?? '');
 
     $name = trim((string)($b['name'] ?? ''));
+    $gender = trim((string)($b['gender'] ?? ''));
     $email = strtolower(trim((string)($b['email'] ?? '')));
     $password = trim((string)($b['password'] ?? ''));
     if ($password === '') $password = 'Teacher2026#';
@@ -3257,6 +3292,7 @@ if ($route === 'school/teachers/add' && $method === 'POST') {
     $teacherRecord = [
         'id' => $teacherId,
         'name' => $name,
+        'gender' => $gender,
         'email' => $email,
         'role' => 'teacher',
         'accountType' => 'teacher',
@@ -3325,6 +3361,40 @@ if ($route === 'school/teachers/delete' && $method === 'POST') {
     jsonOut(['ok' => true]);
 }
 
+// Update Teacher (POST /api/school/teachers/update)
+if ($route === 'school/teachers/update' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+        errorOut('Not authorised', 403);
+    }
+    $schoolId = (string)($u['schoolId'] ?? '');
+    $teacherId = trim((string)($b['teacherId'] ?? ''));
+    if ($teacherId === '') errorOut('Teacher ID is required', 400);
+
+    $found = false;
+    foreach ($db['users'] as &$usr) {
+        if (($usr['id'] ?? '') === $teacherId && ($usr['schoolId'] ?? '') === $schoolId) {
+            if (isset($b['name']) && trim((string)$b['name']) !== '') $usr['name'] = trim((string)$b['name']);
+            if (isset($b['gender'])) $usr['gender'] = trim((string)$b['gender']);
+            if (isset($b['email']) && filter_var($b['email'], FILTER_VALIDATE_EMAIL)) $usr['email'] = strtolower(trim((string)$b['email']));
+            if (isset($b['assignedSubjects']) && is_array($b['assignedSubjects'])) $usr['assignedSubjects'] = $b['assignedSubjects'];
+            if (isset($b['assignedLevels']) && is_array($b['assignedLevels'])) $usr['assignedLevels'] = $b['assignedLevels'];
+            if (!empty($b['newPassword']) && strlen($b['newPassword']) >= 6) {
+                $usr['passwordPlain'] = trim((string)$b['newPassword']);
+                $usr['passwordHash'] = password_hash(trim((string)$b['newPassword']), PASSWORD_BCRYPT);
+            }
+            $usr['updatedAt'] = round(microtime(true) * 1000);
+            $found = true;
+            break;
+        }
+    }
+    unset($usr);
+    if (!$found) errorOut('Teacher not found in your school', 404);
+    saveDb($db);
+    jsonOut(['ok' => true]);
+}
+
 // Mount Student - Single (POST /api/school/students/add)
 if ($route === 'school/students/add' && $method === 'POST') {
     $b = getJsonBody();
@@ -3338,6 +3408,7 @@ if ($route === 'school/students/add' && $method === 'POST') {
     $schoolCode = (string)($u['schoolCode'] ?? '');
 
     $name = trim((string)($b['name'] ?? ''));
+    $gender = trim((string)($b['gender'] ?? ''));
     $email = strtolower(trim((string)($b['email'] ?? '')));
     $studentCode = trim((string)($b['studentCode'] ?? ($b['studentId'] ?? '')));
     $password = trim((string)($b['password'] ?? ''));
@@ -3371,6 +3442,7 @@ if ($route === 'school/students/add' && $method === 'POST') {
     $studentRecord = [
         'id' => $studentId,
         'name' => $name,
+        'gender' => $gender,
         'email' => $email,
         'studentCode' => $studentCode,
         'role' => 'student',
@@ -3436,6 +3508,7 @@ if ($route === 'school/students/bulk' && $method === 'POST') {
         $rawLevel = $row['gradeLevel'] ?? 4;
         $lvl = normLevel($rawLevel) ?? 4;
         $section = trim((string)($row['classSection'] ?? ''));
+        $gender = trim((string)($row['gender'] ?? ''));
         $pw = trim((string)($row['password'] ?? ''));
         if ($pw === '') $pw = 'Student2026#';
 
@@ -3448,6 +3521,7 @@ if ($route === 'school/students/bulk' && $method === 'POST') {
         $record = [
             'id' => $sid,
             'name' => $name,
+            'gender' => $gender,
             'email' => $email,
             'studentCode' => $studentCode,
             'role' => 'student',
@@ -3540,6 +3614,40 @@ if ($route === 'school/students/delete' && $method === 'POST') {
     jsonOut(['ok' => true]);
 }
 
+// Update Student (POST /api/school/students/update)
+if ($route === 'school/students/update' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+        errorOut('Not authorised', 403);
+    }
+    $schoolId = (string)($u['schoolId'] ?? '');
+    $studentId = trim((string)($b['studentId'] ?? ''));
+    if ($studentId === '') errorOut('Student ID is required', 400);
+
+    $found = false;
+    foreach ($db['users'] as &$usr) {
+        if (($usr['id'] ?? '') === $studentId && ($usr['schoolId'] ?? '') === $schoolId) {
+            if (isset($b['name']) && trim((string)$b['name']) !== '') $usr['name'] = trim((string)$b['name']);
+            if (isset($b['gender'])) $usr['gender'] = trim((string)$b['gender']);
+            if (isset($b['gradeLevel'])) $usr['gradeLevel'] = normLevel($b['gradeLevel']) ?? $usr['gradeLevel'];
+            if (isset($b['classSection'])) $usr['classSection'] = trim((string)$b['classSection']);
+            if (isset($b['studentCode']) && trim((string)$b['studentCode']) !== '') $usr['studentCode'] = trim((string)$b['studentCode']);
+            if (!empty($b['newPassword']) && strlen($b['newPassword']) >= 6) {
+                $usr['passwordPlain'] = trim((string)$b['newPassword']);
+                $usr['passwordHash'] = password_hash(trim((string)$b['newPassword']), PASSWORD_BCRYPT);
+            }
+            $usr['updatedAt'] = round(microtime(true) * 1000);
+            $found = true;
+            break;
+        }
+    }
+    unset($usr);
+    if (!$found) errorOut('Student not found in your school', 404);
+    saveDb($db);
+    jsonOut(['ok' => true]);
+}
+
 // School-wide Performance Analytics (POST /api/school/performance)
 if ($route === 'school/performance' && $method === 'POST') {
     $b = getJsonBody();
@@ -3553,10 +3661,20 @@ if ($route === 'school/performance' && $method === 'POST') {
 
     $studentCount = 0;
     $teacherCount = 0;
+    $maleCount = 0;
+    $femaleCount = 0;
+    $studentGenderMap = [];
     foreach ($db['users'] as $usr) {
         if (($usr['schoolId'] ?? '') === $schoolId) {
-            if (($usr['role'] ?? '') === 'teacher') $teacherCount++;
-            elseif (($usr['role'] ?? '') === 'student' || ($usr['accountType'] ?? '') === 'student') $studentCount++;
+            if (($usr['role'] ?? '') === 'teacher') {
+                $teacherCount++;
+            } elseif (($usr['role'] ?? '') === 'student' || ($usr['accountType'] ?? '') === 'student') {
+                $studentCount++;
+                $g = strtolower(trim((string)($usr['gender'] ?? '')));
+                if ($g === 'male' || $g === 'm') $maleCount++;
+                elseif ($g === 'female' || $g === 'f') $femaleCount++;
+                $studentGenderMap[(string)($usr['id'] ?? '')] = $usr['gender'] ?? '';
+            }
         }
     }
 
@@ -3566,13 +3684,28 @@ if ($route === 'school/performance' && $method === 'POST') {
     $totalExams = 0;
     $totalPassed = 0;
     $allPercents = [];
+    $malePercents = [];
+    $femalePercents = [];
+    $malePassed = 0;
+    $femalePassed = 0;
 
     foreach ($db['results'] as $res) {
         if (($res['schoolId'] ?? '') === $schoolId) {
             $totalExams++;
             $pct = (float)($res['percent'] ?? 0);
             $allPercents[] = $pct;
-            if (!empty($res['passed']) || $pct >= 50) $totalPassed++;
+            $isPass = !empty($res['passed']) || $pct >= 50;
+            if ($isPass) $totalPassed++;
+
+            $uid = (string)($res['userId'] ?? '');
+            $g = strtolower(trim((string)($res['gender'] ?? ($studentGenderMap[$uid] ?? ''))));
+            if ($g === 'male' || $g === 'm') {
+                $malePercents[] = $pct;
+                if ($isPass) $malePassed++;
+            } elseif ($g === 'female' || $g === 'f') {
+                $femalePercents[] = $pct;
+                if ($isPass) $femalePassed++;
+            }
 
             $sName = (string)($res['subjectName'] ?? 'General');
             if (!isset($subjectStats[$sName])) {
@@ -3580,7 +3713,7 @@ if ($route === 'school/performance' && $method === 'POST') {
             }
             $subjectStats[$sName]['examsCount']++;
             $subjectStats[$sName]['totalPercent'] += $pct;
-            if (!empty($res['passed']) || $pct >= 50) $subjectStats[$sName]['passedCount']++;
+            if ($isPass) $subjectStats[$sName]['passedCount']++;
 
             $lvl = (string)($res['level'] ?? 'Other');
             $lvlLabel = is_numeric($lvl) ? "Basic $lvl" : $lvl;
@@ -3589,19 +3722,20 @@ if ($route === 'school/performance' && $method === 'POST') {
             }
             $levelStats[$lvlLabel]['examsCount']++;
             $levelStats[$lvlLabel]['totalPercent'] += $pct;
-            if (!empty($res['passed']) || $pct >= 50) $levelStats[$lvlLabel]['passedCount']++;
+            if ($isPass) $levelStats[$lvlLabel]['passedCount']++;
 
             $schoolResults[] = [
                 'id' => $res['id'] ?? '',
                 'studentName' => $res['studentName'] ?? 'Student',
                 'studentEmail' => $res['studentEmail'] ?? '',
+                'gender' => $res['gender'] ?? ($studentGenderMap[$uid] ?? ''),
                 'classSection' => $res['classSection'] ?? '',
                 'level' => $res['level'] ?? '',
                 'subjectName' => $res['subjectName'] ?? '',
                 'score' => $res['score'] ?? 0,
                 'total' => $res['total'] ?? 0,
                 'percent' => $pct,
-                'passed' => !empty($res['passed']) || $pct >= 50,
+                'passed' => $isPass,
                 'createdAt' => $res['createdAt'] ?? 0
             ];
         }
@@ -3639,6 +3773,17 @@ if ($route === 'school/performance' && $method === 'POST') {
     $overallAvg = count($allPercents) > 0 ? round(array_sum($allPercents) / count($allPercents)) : 0;
     $overallPassRate = $totalExams > 0 ? round(($totalPassed / $totalExams) * 100) : 0;
 
+    $genderBreakdown = [
+        'maleCount' => $maleCount,
+        'femaleCount' => $femaleCount,
+        'maleAvg' => count($malePercents) > 0 ? round(array_sum($malePercents) / count($malePercents)) : 0,
+        'femaleAvg' => count($femalePercents) > 0 ? round(array_sum($femalePercents) / count($femalePercents)) : 0,
+        'malePassRate' => count($malePercents) > 0 ? round(($malePassed / count($malePercents)) * 100) : 0,
+        'femalePassRate' => count($femalePercents) > 0 ? round(($femalePassed / count($femalePercents)) * 100) : 0,
+        'maleExams' => count($malePercents),
+        'femaleExams' => count($femalePercents)
+    ];
+
     jsonOut([
         'ok' => true,
         'studentCount' => $studentCount,
@@ -3646,6 +3791,7 @@ if ($route === 'school/performance' && $method === 'POST') {
         'totalExams' => $totalExams,
         'overallAvg' => $overallAvg,
         'overallPassRate' => $overallPassRate,
+        'genderBreakdown' => $genderBreakdown,
         'subjectBreakdown' => $subjectBreakdown,
         'levelBreakdown' => $levelBreakdown,
         'recentResults' => array_slice($schoolResults, 0, 100)

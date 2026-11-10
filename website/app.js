@@ -13488,7 +13488,8 @@ function publicUser(u) {
     schoolId: u.schoolId || "",
     gradeLevel: u.gradeLevel === "ADMIN" || u.gradeLevel === "admin" ? 8 : u.gradeLevel ?? 4,
     region: u.region || "",
-    promotionRank: u.promotionRank || ""
+    promotionRank: u.promotionRank || "",
+    gender: u.gender || ""
   };
 }
 async function getUserByToken(token) {
@@ -14514,6 +14515,29 @@ var handler = router({
       return json({ ok: true });
     }
   ],
+  "POST /api/user/change-password": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      const u = await getUserByToken(b.token);
+      if (!u) return error("Not authorised", 401);
+      const oldPassword = String(b.oldPassword || "");
+      const newPassword = String(b.newPassword || "");
+      if (newPassword.length < 6) {
+        return error("New password must be at least 6 characters long", 400);
+      }
+      if (u.passwordPlain || u.passwordHash) {
+        if (u.passwordPlain && u.passwordPlain !== oldPassword && !verifyPassword(oldPassword, u.passwordHash)) {
+          return error("Current password is incorrect", 401);
+        }
+      }
+      await db.update("users", u.id, {
+        passwordPlain: newPassword,
+        passwordHash: hashPassword(newPassword),
+        updatedAt: Date.now()
+      });
+      return json({ ok: true, message: "Password changed successfully" });
+    }
+  ],
   // ---------- Website: Contact Form & Staff Inbox ----------
   "POST /api/contact": [
     async (ctx) => {
@@ -14988,6 +15012,7 @@ var handler = router({
       const schoolName = String(u.schoolName || "");
       const schoolCode = String(u.schoolCode || "");
       const name2 = String(b.name || "").trim();
+      const gender = String(b.gender || "").trim();
       if (!name2) return error("Student name is required", 400);
       const { items: allUsers } = await db.list("users", { limit: 5e3 });
       const existingSchoolStudents = allUsers.filter(
@@ -15011,6 +15036,7 @@ var handler = router({
       const newStudent = {
         id: studentId,
         name: name2,
+        gender,
         email,
         studentCode,
         role: "student",
@@ -15066,10 +15092,12 @@ var handler = router({
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           email = `${cleanSchool}.${sid.slice(0, 8)}@student.codecasticgh.com`;
         }
+        const gender = String(row.gender || "").trim();
         const pw = String(row.password || "Student2026#");
         const record = {
           id: sid,
           name: name2,
+          gender,
           email,
           studentCode,
           role: "student",
@@ -15137,10 +15165,35 @@ var handler = router({
       const schoolId = String(u.schoolId || "");
       const studentId = String(b.studentId || "").trim();
       const { items: users } = await db.list("users", { limit: 5e3 });
-      const target = users.find((usr) => usr.id === studentId && usr.schoolId === schoolId);
+      const target = users.find((usr) => usr.id === studentId && String(usr.schoolId) === schoolId);
       if (target) {
         await db.delete("users", [target.id]);
       }
+      return json({ ok: true });
+    }
+  ],
+  "POST /api/school/students/update": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      const u = await getUserByToken(b.token);
+      if (!u || !["school_admin", "admin"].includes(u.role)) return error("Not authorised", 403);
+      const schoolId = String(u.schoolId || "");
+      const studentId = String(b.studentId || "").trim();
+      if (!studentId) return error("Student ID is required", 400);
+      const { items: users } = await db.list("users", { limit: 5e3 });
+      const target = users.find((usr) => usr.id === studentId && String(usr.schoolId) === schoolId);
+      if (!target) return error("Student not found in your school", 404);
+      const updates = { updatedAt: Date.now() };
+      if (b.name && String(b.name).trim()) updates.name = String(b.name).trim();
+      if (b.gender !== void 0) updates.gender = String(b.gender).trim();
+      if (b.gradeLevel !== void 0) updates.gradeLevel = b.gradeLevel;
+      if (b.classSection !== void 0) updates.classSection = String(b.classSection).trim();
+      if (b.studentCode && String(b.studentCode).trim()) updates.studentCode = String(b.studentCode).trim();
+      if (b.newPassword && String(b.newPassword).length >= 6) {
+        updates.passwordPlain = String(b.newPassword);
+        updates.passwordHash = hashPassword(String(b.newPassword));
+      }
+      await db.update("users", target.id, updates);
       return json({ ok: true });
     }
   ],
@@ -15164,6 +15217,7 @@ var handler = router({
       const schoolName = String(u.schoolName || "");
       const schoolCode = String(u.schoolCode || "");
       const name2 = String(b.name || "").trim();
+      const gender = String(b.gender || "").trim();
       const email = String(b.email || "").trim().toLowerCase();
       const pw = String(b.password || "Teacher2026#");
       if (!name2 || !email) return error("Teacher name and email required", 400);
@@ -15171,6 +15225,7 @@ var handler = router({
       const teacherRecord = {
         id: teacherId,
         name: name2,
+        gender,
         email,
         role: "teacher",
         accountType: "teacher",
@@ -15198,6 +15253,31 @@ var handler = router({
       return json({ ok: true });
     }
   ],
+  "POST /api/school/teachers/update": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      const u = await getUserByToken(b.token);
+      if (!u || !["school_admin", "admin"].includes(u.role)) return error("Not authorised", 403);
+      const schoolId = String(u.schoolId || "");
+      const teacherId = String(b.teacherId || "").trim();
+      if (!teacherId) return error("Teacher ID is required", 400);
+      const { items: users } = await db.list("users", { limit: 5e3 });
+      const target = users.find((usr) => usr.id === teacherId && String(usr.schoolId) === schoolId);
+      if (!target) return error("Teacher not found in your school", 404);
+      const updates = { updatedAt: Date.now() };
+      if (b.name && String(b.name).trim()) updates.name = String(b.name).trim();
+      if (b.gender !== void 0) updates.gender = String(b.gender).trim();
+      if (b.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email)) updates.email = String(b.email).trim().toLowerCase();
+      if (Array.isArray(b.assignedSubjects)) updates.assignedSubjects = b.assignedSubjects;
+      if (Array.isArray(b.assignedLevels)) updates.assignedLevels = b.assignedLevels;
+      if (b.newPassword && String(b.newPassword).length >= 6) {
+        updates.passwordPlain = String(b.newPassword);
+        updates.passwordHash = hashPassword(String(b.newPassword));
+      }
+      await db.update("users", target.id, updates);
+      return json({ ok: true });
+    }
+  ],
   "POST /api/school/performance": [
     async (ctx) => {
       const b = ctx.body || {};
@@ -15209,16 +15289,89 @@ var handler = router({
       const students = allUsers.filter((usr) => String(usr.schoolId) === schoolId && (usr.role === "student" || usr.accountType === "student"));
       const teachers = allUsers.filter((usr) => String(usr.schoolId) === schoolId && usr.role === "teacher");
       const schoolResults = allResults.filter((r) => String(r.schoolId) === schoolId);
+      const studentGenderMap = {};
+      let maleCount = 0;
+      let femaleCount = 0;
+      for (const st of students) {
+        const g = String(st.gender || "").trim().toLowerCase();
+        if (g === "male" || g === "m") maleCount++;
+        else if (g === "female" || g === "f") femaleCount++;
+        studentGenderMap[st.id] = st.gender || "";
+      }
       const totalExams = schoolResults.length;
       const passedExams = schoolResults.filter((r) => r.passed || (Number(r.percent) || 0) >= 50).length;
       const overallPassRate = totalExams > 0 ? Math.round(passedExams / totalExams * 100) : 0;
-      const avgScore = totalExams > 0 ? Math.round(schoolResults.reduce((a, r) => a + (Number(r.percent) || 0), 0) / totalExams) : 0;
+      const overallAvg = totalExams > 0 ? Math.round(schoolResults.reduce((a, r) => a + (Number(r.percent) || 0), 0) / totalExams) : 0;
+      const malePercents = [];
+      const femalePercents = [];
+      let malePassed = 0;
+      let femalePassed = 0;
+      const subjectStats = {};
+      const levelStats = {};
+      for (const r of schoolResults) {
+        const pct = Number(r.percent) || 0;
+        const isPass = Boolean(r.passed || pct >= 50);
+        const g = String(r.gender || studentGenderMap[String(r.userId)] || "").trim().toLowerCase();
+        if (g === "male" || g === "m") {
+          malePercents.push(pct);
+          if (isPass) malePassed++;
+        } else if (g === "female" || g === "f") {
+          femalePercents.push(pct);
+          if (isPass) femalePassed++;
+        }
+        const sName = String(r.subjectName || "General");
+        if (!subjectStats[sName]) {
+          subjectStats[sName] = { subjectName: sName, examsCount: 0, totalPercent: 0, passedCount: 0 };
+        }
+        subjectStats[sName].examsCount++;
+        subjectStats[sName].totalPercent += pct;
+        if (isPass) subjectStats[sName].passedCount++;
+        const lvl = String(r.level || "Other");
+        const lvlLabel = /^\d+$/.test(lvl) ? `Basic ${lvl}` : lvl;
+        if (!levelStats[lvlLabel]) {
+          levelStats[lvlLabel] = { levelLabel: lvlLabel, examsCount: 0, totalPercent: 0, passedCount: 0 };
+        }
+        levelStats[lvlLabel].examsCount++;
+        levelStats[lvlLabel].totalPercent += pct;
+        if (isPass) levelStats[lvlLabel].passedCount++;
+      }
+      const subjectBreakdown = Object.values(subjectStats).map((s) => ({
+        subjectName: s.subjectName,
+        examsCount: s.examsCount,
+        avgPercent: s.examsCount > 0 ? Math.round(s.totalPercent / s.examsCount) : 0,
+        passRate: s.examsCount > 0 ? Math.round(s.passedCount / s.examsCount * 100) : 0
+      })).sort((a, b2) => b2.examsCount - a.examsCount);
+      const levelBreakdown = Object.values(levelStats).map((l) => ({
+        levelLabel: l.levelLabel,
+        examsCount: l.examsCount,
+        avgPercent: l.examsCount > 0 ? Math.round(l.totalPercent / l.examsCount) : 0,
+        passRate: l.examsCount > 0 ? Math.round(l.passedCount / l.examsCount * 100) : 0
+      }));
+      const genderBreakdown = {
+        maleCount,
+        femaleCount,
+        maleAvg: malePercents.length > 0 ? Math.round(malePercents.reduce((a, b2) => a + b2, 0) / malePercents.length) : 0,
+        femaleAvg: femalePercents.length > 0 ? Math.round(femalePercents.reduce((a, b2) => a + b2, 0) / femalePercents.length) : 0,
+        malePassRate: malePercents.length > 0 ? Math.round(malePassed / malePercents.length * 100) : 0,
+        femalePassRate: femalePercents.length > 0 ? Math.round(femalePassed / femalePercents.length * 100) : 0,
+        maleExams: malePercents.length,
+        femaleExams: femalePercents.length
+      };
+      const recentResults = schoolResults.sort((a, b2) => (b2.createdAt || 0) - (a.createdAt || 0)).slice(0, 100).map((r) => ({
+        ...r,
+        gender: r.gender || studentGenderMap[String(r.userId)] || ""
+      }));
       return json({
-        totalStudents: students.length,
-        totalTeachers: teachers.length,
+        ok: true,
+        studentCount: students.length,
+        teacherCount: teachers.length,
         totalExams,
         overallPassRate,
-        avgScore
+        overallAvg,
+        genderBreakdown,
+        subjectBreakdown,
+        levelBreakdown,
+        recentResults
       });
     }
   ],
