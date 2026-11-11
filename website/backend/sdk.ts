@@ -335,6 +335,21 @@ export function router(routes: Record<string, RouteHandler[]>) {
         };
     });
 
+    // Sort routes so that static literal segments match before parameter wildcards (:param)
+    compiled.sort((a, b) => {
+        const aParts = a.pattern.split('/').filter(Boolean);
+        const bParts = b.pattern.split('/').filter(Boolean);
+        if (aParts.length !== bParts.length) return bParts.length - aParts.length;
+        for (let i = 0; i < aParts.length; i++) {
+            const aParam = aParts[i].startsWith(':');
+            const bParam = bParts[i].startsWith(':');
+            if (aParam !== bParam) {
+                return aParam ? 1 : -1; // static segment first
+            }
+        }
+        return 0;
+    });
+
     return async (req: IncomingMessage, res: ServerResponse, next?: () => void) => {
         const urlStr = req.url || '/';
         if (!urlStr.startsWith('/api/')) {

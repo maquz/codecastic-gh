@@ -2246,7 +2246,17 @@ function StudentView({
                 category: 'standard',
             };
             setSubject(matchSub);
-            setLevel(asgnData.gradeLevel);
+            const numMatch = String(asgnData.gradeLevel || '').match(/\b([4-9])\b/);
+            const targetLevel: Level = numMatch
+                ? (Number(numMatch[1]) as Level)
+                : SHS_LEVELS.includes(String(asgnData.gradeLevel))
+                ? (asgnData.gradeLevel as Level)
+                : String(asgnData.gradeLevel).toUpperCase() === 'WASSCE'
+                ? 'WASSCE'
+                : String(asgnData.gradeLevel).toUpperCase() === 'BECE'
+                ? 'BECE'
+                : level || 8;
+            setLevel(targetLevel);
             setQuestions(asgnData.questions);
             setActiveAssignmentId(asgn.id);
             const timer = asgnData.timerSeconds || 60;

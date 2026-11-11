@@ -87,17 +87,17 @@ type Level = number | string;
 
 function normLevel(raw: unknown): Level | null {
     const s = String(raw ?? '').trim();
-    if (!s) return null;
+    if (!s || s.toLowerCase() === 'assignment' || s.startsWith('asgn_')) return null;
     if (/^\d+$/.test(s)) {
         const n = Number(s);
         return SCHOOL_LEVELS.includes(n) ? n : null;
     }
-    const basicMatch = s.match(/^(?:basic|grade|class|b)\s*(\d+)$/i);
+    const basicMatch = s.match(/^(?:basic|grade|class|b|primary|p)\s*(\d+)/i);
     if (basicMatch) {
         const n = Number(basicMatch[1]);
         return SCHOOL_LEVELS.includes(n) ? n : null;
     }
-    const shsMatch = s.match(/^(?:shs|form)\s*([1-3])$/i);
+    const shsMatch = s.match(/^(?:shs|form)\s*([1-3])/i);
     if (shsMatch) {
         return `SHS ${shsMatch[1]}`;
     }
@@ -108,10 +108,20 @@ function normLevel(raw: unknown): Level | null {
     if (u === 'SHS' || u === 'SHS 1 - 3' || u === 'SHS 1-3') {
         return 'SHS 1';
     }
-    if (u === 'GES PROMOTION' || u === 'GES PROMOTION EXAMS' || u === 'GES-PROMOTION') {
+    if (u.includes('GES PROMOTION') || u === 'GES-PROMO' || u.includes('PROMOTION')) {
         return 'GES-PROMO';
     }
-    if (SHS_LEVELS.includes(u)) return u;
+    if (u.includes('WASSCE')) return 'WASSCE';
+    if (u.includes('BECE')) return 'BECE';
+    if (u.includes('GTLE')) return 'GTLE';
+    for (const shs of SHS_LEVELS) {
+        if (u.includes(shs)) return shs;
+    }
+    const digitMatch = s.match(/\b([4-9])\b/);
+    if (digitMatch) {
+        const n = Number(digitMatch[1]);
+        if (SCHOOL_LEVELS.includes(n)) return n;
+    }
     return TRACKS.includes(u) ? u : null;
 }
 
@@ -1544,8 +1554,49 @@ export const handler = router({
         },
     ],
 
+    'GET /api/exam/assignment/:id': [
+        async (ctx) => {
+            const asgnId = String(ctx.params.id || '');
+            const { items: allAssignments } = await db.list('quiz_assignments', { limit: 1000 });
+            const asgn: any = allAssignments.find((a: any) => String(a.id) === asgnId);
+            if (!asgn) return error('Assignment not found', 404);
+
+            const qIds = new Set(Array.isArray(asgn.questionIds) ? asgn.questionIds : []);
+            const allQs = await allQuestions();
+            const questions = allQs
+                .filter((q: any) => qIds.has(String(q.id)))
+                .map((q: any) => ({
+                    id: String(q.id),
+                    text: String(q.text || ''),
+                    options: Array.isArray(q.options) ? q.options : [],
+                    correctIndex: q.correctIndex,
+                    explanation: q.explanation || '',
+                    category: q.category || undefined,
+                    year: q.year || undefined,
+                }));
+
+            return json({
+                ok: true,
+                assignment: {
+                    id: asgn.id,
+                    title: asgn.title,
+                    subjectName: asgn.subjectName,
+                    subjectId: asgn.subjectId,
+                    gradeLevel: asgn.gradeLevel,
+                    timerSeconds: asgn.timerSeconds || 60,
+                    teacherName: asgn.teacherName,
+                    questionCount: questions.length,
+                    questions,
+                },
+            });
+        },
+    ],
+
     'GET /api/exam/:level/:subjectId': [
         async (ctx) => {
+            if (String(ctx.params.level).toLowerCase() === 'assignment') {
+                return error('Assignment route not found', 404);
+            }
             const level = normLevel(ctx.params.level);
             if (level === null) return error('Invalid level', 400);
 
@@ -1610,21 +1661,48 @@ export const handler = router({
             const studentName = String(user?.name || b.studentName || '').trim();
             const schoolName = String(user?.schoolName || b.schoolName || '').trim();
             const studentEmail = String(user?.email || b.studentEmail || '').trim();
-            const level = normLevel(b.level);
+            let level = normLevel(b.level) || (user?.gradeLevel ? normLevel(user.gradeLevel) : null) || 8;
             const subjectId = String(b.subjectId || '');
             const answers = (b.answers || {}) as Record<string, number>;
             const questionIds: string[] = Array.isArray(b.questionIds) ? b.questionIds.map(String) : [];
 
             if (!studentName) return error('Please sign in before submitting an exam', 401);
-            if (level === null) return error('Invalid level', 400);
-            if (!subjectId) return error('Subject is required', 400);
 
-            const allLevelQs = (await allQuestions()).filter((q: any) => q.subjectId === subjectId && q.level === level);
-            if (allLevelQs.length === 0) return error('There are no questions for this level and subject', 400);
+            let qs: any[] = [];
+            const allQs = await allQuestions();
+            let resolvedSubjectName = '';
 
-            const qSet = new Set(questionIds);
-            const qs = questionIds.length > 0 ? allLevelQs.filter((q: any) => qSet.has(q.id)) : allLevelQs;
-            if (qs.length === 0) return error('No matching questions found for this exam submission', 400);
+            // 1. If this is an assigned quiz, prioritize retrieving the exact questions from the assignment
+            if (b.assignmentId) {
+                const { items: allAssignments } = await db.list('quiz_assignments', { limit: 1000 });
+                const asgn: any = allAssignments.find((a: any) => String(a.id) === String(b.assignmentId));
+                if (asgn) {
+                    if (asgn.gradeLevel && normLevel(asgn.gradeLevel)) {
+                        level = normLevel(asgn.gradeLevel) || level;
+                    }
+                    resolvedSubjectName = asgn.subjectName || '';
+                    if (Array.isArray(asgn.questionIds) && asgn.questionIds.length > 0) {
+                        const asgnSet = new Set(asgn.questionIds.map(String));
+                        qs = allQs.filter((q: any) => asgnSet.has(String(q.id)));
+                    }
+                }
+            }
+
+            // 2. If questionIds were explicitly provided in submission payload
+            if (qs.length === 0 && questionIds.length > 0) {
+                const qSet = new Set(questionIds);
+                qs = allQs.filter((q: any) => qSet.has(String(q.id)));
+            }
+
+            // 3. Fallback to querying questions by subject and level
+            if (qs.length === 0) {
+                if (!subjectId) return error('Subject is required', 400);
+                const allLevelQs = allQs.filter((q: any) => q.subjectId === subjectId && (q.level === level || String(q.level) === String(level)));
+                if (allLevelQs.length === 0) return error('There are no questions for this level and subject', 400);
+                const qSet = new Set(questionIds);
+                qs = questionIds.length > 0 ? allLevelQs.filter((q: any) => qSet.has(q.id)) : allLevelQs;
+                if (qs.length === 0) return error('No matching questions found for this exam submission', 400);
+            }
 
             let score = 0;
             const review = qs.map((q: any) => {
@@ -1646,6 +1724,7 @@ export const handler = router({
                 PROMOTION_RANK_ITEMS.find((r) => r.id === subjectId);
             const total = qs.length;
             const percent = Math.round((score / total) * 100);
+            const finalSubjectName = resolvedSubjectName || (subj ? subj.name : b.subjectName || 'General');
 
             await db.add('results', [
                 {
@@ -1655,7 +1734,7 @@ export const handler = router({
                     schoolName,
                     level,
                     subjectId,
-                    subjectName: subj ? subj.name : 'Unknown',
+                    subjectName: finalSubjectName,
                     score,
                     total,
                     percent,
@@ -2781,44 +2860,6 @@ export const handler = router({
             });
 
             return json({ ok: true, assignedQuizzes: list });
-        },
-    ],
-
-    'GET /api/exam/assignment/:id': [
-        async (ctx) => {
-            const asgnId = String(ctx.params.id || '');
-            const { items: allAssignments } = await db.list('quiz_assignments', { limit: 1000 });
-            const asgn: any = allAssignments.find((a: any) => String(a.id) === asgnId);
-            if (!asgn) return error('Assignment not found', 404);
-
-            const qIds = new Set(Array.isArray(asgn.questionIds) ? asgn.questionIds : []);
-            const allQs = await allQuestions();
-            const questions = allQs
-                .filter((q: any) => qIds.has(String(q.id)))
-                .map((q: any) => ({
-                    id: String(q.id),
-                    text: String(q.text || ''),
-                    options: Array.isArray(q.options) ? q.options : [],
-                    correctIndex: q.correctIndex,
-                    explanation: q.explanation || '',
-                    category: q.category || undefined,
-                    year: q.year || undefined,
-                }));
-
-            return json({
-                ok: true,
-                assignment: {
-                    id: asgn.id,
-                    title: asgn.title,
-                    subjectName: asgn.subjectName,
-                    subjectId: asgn.subjectId,
-                    gradeLevel: asgn.gradeLevel,
-                    timerSeconds: asgn.timerSeconds || 60,
-                    teacherName: asgn.teacherName,
-                    questionCount: questions.length,
-                    questions,
-                },
-            });
         },
     ],
 
