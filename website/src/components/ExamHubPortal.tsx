@@ -3,7 +3,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { api } from '@appdeploy/client';
 import { TRACKS } from '../exams';
 import { navigate } from '../ui';
-import { SchoolAuthModal, SchoolAdminPortalView, TeacherPortalView } from './SchoolTeacherPortal';
+import { SchoolAuthModal, SchoolAdminPortalView, TeacherPortalView, isTeacherUser } from './SchoolTeacherPortal';
 import type { PortalUser } from './SchoolTeacherPortal';
 import {
     GraduationCap,
@@ -208,6 +208,8 @@ type StudentUser = {
     assignedSubjects?: string[];
     assignedLevels?: (string | number)[];
     gradeLevel: Level;
+    isTeacher?: boolean;
+    teacherCode?: string;
     region?: string;
     promotionRank?: string;
     gender?: string;
@@ -274,7 +276,8 @@ function isSchoolStaffOrAdmin(u?: StudentUser | null): boolean {
         u.role === 'editor' ||
         u.adminRole === 'superadmin' ||
         u.adminRole === 'admin' ||
-        u.adminRole === 'editor'
+        u.adminRole === 'editor' ||
+        isTeacherUser(u)
     );
 }
 
@@ -434,13 +437,13 @@ export function GlobalProfileModal({
     };
 
     const roleName =
-        user.role === 'teacher'
+        isTeacherUser(user)
             ? 'Subject Teacher'
             : user.role === 'school_admin'
             ? 'School Administrator'
             : user.accountType === 'ges-promo'
             ? 'GES Promotion Candidate'
-            : user.role === 'admin' || user.role === 'superadmin'
+            : user.role === 'admin' || user.role === 'superadmin' || user.adminRole === 'admin' || user.adminRole === 'superadmin'
             ? 'System Administrator'
             : `Student · ${levelLabel(user.gradeLevel)}`;
 
@@ -687,7 +690,7 @@ export default function ExamHubPortal({
                 setToken(saved);
                 if (u?.role === 'school_admin') {
                     setTab('school');
-                } else if (u?.role === 'teacher') {
+                } else if (isTeacherUser(u)) {
                     setTab('teacher');
                 }
             })
@@ -701,12 +704,12 @@ export default function ExamHubPortal({
 
     // Restrict teachers and school admins from accessing the Student Portal
     useEffect(() => {
-        if (user?.role === 'teacher' && tab === 'student') {
+        if (isTeacherUser(user) && tab === 'student') {
             setTab('teacher');
         } else if (user?.role === 'school_admin' && tab === 'student') {
             setTab('school');
         }
-    }, [user?.role, tab]);
+    }, [user, tab]);
 
     const handleAuthenticated = (newUser: StudentUser, newToken: string) => {
         localStorage.setItem(TOKEN_KEY, newToken);
@@ -714,7 +717,7 @@ export default function ExamHubPortal({
         setToken(newToken);
         if (newUser.role === 'school_admin') {
             setTab('school');
-        } else if (newUser.role === 'teacher') {
+        } else if (isTeacherUser(newUser)) {
             setTab('teacher');
         } else {
             const targetSlug = slugForUser(newUser);
@@ -809,7 +812,7 @@ export default function ExamHubPortal({
                         )}
 
                         <nav className="flex items-center gap-1 rounded-lg bg-slate-100 p-1" aria-label="Portal mode">
-                            {(!user || (user.role !== 'school_admin' && user.role !== 'teacher')) && (
+                            {(!user || (user.role !== 'school_admin' && !isTeacherUser(user))) && (
                                 <button
                                     type="button"
                                     onClick={() => setTab('student')}
@@ -834,7 +837,7 @@ export default function ExamHubPortal({
                                 </button>
                             )}
 
-                            {user?.role === 'teacher' && (
+                            {isTeacherUser(user) && (
                                 <button
                                     type="button"
                                     onClick={() => setTab('teacher')}
@@ -847,7 +850,7 @@ export default function ExamHubPortal({
                                 </button>
                             )}
 
-                            {(!user || (user.role !== 'school_admin' && user.role !== 'teacher')) && (
+                            {(!user || (user.role !== 'school_admin' && !isTeacherUser(user))) && (
                                 <button
                                     type="button"
                                     onClick={() => setShowSchoolAuthModal(true)}
@@ -998,7 +1001,7 @@ export default function ExamHubPortal({
                         </div>
                     )
                 ) : tab === 'teacher' ? (
-                    user && user.role === 'teacher' ? (
+                    user && isTeacherUser(user) ? (
                         <TeacherPortalView
                             user={user as unknown as PortalUser}
                             token={token}
@@ -1047,7 +1050,7 @@ export default function ExamHubPortal({
                         activeSlug={activeSlug}
                         onAuthenticated={handleAuthenticated}
                     />
-                ) : user && user.role === 'teacher' ? (
+                ) : user && isTeacherUser(user) ? (
                     <TeacherPortalView
                         user={user as unknown as PortalUser}
                         token={token}
@@ -4799,7 +4802,7 @@ function StudentView({
                                             Open School Admin Portal
                                         </button>
                                     )}
-                                    {user.role === 'teacher' && (
+                                    {isTeacherUser(user) && (
                                         <button
                                             type="button"
                                             onClick={() => {

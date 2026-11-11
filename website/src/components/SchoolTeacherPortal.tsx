@@ -46,6 +46,7 @@ export type PortalUser = {
     role?: 'student' | 'teacher' | 'school_admin' | 'ges-promo' | 'admin' | 'superadmin' | 'editor';
     adminRole?: 'superadmin' | 'admin' | 'editor';
     isSuperAdmin?: boolean;
+    isTeacher?: boolean;
     accountType?: 'student' | 'teacher' | 'school_admin' | 'ges-promo' | string;
     schoolId?: string;
     schoolName: string;
@@ -59,6 +60,18 @@ export type PortalUser = {
     promotionRank?: string;
     gender?: 'Male' | 'Female' | string;
 };
+
+export function isTeacherUser(u: any): boolean {
+    if (!u || typeof u !== 'object') return false;
+    return (
+        u.role === 'teacher' ||
+        u.accountType === 'teacher' ||
+        Boolean(u.isTeacher) ||
+        u.gradeLevel === 'TEACHER' ||
+        (Array.isArray(u.assignedSubjects) && u.assignedSubjects.length > 0) ||
+        Boolean(u.teacherCode)
+    );
+}
 
 export type SchoolRecord = {
     id: string;
@@ -4344,13 +4357,13 @@ Yaw Boakye, SHS 2, Science 1`}
                                         <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3 text-center">
                                             <span className="text-[10px] uppercase font-bold text-sky-800 block">Male Teachers</span>
                                             <span className="text-xl font-bold text-sky-950 mt-0.5 block">
-                                                {teachers.filter(t => (t.gender || '').toLowerCase() === 'male').length}
+                                                {teachers.filter(t => (t.gender || '').toLowerCase() === 'male' || (t.gender || '').toLowerCase() === 'm').length}
                                             </span>
                                         </div>
                                         <div className="rounded-xl border border-pink-200 bg-pink-50/70 p-3 text-center">
                                             <span className="text-[10px] uppercase font-bold text-pink-800 block">Female Teachers</span>
                                             <span className="text-xl font-bold text-pink-950 mt-0.5 block">
-                                                {teachers.filter(t => (t.gender || '').toLowerCase() === 'female').length}
+                                                {teachers.filter(t => (t.gender || '').toLowerCase() === 'female' || (t.gender || '').toLowerCase() === 'f').length}
                                             </span>
                                         </div>
                                     </div>
@@ -4366,9 +4379,28 @@ Yaw Boakye, SHS 2, Science 1`}
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
-                                                {teachers.map(t => (
+                                                {teachers.length === 0 ? (
+                                                    <tr>
+                                                        <td colSpan={4} className="p-6 text-center text-slate-400">
+                                                            No mounted teachers found for this school. Use the Mount Teachers tab to register or assign teachers.
+                                                        </td>
+                                                    </tr>
+                                                ) : teachers.map(t => (
                                                     <tr key={t.id} className="hover:bg-slate-50/50">
-                                                        <td className="p-2.5 font-semibold text-slate-900">{t.name}</td>
+                                                        <td className="p-2.5 font-semibold text-slate-900">
+                                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                                <span>{t.name}</span>
+                                                                {(t.adminRole === 'superadmin' || t.role === 'superadmin' || t.isSuperAdmin) && (
+                                                                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900 border border-amber-200">Super Admin</span>
+                                                                )}
+                                                                {(t.adminRole === 'admin' || (!t.adminRole && t.role === 'admin')) && (
+                                                                    <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-900 border border-indigo-200">Quiz Admin</span>
+                                                                )}
+                                                                {(t.adminRole === 'editor' || (!t.adminRole && t.role === 'editor')) && (
+                                                                    <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-900 border border-purple-200">Quiz Editor</span>
+                                                                )}
+                                                            </div>
+                                                        </td>
                                                         <td className="p-2.5">{t.gender || 'Male'}</td>
                                                         <td className="p-2.5 text-slate-600">
                                                             {t.assignedSubjects?.length ? t.assignedSubjects.join(', ') : 'All Subjects'}

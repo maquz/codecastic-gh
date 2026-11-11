@@ -26,11 +26,57 @@ function isSuperAdminEmail(email: unknown): boolean {
     return typeof email === 'string' && email.trim().toLowerCase() === 'anibrikamark@gmail.com';
 }
 
+function isTeacherRecord(u: any): boolean {
+    if (!u || typeof u !== 'object') return false;
+    if (u.role === 'teacher') return true;
+    if (u.accountType === 'teacher') return true;
+    if (Boolean(u.isTeacher)) return true;
+    if (u.gradeLevel === 'TEACHER') return true;
+    if (Array.isArray(u.assignedSubjects) && u.assignedSubjects.length > 0) return true;
+    if (Array.isArray(u.assignedLevels) && u.assignedLevels.length > 0) return true;
+    if (Boolean(u.teacherCode)) return true;
+    return false;
+}
+
+function isSchoolAdminRecord(u: any): boolean {
+    if (!u || typeof u !== 'object') return false;
+    return u.role === 'school_admin' || u.accountType === 'school_admin';
+}
+
+function matchesSchool(u: any, schoolId?: string, schoolCode?: string, schoolName?: string): boolean {
+    if (!u || typeof u !== 'object') return false;
+    const uSchoolId = String(u.schoolId || '');
+    const uSchoolCode = String(u.schoolCode || '');
+    const uSchoolName = String(u.schoolName || '');
+
+    if (schoolId && uSchoolId && uSchoolId === schoolId) return true;
+    if (schoolCode && uSchoolCode && uSchoolCode.toLowerCase() === schoolCode.toLowerCase()) return true;
+    if (schoolName && uSchoolName && uSchoolName.toLowerCase() === schoolName.toLowerCase()) return true;
+    return false;
+}
+
 function publicUser(u: any) {
     const em = String(u.email || '').trim().toLowerCase();
     const isSuper = isSuperAdminEmail(em) || u.adminRole === 'superadmin' || u.role === 'superadmin';
     const adminRole = isSuper ? 'superadmin' : (u.adminRole || (['admin', 'editor'].includes(u.role) ? u.role : null));
-    const role = isSuper ? 'superadmin' : (adminRole === 'admin' ? 'admin' : (adminRole === 'editor' ? 'editor' : (u.role || (u.accountType === 'ges-promo' ? 'ges-promo' : 'student'))));
+
+    const isTeacher = isTeacherRecord(u);
+    const isSchoolAdmin = isSchoolAdminRecord(u);
+
+    let role = u.role || (u.accountType === 'ges-promo' ? 'ges-promo' : 'student');
+    if (isTeacher) {
+        role = 'teacher';
+    } else if (isSchoolAdmin) {
+        role = 'school_admin';
+    } else if (isSuper) {
+        role = 'superadmin';
+    } else if (adminRole === 'admin') {
+        role = 'admin';
+    } else if (adminRole === 'editor') {
+        role = 'editor';
+    }
+
+    const accountType = isTeacher ? 'teacher' : (isSchoolAdmin ? 'school_admin' : (u.accountType === 'ges-promo' ? 'ges-promo' : 'student'));
 
     return {
         id: u.id as string,
@@ -39,13 +85,17 @@ function publicUser(u: any) {
         role,
         adminRole: adminRole || null,
         isSuperAdmin: isSuper,
-        accountType: (u.accountType || 'student') as 'student' | 'ges-promo',
+        isTeacher,
+        accountType,
         schoolName: (u.schoolName || '') as string,
         schoolCode: (u.schoolCode || '') as string,
         studentCode: (u.studentCode || '') as string,
+        teacherCode: (u.teacherCode || '') as string,
         classSection: (u.classSection || '') as string,
         schoolId: (u.schoolId || '') as string,
         gradeLevel: ((u.gradeLevel === 'ADMIN' || u.gradeLevel === 'admin') ? 8 : (u.gradeLevel ?? 4)) as Level,
+        assignedSubjects: Array.isArray(u.assignedSubjects) ? u.assignedSubjects : [],
+        assignedLevels: Array.isArray(u.assignedLevels) ? u.assignedLevels : [],
         region: (u.region || '') as string,
         promotionRank: (u.promotionRank || '') as string,
         gender: (u.gender || '') as string,
@@ -2200,10 +2250,12 @@ export const handler = router({
             const u = await getUserByToken(b.token);
             if (!u) return error('Not authorised', 401);
             const schoolId = String(u.schoolId || b.schoolId || '');
+            const schoolCode = String(u.schoolCode || b.schoolCode || '');
+            const schoolName = String(u.schoolName || b.schoolName || '');
 
             const { items: allUsers } = await db.list('users', { limit: 5000 });
-            const teachers = allUsers
-                .filter((usr: any) => String(usr.schoolId) === schoolId && usr.role === 'teacher')
+            const teachers = (allUsers as any[])
+                .filter((usr: any) => matchesSchool(usr, schoolId, schoolCode, schoolName) && isTeacherRecord(usr))
                 .map((usr: any) => publicUser(usr));
 
             return json({ teachers });
@@ -2293,15 +2345,17 @@ export const handler = router({
         async (ctx) => {
             const b = (ctx.body || {}) as any;
             const u = await getUserByToken(b.token);
-            if (!u || !['school_admin', 'admin'].includes(u.role)) return error('Not authorised', 403);
+            if (!u || (!isSchoolAdminRecord(u) && !['school_admin', 'admin', 'superadmin'].includes(u.role))) return error('Not authorised', 403);
             const schoolId = String(u.schoolId || b.schoolId || '');
+            const schoolCode = String(u.schoolCode || b.schoolCode || '');
+            const schoolName = String(u.schoolName || b.schoolName || '');
 
             const { items: allUsers } = await db.list('users', { limit: 5000 });
             const { items: allResults } = await db.list('results', { limit: 10000 });
 
-            const students = allUsers.filter((usr: any) => String(usr.schoolId) === schoolId && (usr.role === 'student' || usr.accountType === 'student'));
-            const teachers = allUsers.filter((usr: any) => String(usr.schoolId) === schoolId && usr.role === 'teacher');
-            const schoolResults = allResults.filter((r: any) => String(r.schoolId) === schoolId);
+            const students = (allUsers as any[]).filter((usr: any) => matchesSchool(usr, schoolId, schoolCode, schoolName) && !isTeacherRecord(usr) && (usr.role === 'student' || usr.accountType === 'student'));
+            const teachers = (allUsers as any[]).filter((usr: any) => matchesSchool(usr, schoolId, schoolCode, schoolName) && isTeacherRecord(usr));
+            const schoolResults = (allResults as any[]).filter((r: any) => (schoolId && String(r.schoolId) === schoolId) || (schoolCode && String(r.schoolCode) === schoolCode));
 
             const studentGenderMap: Record<string, string> = {};
             let maleCount = 0;
@@ -2642,7 +2696,7 @@ export const handler = router({
         async (ctx) => {
             const b = (ctx.body || {}) as any;
             const u = await getUserByToken(b.token);
-            if (!u || !['teacher', 'school_admin', 'admin', 'superadmin'].includes(u.role)) {
+            if (!u || (!['teacher', 'school_admin', 'admin', 'superadmin', 'editor'].includes(u.role) && !isTeacherRecord(u) && !isSchoolAdminRecord(u))) {
                 return error('Teacher or school admin authorization required', 403);
             }
 
@@ -2736,7 +2790,7 @@ export const handler = router({
         async (ctx) => {
             const b = (ctx.body || {}) as any;
             const u = await getUserByToken(b.token);
-            if (!u || !['teacher', 'school_admin', 'admin', 'superadmin'].includes(u.role)) {
+            if (!u || (!['teacher', 'school_admin', 'admin', 'superadmin', 'editor'].includes(u.role) && !isTeacherRecord(u) && !isSchoolAdminRecord(u))) {
                 return error('Not authorised', 403);
             }
 
@@ -2800,7 +2854,7 @@ export const handler = router({
         async (ctx) => {
             const b = (ctx.body || {}) as any;
             const u = await getUserByToken(b.token);
-            if (!u || !['teacher', 'school_admin', 'admin', 'superadmin'].includes(u.role)) {
+            if (!u || (!['teacher', 'school_admin', 'admin', 'superadmin', 'editor'].includes(u.role) && !isTeacherRecord(u) && !isSchoolAdminRecord(u))) {
                 return error('Not authorised', 403);
             }
             const asgnId = String(b.assignmentId || '');
@@ -3318,15 +3372,28 @@ export const handler = router({
                 return error('Mark Anibrika is the primary Super Admin and cannot have his role altered.', 400);
             }
 
+            const isTeacher = isTeacherRecord(target);
             const updateData: any = {
                 updatedAt: Date.now(),
             };
             if (newRole === 'candidate') {
                 updateData.adminRole = null;
-                updateData.role = target.accountType === 'ges-promo' ? 'ges-promo' : 'student';
+                if (isTeacher) {
+                    updateData.role = 'teacher';
+                    updateData.accountType = 'teacher';
+                    updateData.isTeacher = true;
+                } else {
+                    updateData.role = target.accountType === 'ges-promo' ? 'ges-promo' : 'student';
+                }
             } else {
                 updateData.adminRole = newRole;
-                updateData.role = newRole;
+                if (isTeacher) {
+                    updateData.role = 'teacher';
+                    updateData.accountType = 'teacher';
+                    updateData.isTeacher = true;
+                } else {
+                    updateData.role = newRole;
+                }
             }
 
             await db.update('users', target.id, updateData);
@@ -3419,9 +3486,11 @@ export const handler = router({
                 return error('Mark Anibrika is the primary Super Admin and cannot be revoked.', 400);
             }
 
+            const isTeacher = isTeacherRecord(target);
             await db.update('users', target.id, {
                 adminRole: null,
-                role: target.accountType === 'ges-promo' ? 'ges-promo' : 'student',
+                role: isTeacher ? 'teacher' : (target.accountType === 'ges-promo' ? 'ges-promo' : 'student'),
+                ...(isTeacher ? { accountType: 'teacher', isTeacher: true } : {}),
                 updatedAt: Date.now(),
             });
 

@@ -381,6 +381,35 @@ function isSuperAdminUser($user) {
     return $r === 'superadmin';
 }
 
+function isTeacherRecord($u) {
+    if (!$u || !is_array($u)) return false;
+    if (($u['role'] ?? '') === 'teacher') return true;
+    if (($u['accountType'] ?? '') === 'teacher') return true;
+    if (!empty($u['isTeacher'])) return true;
+    if (($u['gradeLevel'] ?? '') === 'TEACHER') return true;
+    if (!empty($u['assignedSubjects']) && is_array($u['assignedSubjects']) && count($u['assignedSubjects']) > 0) return true;
+    if (!empty($u['assignedLevels']) && is_array($u['assignedLevels']) && count($u['assignedLevels']) > 0) return true;
+    if (!empty($u['teacherCode'])) return true;
+    return false;
+}
+
+function isSchoolAdminRecord($u) {
+    if (!$u || !is_array($u)) return false;
+    return (($u['role'] ?? '') === 'school_admin') || (($u['accountType'] ?? '') === 'school_admin');
+}
+
+function matchesSchool($u, $schoolId, $schoolCode = '', $schoolName = '') {
+    if (!$u || !is_array($u)) return false;
+    $uSchoolId = (string)($u['schoolId'] ?? '');
+    $uSchoolCode = (string)($u['schoolCode'] ?? '');
+    $uSchoolName = (string)($u['schoolName'] ?? '');
+
+    if ($schoolId !== '' && $uSchoolId !== '' && $uSchoolId === $schoolId) return true;
+    if ($schoolCode !== '' && $uSchoolCode !== '' && strtolower($uSchoolCode) === strtolower($schoolCode)) return true;
+    if ($schoolName !== '' && $uSchoolName !== '' && strtolower($uSchoolName) === strtolower($schoolName)) return true;
+    return false;
+}
+
 function publicUser($u) {
     $em = strtolower(trim((string)($u['email'] ?? '')));
     $isSuper = isSuperAdminEmail($em) || ($u['adminRole'] ?? '') === 'superadmin' || ($u['role'] ?? '') === 'superadmin';
@@ -389,14 +418,24 @@ function publicUser($u) {
         $adminRole = $u['role'];
     }
 
+    $isTeacher = isTeacherRecord($u);
+    $isSchoolAdmin = isSchoolAdminRecord($u);
+
+    // If teacher, maintain teacher role so school rosters, classes, and teacher views are never lost
     $role = (string)($u['role'] ?? (($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student'));
-    if ($isSuper) {
+    if ($isTeacher) {
+        $role = 'teacher';
+    } elseif ($isSchoolAdmin) {
+        $role = 'school_admin';
+    } elseif ($isSuper) {
         $role = 'superadmin';
     } elseif ($adminRole === 'admin') {
         $role = 'admin';
     } elseif ($adminRole === 'editor') {
         $role = 'editor';
     }
+
+    $accountType = $isTeacher ? 'teacher' : ($isSchoolAdmin ? 'school_admin' : (($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student'));
 
     return [
         'id' => (string)($u['id'] ?? ''),
@@ -405,11 +444,13 @@ function publicUser($u) {
         'role' => $role,
         'adminRole' => $adminRole ?: null,
         'isSuperAdmin' => $isSuper,
-        'accountType' => ($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student',
+        'isTeacher' => $isTeacher,
+        'accountType' => $accountType,
         'schoolId' => (string)($u['schoolId'] ?? ''),
         'schoolName' => (string)($u['schoolName'] ?? ''),
         'schoolCode' => (string)($u['schoolCode'] ?? ''),
         'studentCode' => (string)($u['studentCode'] ?? ''),
+        'teacherCode' => (string)($u['teacherCode'] ?? ''),
         'gradeLevel' => (($u['gradeLevel'] ?? '') === 'ADMIN' || ($u['gradeLevel'] ?? '') === 'admin') ? 8 : ($u['gradeLevel'] ?? 4),
         'classSection' => (string)($u['classSection'] ?? ''),
         'assignedSubjects' => is_array($u['assignedSubjects'] ?? null) ? $u['assignedSubjects'] : [],
@@ -2462,12 +2503,25 @@ if ($route === 'admin/roles/promote' && $method === 'POST') {
             if ($uEm === 'anibrikamark@gmail.com') {
                 errorOut('Mark Anibrika is the primary Super Admin and cannot have his role altered.', 400);
             }
+            $isTeacher = isTeacherRecord($u);
             if ($newRole === 'candidate') {
                 $u['adminRole'] = null;
-                $u['role'] = ($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student';
+                if ($isTeacher) {
+                    $u['role'] = 'teacher';
+                    $u['accountType'] = 'teacher';
+                    $u['isTeacher'] = true;
+                } else {
+                    $u['role'] = ($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student';
+                }
             } else {
                 $u['adminRole'] = $newRole;
-                $u['role'] = $newRole;
+                if ($isTeacher) {
+                    $u['role'] = 'teacher';
+                    $u['accountType'] = 'teacher';
+                    $u['isTeacher'] = true;
+                } else {
+                    $u['role'] = $newRole;
+                }
             }
             $u['updatedAt'] = round(microtime(true) * 1000);
             $found = true;
@@ -2561,8 +2615,15 @@ if ($route === 'admin/roles/revoke' && $method === 'POST') {
             if ($uEm === 'anibrikamark@gmail.com') {
                 errorOut('Mark Anibrika is the primary Super Admin and cannot be revoked.', 400);
             }
+            $isTeacher = isTeacherRecord($u);
             $u['adminRole'] = null;
-            $u['role'] = ($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student';
+            if ($isTeacher) {
+                $u['role'] = 'teacher';
+                $u['accountType'] = 'teacher';
+                $u['isTeacher'] = true;
+            } else {
+                $u['role'] = ($u['accountType'] ?? '') === 'ges-promo' ? 'ges-promo' : 'student';
+            }
             $u['updatedAt'] = round(microtime(true) * 1000);
             $revoked = true;
             break;
@@ -3301,7 +3362,14 @@ if ($route === 'school/login' && $method === 'POST') {
     }
 
     $role = (string)($matchedUser['role'] ?? '');
-    if ($role !== 'school_admin' && $role !== 'teacher' && $role !== 'admin') {
+    $isTeacher = isTeacherRecord($matchedUser);
+    $isSchoolAdmin = isSchoolAdminRecord($matchedUser);
+    $isPrivileged = in_array($role, ['school_admin', 'teacher', 'admin', 'superadmin', 'editor'], true)
+        || !empty($matchedUser['adminRole'])
+        || $isTeacher
+        || $isSchoolAdmin;
+
+    if (!$isPrivileged) {
         errorOut('This account is registered as a regular student. Please sign in via the Student Portal.', 403);
     }
 
@@ -3402,11 +3470,13 @@ if ($route === 'school/teachers' && ($method === 'GET' || $method === 'POST')) {
     if (!$u) errorOut('Not authorised', 401);
 
     $schoolId = (string)($u['schoolId'] ?? ($b['schoolId'] ?? ($_GET['schoolId'] ?? '')));
-    if ($schoolId === '') errorOut('School ID required', 400);
+    $schoolCode = (string)($u['schoolCode'] ?? ($b['schoolCode'] ?? ($_GET['schoolCode'] ?? '')));
+    $schoolName = (string)($u['schoolName'] ?? ($b['schoolName'] ?? ($_GET['schoolName'] ?? '')));
+    if ($schoolId === '' && $schoolCode === '' && $schoolName === '') errorOut('School ID required', 400);
 
     $teachers = [];
     foreach ($db['users'] as $usr) {
-        if (($usr['schoolId'] ?? '') === $schoolId && ($usr['role'] ?? '') === 'teacher') {
+        if (matchesSchool($usr, $schoolId, $schoolCode, $schoolName) && isTeacherRecord($usr)) {
             $teachers[] = publicUser($usr);
         }
     }
@@ -3422,15 +3492,17 @@ if ($route === 'school/teachers' && ($method === 'GET' || $method === 'POST')) {
 if ($route === 'school/teachers/delete' && $method === 'POST') {
     $b = getJsonBody();
     $u = getUserByToken($db, $b['token'] ?? null);
-    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+    if (!$u || (!isSchoolAdminRecord($u) && !isAdmin($db, $b['token'] ?? null))) {
         errorOut('Not authorised', 403);
     }
     $schoolId = (string)($u['schoolId'] ?? '');
+    $schoolCode = (string)($u['schoolCode'] ?? '');
+    $schoolName = (string)($u['schoolName'] ?? '');
     $teacherId = trim((string)($b['teacherId'] ?? ''));
 
-    $db['users'] = array_values(array_filter($db['users'], function($usr) use ($teacherId, $schoolId) {
+    $db['users'] = array_values(array_filter($db['users'], function($usr) use ($teacherId, $schoolId, $schoolCode, $schoolName) {
         if (($usr['id'] ?? '') === $teacherId) {
-            return ($usr['schoolId'] ?? '') !== $schoolId;
+            return !matchesSchool($usr, $schoolId, $schoolCode, $schoolName);
         }
         return true;
     }));
@@ -3442,16 +3514,18 @@ if ($route === 'school/teachers/delete' && $method === 'POST') {
 if ($route === 'school/teachers/update' && $method === 'POST') {
     $b = getJsonBody();
     $u = getUserByToken($db, $b['token'] ?? null);
-    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+    if (!$u || (!isSchoolAdminRecord($u) && !isAdmin($db, $b['token'] ?? null))) {
         errorOut('Not authorised', 403);
     }
     $schoolId = (string)($u['schoolId'] ?? '');
+    $schoolCode = (string)($u['schoolCode'] ?? '');
+    $schoolName = (string)($u['schoolName'] ?? '');
     $teacherId = trim((string)($b['teacherId'] ?? ''));
     if ($teacherId === '') errorOut('Teacher ID is required', 400);
 
     $found = false;
     foreach ($db['users'] as &$usr) {
-        if (($usr['id'] ?? '') === $teacherId && ($usr['schoolId'] ?? '') === $schoolId) {
+        if (($usr['id'] ?? '') === $teacherId && matchesSchool($usr, $schoolId, $schoolCode, $schoolName)) {
             if (isset($b['name']) && trim((string)$b['name']) !== '') $usr['name'] = trim((string)$b['name']);
             if (isset($b['gender'])) $usr['gender'] = trim((string)$b['gender']);
             if (isset($b['email']) && filter_var($b['email'], FILTER_VALIDATE_EMAIL)) $usr['email'] = strtolower(trim((string)$b['email']));
@@ -3729,12 +3803,14 @@ if ($route === 'school/students/update' && $method === 'POST') {
 if ($route === 'school/performance' && $method === 'POST') {
     $b = getJsonBody();
     $u = getUserByToken($db, $b['token'] ?? null);
-    if (!$u || (($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+    if (!$u || (!isSchoolAdminRecord($u) && !isAdmin($db, $b['token'] ?? null))) {
         errorOut('Not authorised', 403);
     }
 
     $schoolId = (string)($u['schoolId'] ?? ($b['schoolId'] ?? ''));
-    if ($schoolId === '') errorOut('School ID required', 400);
+    $schoolCode = (string)($u['schoolCode'] ?? ($b['schoolCode'] ?? ''));
+    $schoolName = (string)($u['schoolName'] ?? ($b['schoolName'] ?? ''));
+    if ($schoolId === '' && $schoolCode === '' && $schoolName === '') errorOut('School ID required', 400);
 
     $studentCount = 0;
     $teacherCount = 0;
@@ -3742,8 +3818,8 @@ if ($route === 'school/performance' && $method === 'POST') {
     $femaleCount = 0;
     $studentGenderMap = [];
     foreach ($db['users'] as $usr) {
-        if (($usr['schoolId'] ?? '') === $schoolId) {
-            if (($usr['role'] ?? '') === 'teacher') {
+        if (matchesSchool($usr, $schoolId, $schoolCode, $schoolName)) {
+            if (isTeacherRecord($usr)) {
                 $teacherCount++;
             } elseif (($usr['role'] ?? '') === 'student' || ($usr['accountType'] ?? '') === 'student') {
                 $studentCount++;
@@ -4186,7 +4262,7 @@ if ($route === 'teacher/questions/pool' && $method === 'GET') {
 if ($route === 'teacher/quiz/create' && $method === 'POST') {
     $b = getJsonBody();
     $u = getUserByToken($db, $b['token'] ?? null);
-    if (!$u || !in_array($u['role'] ?? '', ['teacher', 'school_admin', 'admin', 'superadmin'], true)) {
+    if (!$u || (!in_array($u['role'] ?? '', ['teacher', 'school_admin', 'admin', 'superadmin', 'editor'], true) && !isTeacherRecord($u) && !isSchoolAdminRecord($u))) {
         errorOut('Teacher or school admin authorization required', 403);
     }
 
@@ -4298,7 +4374,7 @@ if ($route === 'teacher/quiz/create' && $method === 'POST') {
 if ($route === 'teacher/quiz/list' && $method === 'POST') {
     $b = getJsonBody();
     $u = getUserByToken($db, $b['token'] ?? null);
-    if (!$u || !in_array($u['role'] ?? '', ['teacher', 'school_admin', 'admin', 'superadmin'], true)) {
+    if (!$u || (!in_array($u['role'] ?? '', ['teacher', 'school_admin', 'admin', 'superadmin', 'editor'], true) && !isTeacherRecord($u) && !isSchoolAdminRecord($u))) {
         errorOut('Teacher or school admin authorization required', 403);
     }
 
@@ -4399,7 +4475,7 @@ if ($route === 'teacher/quiz/list' && $method === 'POST') {
 if ($route === 'teacher/quiz/delete' && $method === 'POST') {
     $b = getJsonBody();
     $u = getUserByToken($db, $b['token'] ?? null);
-    if (!$u || !in_array($u['role'] ?? '', ['teacher', 'school_admin', 'admin', 'superadmin'], true)) {
+    if (!$u || (!in_array($u['role'] ?? '', ['teacher', 'school_admin', 'admin', 'superadmin', 'editor'], true) && !isTeacherRecord($u) && !isSchoolAdminRecord($u))) {
         errorOut('Not authorised', 403);
     }
 

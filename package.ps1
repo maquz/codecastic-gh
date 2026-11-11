@@ -40,7 +40,8 @@ $zipPath = "$repo\deploy-cpanel.zip"
 if (Test-Path $zipPath) {
     Remove-Item -Force $zipPath
 }
-Compress-Archive -Path "$stage\*" -DestinationPath $zipPath -CompressionLevel Optimal
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 
 # Cleanup stage directory
 Remove-Item -Recurse -Force $stage
