@@ -1625,6 +1625,9 @@ export const handler = router({
                     year: q.year || undefined,
                 }));
 
+            // Randomize question sequence so students get a fresh shuffled order
+            const shuffledQuestions = [...questions].sort(() => Math.random() - 0.5);
+
             return json({
                 ok: true,
                 assignment: {
@@ -1635,8 +1638,8 @@ export const handler = router({
                     gradeLevel: asgn.gradeLevel,
                     timerSeconds: asgn.timerSeconds || 60,
                     teacherName: asgn.teacherName,
-                    questionCount: questions.length,
-                    questions,
+                    questionCount: shuffledQuestions.length,
+                    questions: shuffledQuestions,
                 },
             });
         },
@@ -1688,6 +1691,13 @@ export const handler = router({
                     .sort(() => Math.random() - 0.5)
                     .slice(0, needed);
                 qs = [...qs, ...pool];
+            }
+
+            // Shuffle the matching questions so learners receive varied and fresh tests every session
+            qs = [...qs].sort(() => Math.random() - 0.5);
+
+            if (limitParam > 0 && qs.length > limitParam) {
+                qs = qs.slice(0, limitParam);
             }
 
             return json({

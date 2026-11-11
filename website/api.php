@@ -743,6 +743,9 @@ if (preg_match('#^exam/assignment/([^/]+)$#', $route, $mMatches) && $method === 
         }
     }
 
+    // Shuffle questions so students taking assigned quizzes get a fresh randomized order
+    shuffle($questions);
+
     jsonOut([
         'ok' => true,
         'assignment' => [
@@ -822,6 +825,9 @@ if (preg_match('#^exam/([^/]+)/([^/]+)$#', $route, $matches) && strtolower($matc
             }
         }
     }
+
+    // Randomize and shuffle the question pool so learners get fresh, varied questions every session
+    shuffle($filtered);
 
     // Limit questions
     if ($limitParam > 0 && count($filtered) > $limitParam) {

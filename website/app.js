@@ -14802,6 +14802,7 @@ var handler = router({
         category: q2.category || void 0,
         year: q2.year || void 0
       }));
+      const shuffledQuestions = [...questions].sort(() => Math.random() - 0.5);
       return json({
         ok: true,
         assignment: {
@@ -14812,8 +14813,8 @@ var handler = router({
           gradeLevel: asgn.gradeLevel,
           timerSeconds: asgn.timerSeconds || 60,
           teacherName: asgn.teacherName,
-          questionCount: questions.length,
-          questions
+          questionCount: shuffledQuestions.length,
+          questions: shuffledQuestions
         }
       });
     }
@@ -14855,6 +14856,10 @@ var handler = router({
         const needed = limitParam - qs.length;
         const pool2 = allSubjectLevelQs.filter((q2) => !existingIds.has(q2.id)).sort(() => Math.random() - 0.5).slice(0, needed);
         qs = [...qs, ...pool2];
+      }
+      qs = [...qs].sort(() => Math.random() - 0.5);
+      if (limitParam > 0 && qs.length > limitParam) {
+        qs = qs.slice(0, limitParam);
       }
       return json({
         questions: qs.map((q2) => ({

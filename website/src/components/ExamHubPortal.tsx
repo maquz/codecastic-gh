@@ -2260,7 +2260,13 @@ function StudentView({
                 ? 'BECE'
                 : level || 8;
             setLevel(targetLevel);
-            setQuestions(asgnData.questions);
+            // Fisher-Yates shuffle the assigned questions so learners always receive a varied and fresh sequence
+            const shuffledAsgn = [...asgnData.questions];
+            for (let i = shuffledAsgn.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffledAsgn[i], shuffledAsgn[j]] = [shuffledAsgn[j], shuffledAsgn[i]];
+            }
+            setQuestions(shuffledAsgn);
             setActiveAssignmentId(asgn.id);
             const timer = asgnData.timerSeconds || 60;
             setPerQuestionSeconds(timer);
@@ -2730,10 +2736,15 @@ function StudentView({
                 return;
             }
 
-            let chosenQs = qs;
-            if (qs.length > questionLimit) {
-                // Shuffle for a fresh, varied practice test
-                chosenQs = [...qs].sort(() => Math.random() - 0.5).slice(0, questionLimit);
+            // Fisher-Yates shuffle questions so every test session presents a fresh randomized order
+            const shuffledQs = [...qs];
+            for (let i = shuffledQs.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffledQs[i], shuffledQs[j]] = [shuffledQs[j], shuffledQs[i]];
+            }
+            let chosenQs = shuffledQs;
+            if (questionLimit > 0 && chosenQs.length > questionLimit) {
+                chosenQs = chosenQs.slice(0, questionLimit);
             }
 
             setIsOfflineSession(offlineUsed || !navigator.onLine);
