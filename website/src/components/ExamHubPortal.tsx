@@ -415,6 +415,15 @@ export default function ExamHubPortal({
             .finally(() => setCheckingAuth(false));
     }, []);
 
+    // Restrict teachers and school admins from accessing the Student Portal
+    useEffect(() => {
+        if (user?.role === 'teacher' && tab === 'student') {
+            setTab('teacher');
+        } else if (user?.role === 'school_admin' && tab === 'student') {
+            setTab('school');
+        }
+    }, [user?.role, tab]);
+
     const handleAuthenticated = (newUser: StudentUser, newToken: string) => {
         localStorage.setItem(TOKEN_KEY, newToken);
         setUser(newUser);
@@ -516,15 +525,17 @@ export default function ExamHubPortal({
                         )}
 
                         <nav className="flex items-center gap-1 rounded-lg bg-slate-100 p-1" aria-label="Portal mode">
-                            <button
-                                type="button"
-                                onClick={() => setTab('student')}
-                                className={`rounded-md px-3 py-1.5 text-xs sm:text-sm font-semibold capitalize transition ${
-                                    tab === 'student' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                                }`}
-                            >
-                                Student Portal
-                            </button>
+                            {(!user || (user.role !== 'school_admin' && user.role !== 'teacher')) && (
+                                <button
+                                    type="button"
+                                    onClick={() => setTab('student')}
+                                    className={`rounded-md px-3 py-1.5 text-xs sm:text-sm font-semibold capitalize transition ${
+                                        tab === 'student' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                                    }`}
+                                >
+                                    Student Portal
+                                </button>
+                            )}
 
                             {user?.role === 'school_admin' && (
                                 <button
@@ -692,10 +703,10 @@ export default function ExamHubPortal({
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setTab('student')}
+                                    onClick={() => navigate('/')}
                                     className="w-full rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
                                 >
-                                    Back to Student Portal
+                                    Back to Website
                                 </button>
                             </div>
                         </div>
@@ -727,10 +738,10 @@ export default function ExamHubPortal({
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setTab('student')}
+                                    onClick={() => navigate('/')}
                                     className="w-full rounded-xl border border-slate-200 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
                                 >
-                                    Back to Student Portal
+                                    Back to Website
                                 </button>
                             </div>
                         </div>
@@ -1856,6 +1867,64 @@ function StudentView({
     const [showEndConfirm, setShowEndConfirm] = useState<boolean>(false);
     const [_timedOutQuestionIds, setTimedOutQuestionIds] = useState<Record<string, boolean>>({});
 
+    // Assigned quizzes from teacher
+    const [assignedQuizzes, setAssignedQuizzes] = useState<any[]>([]);
+    const [activeAssignmentId, setActiveAssignmentId] = useState<string | null>(null);
+    const [_loadingAssignments, setLoadingAssignments] = useState<boolean>(false);
+
+    const loadAssignedQuizzes = useCallback(async () => {
+        if (!token) return;
+        try {
+            setLoadingAssignments(true);
+            const res = await api.post('/api/student/assigned-quizzes', { token });
+            if (res.data?.assignedQuizzes) {
+                setAssignedQuizzes(res.data.assignedQuizzes);
+            }
+        } catch {
+            // ignore
+        } finally {
+            setLoadingAssignments(false);
+        }
+    }, [token]);
+
+    useEffect(() => {
+        loadAssignedQuizzes();
+    }, [loadAssignedQuizzes]);
+
+    const handleStartAssignedQuiz = async (asgn: any) => {
+        try {
+            setStarting(asgn.id);
+            const res = await api.get(`/api/exam/assignment/${asgn.id}`);
+            const asgnData = res.data?.assignment;
+            if (!asgnData || !asgnData.questions || asgnData.questions.length === 0) {
+                alert('No questions found in this assignment.');
+                return;
+            }
+            const matchSub = subjects.find(
+                (s) => s.id === asgnData.subjectId || s.name.toLowerCase() === asgnData.subjectName.toLowerCase()
+            ) || {
+                id: asgnData.subjectId || 'asgn-sub',
+                name: asgnData.subjectName || 'Assigned Quiz',
+                category: 'standard',
+            };
+            setSubject(matchSub);
+            setLevel(asgnData.gradeLevel);
+            setQuestions(asgnData.questions);
+            setActiveAssignmentId(asgn.id);
+            const timer = asgnData.timerSeconds || 60;
+            setPerQuestionSeconds(timer);
+            setQuestionSecondsLeft(timer);
+            setAnswers({});
+            setIndex(0);
+            setStage('exam');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        } catch (err: any) {
+            alert(err?.response?.data?.error || 'Failed to start assigned quiz');
+        } finally {
+            setStarting(null);
+        }
+    };
+
     // Student performance stats for interactive KPI cards
     const [studentStats, setStudentStats] = useState<{
         examsTaken: number;
@@ -2370,6 +2439,7 @@ function StudentView({
                         subjectName: subject.name,
                         answers,
                         questionIds: finalQuestions.map((q) => q.id),
+                        assignmentId: activeAssignmentId || null,
                     });
                     setQuestions(finalQuestions);
                     setResult(res.data);
@@ -2377,6 +2447,7 @@ function StudentView({
                     window.scrollTo({ top: 0 });
                     loadCatalog().catch(() => undefined);
                     loadStudentStats().catch(() => undefined);
+                    loadAssignedQuizzes().catch(() => undefined);
                     return;
                 } catch (netErr) {
                     console.warn('Online submit failed, saving offline in outbox', netErr);
@@ -2438,6 +2509,7 @@ function StudentView({
                 details: offDetails,
                 answers,
                 questionIds: finalQuestions.map((q) => q.id),
+                assignmentId: activeAssignmentId || null,
                 timestamp: Date.now(),
                 isOfflineSubmitted: true,
             };
@@ -2482,6 +2554,7 @@ function StudentView({
     const backToStart = () => {
         setIsPaused(false);
         setShowEndConfirm(false);
+        setActiveAssignmentId(null);
         setStage('select');
         setSubject(null);
         setQuestions([]);
@@ -2489,6 +2562,7 @@ function StudentView({
         setResult(null);
         setNotice('');
         loadStudentStats().catch(() => undefined);
+        loadAssignedQuizzes().catch(() => undefined);
     };
 
     const startStarredPractice = (filterSubId?: string) => {
@@ -3242,6 +3316,106 @@ function StudentView({
                 )}
             </div>
 
+            {/* Assigned Quizzes from Subject Teacher */}
+            {assignedQuizzes.length > 0 && (
+                <div className="rounded-2xl border border-indigo-200 bg-linear-to-r from-indigo-50/70 via-white to-blue-50/40 p-4 sm:p-5 shadow-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3.5">
+                        <div className="flex items-center gap-2.5">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#364c83] text-white shadow-2xs">
+                                <BookOpen size={18} />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-bold text-slate-900">Assigned Quizzes from Your Teacher</h3>
+                                <p className="text-xs text-slate-500">Targeted examination tests assigned specifically to your class group</p>
+                            </div>
+                        </div>
+                        <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-bold text-[#364c83]">
+                            {assignedQuizzes.filter((q) => !q.isCompleted).length} Pending
+                        </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {assignedQuizzes.map((asgn) => (
+                            <div
+                                key={asgn.id}
+                                className={`rounded-xl border p-4 bg-white transition shadow-2xs flex flex-col justify-between ${
+                                    asgn.isCompleted ? 'border-emerald-200 bg-emerald-50/20' : 'border-indigo-200 hover:border-[#364c83]'
+                                }`}
+                            >
+                                <div>
+                                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                                        <span className="text-xs font-bold text-slate-900 line-clamp-1">{asgn.title}</span>
+                                        <span
+                                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold shrink-0 ${
+                                                asgn.isCompleted
+                                                    ? 'bg-emerald-100 text-emerald-800'
+                                                    : 'bg-amber-100 text-amber-900'
+                                            }`}
+                                        >
+                                            {asgn.isCompleted ? 'Completed' : 'Pending'}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-600 mb-2">
+                                        <strong>{asgn.subjectName}</strong> &middot; {asgn.gradeLevel} &middot; Teacher: <strong>{asgn.teacherName}</strong>
+                                    </p>
+                                    <div className="flex items-center gap-2 text-[11px] text-slate-500 mb-3">
+                                        <span className="flex items-center gap-1 font-semibold text-slate-700">
+                                            <Sparkles size={12} className="text-[#364c83]" />
+                                            {asgn.questionCount} Questions
+                                        </span>
+                                        &middot;
+                                        <span className="flex items-center gap-1 font-semibold text-emerald-700">
+                                            <Clock size={12} />
+                                            {asgn.timerSeconds || 60}s / Question
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                                    {asgn.isCompleted ? (
+                                        <div className="text-xs font-bold text-emerald-800">
+                                            Score: {asgn.score}/{asgn.total} ({asgn.percent}%)
+                                        </div>
+                                    ) : (
+                                        <span className="text-[11px] text-slate-400">Ready to take</span>
+                                    )}
+
+                                    {asgn.isCompleted ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleStartAssignedQuiz(asgn)}
+                                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                                        >
+                                            <RotateCcw size={12} />
+                                            Retake Quiz
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleStartAssignedQuiz(asgn)}
+                                            disabled={starting === asgn.id}
+                                            className="inline-flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-[#1f2d57] transition cursor-pointer"
+                                        >
+                                            {starting === asgn.id ? (
+                                                <>
+                                                    <Loader2 size={12} className="animate-spin" />
+                                                    <span>Loading...</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span>Start Assigned Quiz</span>
+                                                    <ArrowRight size={13} />
+                                                </>
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* Interactive Candidate KPI Performance Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 {/* Card 1: Promotion Trial Exam (Clickable to Start Quiz) */}
@@ -3361,37 +3535,25 @@ function StudentView({
                     <div className="mt-1">
                         <div className="flex items-baseline justify-between">
                             <span className="text-2xl font-bold text-emerald-700">
-                                {perQuestionSeconds === 0 ? 'Off' : `${perQuestionSeconds}s`}
+                                {perQuestionSeconds}s
                             </span>
-                            <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded">
-                                {perQuestionSeconds === 60 ? 'Default' : perQuestionSeconds === 0 ? 'Untimed' : 'Custom'}
+                            <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                <Lock size={10} />
+                                Enforced
                             </span>
                         </div>
-                        {/* 100% width select ensures it never spills outside card border */}
-                        <div className="mt-2">
-                            <select
-                                value={String(perQuestionSeconds)}
-                                onChange={(e) => {
-                                    const val = Number(e.target.value);
-                                    setPerQuestionSeconds(val);
-                                    setQuestionSecondsLeft(val);
-                                }}
-                                className="w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 focus:border-[#364c83] focus:bg-white focus:outline-hidden"
-                                title="Set pace per question"
-                            >
-                                <option value="30">30s / question</option>
-                                <option value="45">45s / question</option>
-                                <option value="60">60s (Default)</option>
-                                <option value="90">90s / question</option>
-                                <option value="120">120s / question</option>
-                                <option value="0">Untimed (No timer)</option>
-                            </select>
+                        <div className="mt-2 flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
+                            <span className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                                <Lock size={11} className="text-slate-400" />
+                                Standard Default
+                            </span>
+                            <span className="text-[11px] font-bold text-slate-800">{perQuestionSeconds}s / Question</span>
                         </div>
                     </div>
                     <div className="mt-2 pt-1 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
                         <span>Pace</span>
                         <span className="font-semibold text-slate-600">
-                            {perQuestionSeconds === 60 ? 'Default 60s' : perQuestionSeconds === 0 ? 'Untimed' : `${perQuestionSeconds}s set`}
+                            Default {perQuestionSeconds}s (Teacher/Admin Set)
                         </span>
                     </div>
                 </div>

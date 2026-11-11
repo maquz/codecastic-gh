@@ -1,5 +1,6 @@
 # package.ps1 - Builds and packages deploy-cpanel.zip safely
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $repo = $PSScriptRoot
 
 Write-Host "1. Building website bundle..."

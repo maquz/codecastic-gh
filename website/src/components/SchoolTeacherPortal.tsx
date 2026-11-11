@@ -20,7 +20,6 @@ import {
     Check,
     Loader2,
     LogOut,
-    GraduationCap,
     Eye,
     BarChart3,
     HardDrive,
@@ -35,6 +34,8 @@ import {
     Key,
     FileText,
     Filter,
+    Clock,
+    ClipboardList,
 } from 'lucide-react';
 import type { Level } from './ExamHubPortal';
 
@@ -385,12 +386,12 @@ export function TeacherPortalView({
     user,
     token,
     onLogout,
-    onSwitchToStudent,
+    onSwitchToStudent: _onSwitchToStudent,
 }: {
     user: PortalUser;
     token: string;
     onLogout: () => void;
-    onSwitchToStudent: () => void;
+    onSwitchToStudent?: () => void;
 }) {
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<{
@@ -418,7 +419,26 @@ export function TeacherPortalView({
         topMissedQuestions: any[];
     } | null>(null);
 
-    const [activeTab, setActiveTab] = useState<'results' | 'roster' | 'strengths-weaknesses' | 'diagnostics'>('results');
+    const [assignments, setAssignments] = useState<any[]>([]);
+    const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+    const [showAssignModal, setShowAssignModal] = useState<boolean>(false);
+    const [assigning, setAssigning] = useState<boolean>(false);
+    const [assignSuccessMsg, setAssignSuccessMsg] = useState<string>('');
+
+    // Assign modal state
+    const [quizTitle, setQuizTitle] = useState<string>('');
+    const [quizSubject, setQuizSubject] = useState<string>('');
+    const [quizLevel, setQuizLevel] = useState<string>('');
+    const [quizQuestionCount, setQuizQuestionCount] = useState<number>(10);
+    const [quizTimerSeconds, setQuizTimerSeconds] = useState<number>(60);
+    const [quizMode, setQuizMode] = useState<'random' | 'manual'>('random');
+    const [selectedManualQIds, setSelectedManualQIds] = useState<string[]>([]);
+    const [poolQuestions, setPoolQuestions] = useState<any[]>([]);
+    const [loadingPool, setLoadingPool] = useState<boolean>(false);
+    const [poolSearch, setPoolSearch] = useState<string>('');
+    const [expandedAssignmentId, setExpandedAssignmentId] = useState<string | null>(null);
+
+    const [activeTab, setActiveTab] = useState<'results' | 'roster' | 'strengths-weaknesses' | 'diagnostics' | 'assigned-quizzes'>('results');
     const [classFilter, setClassFilter] = useState<string>('all');
     const [search, setSearch] = useState('');
     const [selectedReview, setSelectedReview] = useState<any | null>(null);
@@ -427,8 +447,14 @@ export function TeacherPortalView({
 
     const loadData = useCallback(async () => {
         try {
-            const res = await api.post('/api/teacher/performance', { token });
+            const [res, asgnRes] = await Promise.all([
+                api.post('/api/teacher/performance', { token }),
+                api.post('/api/teacher/quiz/list', { token }).catch(() => ({ data: { assignments: [] } }))
+            ]);
             setStats(res.data);
+            if (asgnRes.data?.assignments) {
+                setAssignments(asgnRes.data.assignments);
+            }
         } catch {
             // ignore
         } finally {
@@ -444,6 +470,133 @@ export function TeacherPortalView({
     const handleRefresh = () => {
         setRefreshing(true);
         loadData();
+    };
+
+    const toggleStudent = (id: string) => {
+        setSelectedStudentIds((prev) =>
+            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+        );
+    };
+
+    const selectAllStudents = () => {
+        if (!stats?.studentRoster) return;
+        const allIds = stats.studentRoster.map((s) => s.id);
+        setSelectedStudentIds(allIds);
+    };
+
+    const selectRemedialStudents = () => {
+        if (!stats?.studentRoster) return;
+        const remIds = stats.studentRoster
+            .filter((s) => (s.avgScore !== undefined && s.avgScore < 50) || (s.weaknesses && s.weaknesses.length > 0))
+            .map((s) => s.id);
+        if (remIds.length === 0) {
+            alert('No remedial students (< 50% or flagged weaknesses) found in roster.');
+            return;
+        }
+        setSelectedStudentIds(remIds);
+    };
+
+    const selectSectionStudents = (sec: string) => {
+        if (!stats?.studentRoster) return;
+        const secIds = stats.studentRoster
+            .filter((s) => (s.classSection || '').toLowerCase() === sec.toLowerCase())
+            .map((s) => s.id);
+        setSelectedStudentIds(secIds);
+    };
+
+    const clearSelectedStudents = () => {
+        setSelectedStudentIds([]);
+    };
+
+    const handleOpenAssignModal = () => {
+        if (selectedStudentIds.length === 0) {
+            alert('Please select at least one student from the roster.');
+            return;
+        }
+        const defaultSub = user.assignedSubjects?.[0] || 'Computing';
+        const firstSelected = stats?.studentRoster?.find((s) => selectedStudentIds.includes(s.id));
+        const defaultLvl = firstSelected ? (isNumeric(firstSelected.gradeLevel) ? `Basic ${firstSelected.gradeLevel}` : firstSelected.gradeLevel) : (user.assignedLevels?.[0] ? `Basic ${user.assignedLevels[0]}` : 'Basic 8');
+
+        setQuizTitle(`${defaultSub} Practice Quiz`);
+        setQuizSubject(defaultSub);
+        setQuizLevel(String(defaultLvl));
+        setQuizQuestionCount(10);
+        setQuizTimerSeconds(60);
+        setQuizMode('random');
+        setSelectedManualQIds([]);
+        setPoolSearch('');
+        setShowAssignModal(true);
+    };
+
+    const fetchPoolQuestions = async (sub: string, lvl: string) => {
+        if (!sub) return;
+        setLoadingPool(true);
+        try {
+            const res = await api.get(`/api/teacher/questions/pool?subject=${encodeURIComponent(sub)}&level=${encodeURIComponent(lvl)}`);
+            setPoolQuestions(res.data?.questions || []);
+        } catch {
+            setPoolQuestions([]);
+        } finally {
+            setLoadingPool(false);
+        }
+    };
+
+    const handleCreateAssignment = async () => {
+        if (!quizTitle.trim()) {
+            alert('Please enter a quiz title.');
+            return;
+        }
+        if (!quizSubject.trim()) {
+            alert('Please select a subject.');
+            return;
+        }
+        if (selectedStudentIds.length === 0) {
+            alert('Please select at least one student.');
+            return;
+        }
+        if (quizMode === 'manual' && selectedManualQIds.length === 0) {
+            alert('Please select questions from the pool or switch to random selection.');
+            return;
+        }
+        setAssigning(true);
+        try {
+            const payload: any = {
+                token,
+                title: quizTitle.trim(),
+                subjectName: quizSubject.trim(),
+                gradeLevel: quizLevel.trim() || 'Basic 8',
+                studentIds: selectedStudentIds,
+                questionCount: quizMode === 'manual' ? selectedManualQIds.length : quizQuestionCount,
+                timerSeconds: quizTimerSeconds || 60,
+            };
+            if (quizMode === 'manual' && selectedManualQIds.length > 0) {
+                payload.questionIds = selectedManualQIds;
+            }
+            const res = await api.post('/api/teacher/quiz/create', payload);
+            if (res.data?.ok) {
+                setShowAssignModal(false);
+                setSelectedStudentIds([]);
+                setSelectedManualQIds([]);
+                setAssignSuccessMsg(`Successfully assigned "${quizTitle}" to ${selectedStudentIds.length} student(s)!`);
+                setTimeout(() => setAssignSuccessMsg(''), 5000);
+                loadData();
+                setActiveTab('assigned-quizzes');
+            }
+        } catch (err: any) {
+            alert(err?.response?.data?.error || 'Failed to create quiz assignment');
+        } finally {
+            setAssigning(false);
+        }
+    };
+
+    const handleDeleteAssignment = async (asgnId: string) => {
+        if (!window.confirm('Are you sure you want to recall/delete this assigned quiz?')) return;
+        try {
+            await api.post('/api/teacher/quiz/delete', { token, assignmentId: asgnId });
+            loadData();
+        } catch (err: any) {
+            alert(err?.response?.data?.error || 'Failed to delete assignment');
+        }
     };
 
     const handleExportGradebook = () => {
@@ -579,14 +732,6 @@ export function TeacherPortalView({
                         </label>
                         <button
                             type="button"
-                            onClick={onSwitchToStudent}
-                            className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 px-3 py-1.5 text-xs font-semibold text-[#364c83] hover:bg-indigo-100"
-                        >
-                            <GraduationCap size={13} />
-                            Preview Exams
-                        </button>
-                        <button
-                            type="button"
                             onClick={onLogout}
                             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-red-50 hover:text-red-700"
                         >
@@ -668,6 +813,16 @@ export function TeacherPortalView({
                 >
                     <Sparkles size={16} />
                     Common Question Misconceptions
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('assigned-quizzes')}
+                    className={`pb-3 text-xs sm:text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${
+                        activeTab === 'assigned-quizzes' ? 'border-[#364c83] text-[#364c83]' : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                >
+                    <ClipboardList size={16} />
+                    Assigned Quizzes ({assignments.length})
                 </button>
             </div>
 
@@ -1047,91 +1202,195 @@ export function TeacherPortalView({
 
             {/* Tab 3: Class Roster */}
             {activeTab === 'roster' && (
-                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
-                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                        <div>
-                            <h3 className="text-sm font-bold text-slate-900">Enrolled Students in Your Assigned Classes</h3>
-                            <p className="text-xs text-slate-500">
-                                Click "Diagnostic Profile" on any student to view their individual strengths, weaknesses, and remediation advice.
-                            </p>
+                <div className="space-y-4">
+                    {assignSuccessMsg && (
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-xs font-semibold text-emerald-800 flex items-center justify-between shadow-xs">
+                            <span className="flex items-center gap-2">
+                                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                                {assignSuccessMsg}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setAssignSuccessMsg('')}
+                                className="text-emerald-700 hover:text-emerald-900"
+                            >
+                                <X size={14} />
+                            </button>
                         </div>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
-                            <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase">
-                                <tr>
-                                    <th className="px-4 py-2.5">Student Name &amp; ID</th>
-                                    <th className="px-4 py-2.5">Grade Level</th>
-                                    <th className="px-4 py-2.5">Section</th>
-                                    <th className="px-4 py-2.5">Tests Taken</th>
-                                    <th className="px-4 py-2.5">Average Score</th>
-                                    <th className="px-4 py-2.5">Strengths (≥ 70%)</th>
-                                    <th className="px-4 py-2.5">Weaknesses (&lt; 50%)</th>
-                                    <th className="px-4 py-2.5 text-right">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {stats?.studentRoster?.map((s) => (
-                                    <tr key={s.id} className="hover:bg-slate-50/60">
-                                        <td className="px-4 py-2.5">
-                                            <span className="font-semibold text-slate-900 block">{s.name}</span>
-                                            <span className="text-[11px] font-mono text-slate-500 font-normal">
-                                                ID: {s.studentCode || s.id?.slice(0, 8)?.toUpperCase()}
-                                            </span>
-                                        </td>
-                                        <td className="px-4 py-2.5 text-slate-700">{isNumeric(s.gradeLevel) ? `Basic ${s.gradeLevel}` : s.gradeLevel}</td>
-                                        <td className="px-4 py-2.5 text-slate-700">{s.classSection || '--'}</td>
-                                        <td className="px-4 py-2.5 font-bold text-slate-900">{s.examsTaken ?? '--'}</td>
-                                        <td className="px-4 py-2.5 font-bold text-[#364c83]">
-                                            {s.avgScore ? `${s.avgScore}%` : '--'}
-                                        </td>
-                                        <td className="px-4 py-2.5">
-                                            {s.strengths && s.strengths.length > 0 ? (
-                                                <div className="flex flex-wrap gap-1">
-                                                    {s.strengths.map((str, idx) => (
-                                                        <span key={idx} className="rounded bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-medium">
-                                                            {str}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <span className="text-slate-400 text-[11px]">--</span>
-                                            )}
-                                        </td>
-                                        <td className="px-4 py-2.5">
-                                            {s.weaknesses && s.weaknesses.length > 0 ? (
-                                                <div className="flex flex-wrap gap-1">
-                                                    {s.weaknesses.map((wk, idx) => (
-                                                        <span key={idx} className="rounded bg-rose-50 text-rose-800 border border-rose-200 px-1.5 py-0.5 text-[10px] font-medium">
-                                                            {wk}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <span className="text-slate-400 text-[11px]">None identified</span>
-                                            )}
-                                        </td>
-                                        <td className="px-4 py-2.5 text-right">
-                                            <button
-                                                type="button"
-                                                onClick={() => setSelectedStudentDiagnostic(s)}
-                                                className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50/80 px-2.5 py-1 text-xs font-bold text-[#364c83] hover:bg-indigo-100 shadow-2xs whitespace-nowrap"
-                                            >
-                                                <Target size={12} />
-                                                Diagnostic Profile
-                                            </button>
-                                        </td>
-                                    </tr>
+                    )}
+
+                    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                            <div>
+                                <h3 className="text-sm font-bold text-slate-900">Enrolled Students in Your Assigned Classes</h3>
+                                <p className="text-xs text-slate-500">
+                                    Select students or student groups below to administer a targeted quiz, or click "Diagnostic Profile" for individual analysis.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={handleOpenAssignModal}
+                                disabled={selectedStudentIds.length === 0}
+                                className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition shadow-sm ${
+                                    selectedStudentIds.length > 0
+                                        ? 'bg-[#364c83] text-white hover:bg-[#1f2d57] cursor-pointer'
+                                        : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                                }`}
+                                title={selectedStudentIds.length === 0 ? 'Select students using the checkboxes below first' : 'Assign quiz to chosen students'}
+                            >
+                                <ClipboardList size={15} />
+                                <span>Assign Quiz to Selected ({selectedStudentIds.length})</span>
+                            </button>
+                        </div>
+
+                        {/* Group Selection Toolbar */}
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs font-bold text-[#364c83] flex items-center gap-1.5 mr-1">
+                                    <Filter size={13} />
+                                    Quick Select:
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={selectAllStudents}
+                                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-[#364c83] shadow-2xs"
+                                >
+                                    Select All ({stats?.studentRoster?.length || 0})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={selectRemedialStudents}
+                                    className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-800 hover:bg-rose-100 shadow-2xs"
+                                    title="Select students with score < 50% or diagnosed weaknesses"
+                                >
+                                    Remedial Group (&lt; 50%)
+                                </button>
+
+                                {Array.from(new Set((stats?.studentRoster || []).map((s) => s.classSection).filter(Boolean))).map((sec) => (
+                                    <button
+                                        key={sec}
+                                        type="button"
+                                        onClick={() => selectSectionStudents(String(sec))}
+                                        className="rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-[#364c83] hover:bg-indigo-50 shadow-2xs"
+                                    >
+                                        Section {sec}
+                                    </button>
                                 ))}
-                                {(!stats?.studentRoster || stats.studentRoster.length === 0) && (
-                                    <tr>
-                                        <td colSpan={8} className="py-6 text-center text-slate-400">
-                                            No students mounted in your assigned classes yet. Ask your School Head to mount students.
-                                        </td>
-                                    </tr>
+
+                                {selectedStudentIds.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={clearSelectedStudents}
+                                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-500 hover:text-slate-800 shadow-2xs"
+                                    >
+                                        Clear Selection
+                                    </button>
                                 )}
-                            </tbody>
-                        </table>
+                            </div>
+
+                            <span className="text-xs font-semibold text-slate-600">
+                                <strong className="text-[#364c83]">{selectedStudentIds.length}</strong> of {stats?.studentRoster?.length || 0} students selected
+                            </span>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs">
+                                <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase">
+                                    <tr>
+                                        <th className="px-3 py-2.5 w-10 text-center">
+                                            <input
+                                                type="checkbox"
+                                                checked={Boolean(stats?.studentRoster?.length && selectedStudentIds.length === stats.studentRoster.length)}
+                                                onChange={(e) => (e.target.checked ? selectAllStudents() : clearSelectedStudents())}
+                                                className="rounded border-slate-300 text-[#364c83] focus:ring-[#364c83] cursor-pointer"
+                                                title="Select / Deselect All"
+                                            />
+                                        </th>
+                                        <th className="px-4 py-2.5">Student Name &amp; ID</th>
+                                        <th className="px-4 py-2.5">Grade Level</th>
+                                        <th className="px-4 py-2.5">Section</th>
+                                        <th className="px-4 py-2.5">Tests Taken</th>
+                                        <th className="px-4 py-2.5">Average Score</th>
+                                        <th className="px-4 py-2.5">Strengths (≥ 70%)</th>
+                                        <th className="px-4 py-2.5">Weaknesses (&lt; 50%)</th>
+                                        <th className="px-4 py-2.5 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {stats?.studentRoster?.map((s) => {
+                                        const isSelected = selectedStudentIds.includes(s.id);
+                                        return (
+                                            <tr key={s.id} className={`hover:bg-slate-50/60 transition ${isSelected ? 'bg-indigo-50/30' : ''}`}>
+                                                <td className="px-3 py-2.5 text-center">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={() => toggleStudent(s.id)}
+                                                        className="rounded border-slate-300 text-[#364c83] focus:ring-[#364c83] cursor-pointer"
+                                                    />
+                                                </td>
+                                                <td className="px-4 py-2.5">
+                                                    <span className="font-semibold text-slate-900 block">{s.name}</span>
+                                                    <span className="text-[11px] font-mono text-slate-500 font-normal">
+                                                        ID: {s.studentCode || s.id?.slice(0, 8)?.toUpperCase()}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-2.5 text-slate-700">{isNumeric(s.gradeLevel) ? `Basic ${s.gradeLevel}` : s.gradeLevel}</td>
+                                                <td className="px-4 py-2.5 text-slate-700">{s.classSection || '--'}</td>
+                                                <td className="px-4 py-2.5 font-bold text-slate-900">{s.examsTaken ?? '--'}</td>
+                                                <td className="px-4 py-2.5 font-bold text-[#364c83]">
+                                                    {s.avgScore ? `${s.avgScore}%` : '--'}
+                                                </td>
+                                                <td className="px-4 py-2.5">
+                                                    {s.strengths && s.strengths.length > 0 ? (
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {s.strengths.map((str, idx) => (
+                                                                <span key={idx} className="rounded bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-medium">
+                                                                    {str}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-slate-400 text-[11px]">--</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-2.5">
+                                                    {s.weaknesses && s.weaknesses.length > 0 ? (
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {s.weaknesses.map((wk, idx) => (
+                                                                <span key={idx} className="rounded bg-rose-50 text-rose-800 border border-rose-200 px-1.5 py-0.5 text-[10px] font-medium">
+                                                                    {wk}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-slate-400 text-[11px]">None identified</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-2.5 text-right">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSelectedStudentDiagnostic(s)}
+                                                        className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50/80 px-2.5 py-1 text-xs font-bold text-[#364c83] hover:bg-indigo-100 shadow-2xs whitespace-nowrap cursor-pointer"
+                                                    >
+                                                        <Target size={12} />
+                                                        Diagnostic Profile
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                    {(!stats?.studentRoster || stats.studentRoster.length === 0) && (
+                                        <tr>
+                                            <td colSpan={9} className="py-6 text-center text-slate-400">
+                                                No students mounted in your assigned classes yet. Ask your School Head to mount students.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             )}
@@ -1166,6 +1425,515 @@ export function TeacherPortalView({
                                     No diagnostics data yet. Once your students take quizzes, common misconceptions will be highlighted here.
                                 </p>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Tab 5: Assigned Quizzes */}
+            {activeTab === 'assigned-quizzes' && (
+                <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <h3 className="text-sm font-bold text-slate-900">Assigned Quizzes Management</h3>
+                            <p className="text-xs text-slate-500">
+                                Monitor completion progress, student scores, and track who has completed or pending assignments.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (selectedStudentIds.length === 0) {
+                                    selectAllStudents();
+                                }
+                                handleOpenAssignModal();
+                            }}
+                            className="flex items-center gap-1.5 rounded-xl bg-[#364c83] px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#1f2d57] transition cursor-pointer"
+                        >
+                            <Plus size={14} />
+                            <span>Create New Quiz Assignment</span>
+                        </button>
+                    </div>
+
+                    <div className="space-y-3">
+                        {assignments.map((asgn) => {
+                            const completed = asgn.completedCount || 0;
+                            const total = asgn.totalAssigned || (asgn.assignedStudentIds ? asgn.assignedStudentIds.length : 0);
+                            const pctComplete = total > 0 ? Math.round((completed / total) * 100) : 0;
+                            const isExpanded = expandedAssignmentId === asgn.id;
+
+                            return (
+                                <div key={asgn.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                        <div>
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <h4 className="text-sm font-bold text-slate-900">{asgn.title}</h4>
+                                                <span className="rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-bold text-[#364c83]">
+                                                    {asgn.subjectName} &middot; {asgn.gradeLevel}
+                                                </span>
+                                                <span className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-800 flex items-center gap-1">
+                                                    <Clock size={11} />
+                                                    {asgn.timerSeconds || 60}s / Q
+                                                </span>
+                                                <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                                                    {asgn.questionCount || (asgn.questionIds ? asgn.questionIds.length : 0)} Questions
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-slate-500 mt-1">
+                                                Assigned on {new Date(asgn.createdAt).toLocaleDateString()} to {total} student{total === 1 ? '' : 's'}
+                                            </p>
+                                        </div>
+
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setExpandedAssignmentId(isExpanded ? null : asgn.id)}
+                                                className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-2xs cursor-pointer"
+                                            >
+                                                <Users size={13} />
+                                                <span>{isExpanded ? 'Hide Submissions' : `View Submissions (${completed}/${total})`}</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteAssignment(asgn.id)}
+                                                className="rounded-lg border border-rose-200 bg-rose-50 p-1.5 text-rose-700 hover:bg-rose-100 transition shadow-2xs cursor-pointer"
+                                                title="Recall / Delete Quiz Assignment"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Progress Bar */}
+                                    <div className="mt-4">
+                                        <div className="flex items-center justify-between text-xs text-slate-600 mb-1.5">
+                                            <span className="font-semibold">Completion Progress</span>
+                                            <span className="font-bold text-[#364c83]">
+                                                {completed} of {total} completed ({pctComplete}%)
+                                            </span>
+                                        </div>
+                                        <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+                                            <div
+                                                className="h-full bg-linear-to-r from-[#364c83] to-emerald-600 rounded-full transition-all duration-300"
+                                                style={{ width: `${pctComplete}%` }}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* Collapsible Student Completion Table */}
+                                    {isExpanded && (
+                                        <div className="mt-4 pt-4 border-t border-slate-100 overflow-x-auto">
+                                            <table className="w-full text-left text-xs">
+                                                <thead className="bg-slate-50 text-slate-600 font-bold uppercase text-[10px]">
+                                                    <tr>
+                                                        <th className="px-3 py-2">Student Name</th>
+                                                        <th className="px-3 py-2">Section</th>
+                                                        <th className="px-3 py-2">Status</th>
+                                                        <th className="px-3 py-2">Score</th>
+                                                        <th className="px-3 py-2">Percentage</th>
+                                                        <th className="px-3 py-2 text-right">Completion Date</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100">
+                                                    {asgn.studentStatuses?.map((st: any) => {
+                                                        const isDone = st.status === 'Completed';
+                                                        return (
+                                                            <tr key={st.studentId} className="hover:bg-slate-50/60">
+                                                                <td className="px-3 py-2 font-semibold text-slate-900">{st.studentName}</td>
+                                                                <td className="px-3 py-2 text-slate-600">{st.classSection || '--'}</td>
+                                                                <td className="px-3 py-2">
+                                                                    <span
+                                                                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                                                            isDone
+                                                                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                                                                : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                                                        }`}
+                                                                    >
+                                                                        {isDone ? <CheckCircle2 size={11} /> : <Clock size={11} />}
+                                                                        {st.status}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-3 py-2 font-bold text-slate-800">
+                                                                    {isDone ? `${st.score}/${st.total}` : '--'}
+                                                                </td>
+                                                                <td className="px-3 py-2 font-bold text-[#364c83]">
+                                                                    {isDone ? `${st.percent}%` : '--'}
+                                                                </td>
+                                                                <td className="px-3 py-2 text-right text-slate-500">
+                                                                    {st.completedAt ? new Date(st.completedAt).toLocaleString() : 'Pending'}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+
+                        {assignments.length === 0 && (
+                            <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center">
+                                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-[#364c83] mb-3">
+                                    <ClipboardList size={26} />
+                                </div>
+                                <h4 className="text-base font-bold text-slate-900">No Quizzes Assigned Yet</h4>
+                                <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-4">
+                                    Go to the "Class Roster" tab, select students (or click "Select Remedial"), and click "Assign Quiz" to administer focused tests from the question pool.
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveTab('roster')}
+                                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#364c83] px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#1f2d57] transition cursor-pointer"
+                                >
+                                    <Users size={14} />
+                                    <span>Go to Class Roster &amp; Select Students</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Modal: Assign Quiz to Selected Students */}
+            {showAssignModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+                    <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                            <div className="flex items-center gap-3">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#364c83] text-white">
+                                    <ClipboardList size={22} />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Assign Quiz from Question Pool</h3>
+                                    <p className="text-xs text-slate-500">
+                                        Assigning to <strong>{selectedStudentIds.length}</strong> selected student{selectedStudentIds.length === 1 ? '' : 's'}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowAssignModal(false)}
+                                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 cursor-pointer"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Selected Students Chips Preview */}
+                        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                            <span className="text-[11px] font-bold text-slate-600 block mb-1.5 uppercase tracking-wide">
+                                Target Students ({selectedStudentIds.length}):
+                            </span>
+                            <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                                {selectedStudentIds.map((sid) => {
+                                    const st = stats?.studentRoster?.find((s) => s.id === sid);
+                                    return (
+                                        <span
+                                            key={sid}
+                                            className="inline-flex items-center gap-1 rounded-md bg-white border border-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-700 shadow-2xs"
+                                        >
+                                            {st ? st.name : sid}
+                                            <button
+                                                type="button"
+                                                onClick={() => toggleStudent(sid)}
+                                                className="text-slate-400 hover:text-rose-600 ml-0.5"
+                                            >
+                                                &times;
+                                            </button>
+                                        </span>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Assignment Configuration Form */}
+                        <div className="mt-4 space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">
+                                    Quiz Title <span className="text-rose-500">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={quizTitle}
+                                    onChange={(e) => setQuizTitle(e.target.value)}
+                                    placeholder="e.g. Computing Term Revision Quiz"
+                                    className="input w-full text-xs font-medium"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                                        Subject <span className="text-rose-500">*</span>
+                                    </label>
+                                    <select
+                                        value={quizSubject}
+                                        onChange={(e) => {
+                                            const sub = e.target.value;
+                                            setQuizSubject(sub);
+                                            if (quizMode === 'manual') fetchPoolQuestions(sub, quizLevel);
+                                        }}
+                                        className="input w-full text-xs font-semibold"
+                                    >
+                                        {user.assignedSubjects && user.assignedSubjects.length > 0 ? (
+                                            user.assignedSubjects.map((sub) => (
+                                                <option key={sub} value={sub}>
+                                                    {sub}
+                                                </option>
+                                            ))
+                                        ) : (
+                                            <>
+                                                <option value="Computing">Computing</option>
+                                                <option value="Information and Communications Technology (ICT)">
+                                                    Information and Communications Technology (ICT)
+                                                </option>
+                                                <option value="Mathematics">Mathematics</option>
+                                                <option value="English Language">English Language</option>
+                                                <option value="Integrated Science">Integrated Science</option>
+                                                <option value="Social Studies">Social Studies</option>
+                                            </>
+                                        )}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                                        Target Grade Level <span className="text-rose-500">*</span>
+                                    </label>
+                                    <select
+                                        value={quizLevel}
+                                        onChange={(e) => {
+                                            const lvl = e.target.value;
+                                            setQuizLevel(lvl);
+                                            if (quizMode === 'manual') fetchPoolQuestions(quizSubject, lvl);
+                                        }}
+                                        className="input w-full text-xs font-semibold"
+                                    >
+                                        <option value="Basic 7">Basic 7</option>
+                                        <option value="Basic 8">Basic 8</option>
+                                        <option value="Basic 9">Basic 9</option>
+                                        <option value="BECE">BECE</option>
+                                        <option value="SHS 1">SHS 1</option>
+                                        <option value="SHS 2">SHS 2</option>
+                                        <option value="SHS 3">SHS 3</option>
+                                        <option value="WASSCE">WASSCE</option>
+                                        <option value="Basic 4">Basic 4</option>
+                                        <option value="Basic 5">Basic 5</option>
+                                        <option value="Basic 6">Basic 6</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Required Quiz Number / Question Volume */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                                    Number of Exam Questions to Administer:
+                                </label>
+                                <div className="flex flex-wrap gap-1.5 items-center">
+                                    {[10, 15, 20, 25, 30, 40, 50].map((num) => (
+                                        <button
+                                            key={num}
+                                            type="button"
+                                            onClick={() => setQuizQuestionCount(num)}
+                                            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-2xs cursor-pointer ${
+                                                quizQuestionCount === num
+                                                    ? 'bg-[#364c83] text-white shadow-xs'
+                                                    : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            {num} Questions
+                                        </button>
+                                    ))}
+                                    <div className="flex items-center gap-1 ml-1">
+                                        <span className="text-xs text-slate-500 font-semibold">Custom:</span>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={100}
+                                            value={quizQuestionCount}
+                                            onChange={(e) => setQuizQuestionCount(Math.max(1, Number(e.target.value) || 10))}
+                                            className="w-16 input py-1 px-2 text-xs text-center font-bold"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Default 60-second Timer Setup */}
+                            <div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                                        <Clock size={14} className="text-[#364c83]" />
+                                        Question Timer Pace (Enforced Default 60 Seconds):
+                                    </label>
+                                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                        {quizTimerSeconds === 60 ? 'Standard 60s Default' : `${quizTimerSeconds}s Custom Pace`}
+                                    </span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5 items-center">
+                                    {[30, 45, 60, 90, 120].map((sec) => (
+                                        <button
+                                            key={sec}
+                                            type="button"
+                                            onClick={() => setQuizTimerSeconds(sec)}
+                                            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-2xs cursor-pointer ${
+                                                quizTimerSeconds === sec
+                                                    ? 'bg-emerald-700 text-white shadow-xs'
+                                                    : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            {sec}s {sec === 60 ? '(Default)' : ''}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-[11px] text-slate-400 mt-1">
+                                    Students cannot change or bypass this timer during examination.
+                                </p>
+                            </div>
+
+                            {/* Question Pool Selection Mode */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                                    Question Pool Selection Method:
+                                </label>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setQuizMode('random')}
+                                        className={`rounded-xl border p-3 text-left transition cursor-pointer ${
+                                            quizMode === 'random'
+                                                ? 'border-[#364c83] bg-indigo-50/50 shadow-2xs'
+                                                : 'border-slate-200 bg-white hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        <span className="font-bold text-xs text-slate-900 block">
+                                            🎲 Automatic Random Draw
+                                        </span>
+                                        <span className="text-[11px] text-slate-500 mt-0.5 block">
+                                            Automatically pulls {quizQuestionCount} questions from the pool for {quizSubject}.
+                                        </span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setQuizMode('manual');
+                                            fetchPoolQuestions(quizSubject, quizLevel);
+                                        }}
+                                        className={`rounded-xl border p-3 text-left transition cursor-pointer ${
+                                            quizMode === 'manual'
+                                                ? 'border-[#364c83] bg-indigo-50/50 shadow-2xs'
+                                                : 'border-slate-200 bg-white hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        <span className="font-bold text-xs text-slate-900 block">
+                                            📋 Browse &amp; Select Questions
+                                        </span>
+                                        <span className="text-[11px] text-slate-500 mt-0.5 block">
+                                            Hand-pick exact questions from the pool ({selectedManualQIds.length} chosen).
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Manual Question Picker from Pool */}
+                            {quizMode === 'manual' && (
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-xs font-bold text-slate-800">
+                                            Pool Questions for {quizSubject} ({poolQuestions.length} Available):
+                                        </span>
+                                        <span className="text-xs font-bold text-[#364c83]">
+                                            {selectedManualQIds.length} questions chosen
+                                        </span>
+                                    </div>
+
+                                    <div className="relative">
+                                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input
+                                            type="text"
+                                            value={poolSearch}
+                                            onChange={(e) => setPoolSearch(e.target.value)}
+                                            placeholder="Search question pool text or topic..."
+                                            className="input pl-8 py-1.5 text-xs w-full bg-white"
+                                        />
+                                    </div>
+
+                                    {loadingPool ? (
+                                        <div className="flex items-center justify-center gap-2 py-8 text-slate-400 text-xs">
+                                            <Loader2 size={16} className="animate-spin text-[#364c83]" />
+                                            Loading questions from pool...
+                                        </div>
+                                    ) : (
+                                        <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                                            {poolQuestions
+                                                .filter((q) => !poolSearch || q.text.toLowerCase().includes(poolSearch.toLowerCase()) || (q.category && q.category.toLowerCase().includes(poolSearch.toLowerCase())))
+                                                .map((q, idx) => {
+                                                    const isChosen = selectedManualQIds.includes(q.id);
+                                                    return (
+                                                        <div
+                                                            key={q.id}
+                                                            onClick={() => {
+                                                                setSelectedManualQIds((prev) =>
+                                                                    prev.includes(q.id) ? prev.filter((x) => x !== q.id) : [...prev, q.id]
+                                                                );
+                                                            }}
+                                                            className={`rounded-lg border p-2.5 text-xs transition cursor-pointer ${
+                                                                isChosen
+                                                                    ? 'border-[#364c83] bg-indigo-50/70 text-slate-900 font-medium'
+                                                                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-start gap-2">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={isChosen}
+                                                                    readOnly
+                                                                    className="mt-0.5 rounded border-slate-300 text-[#364c83] focus:ring-[#364c83]"
+                                                                />
+                                                                <div className="flex-1">
+                                                                    <div className="flex items-center gap-2 text-[10px] text-slate-500 font-bold mb-0.5">
+                                                                        <span>#{idx + 1}</span>
+                                                                        {q.category && <span className="text-[#364c83]">{q.category}</span>}
+                                                                        {q.year && <span>WAEC {q.year}</span>}
+                                                                    </div>
+                                                                    <p className="line-clamp-2">{q.text}</p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            {poolQuestions.length === 0 && (
+                                                <p className="text-center py-6 text-slate-400 text-xs">
+                                                    No pool questions found for {quizSubject} ({quizLevel}).
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Modal Action Buttons */}
+                        <div className="mt-6 flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+                            <button
+                                type="button"
+                                onClick={() => setShowAssignModal(false)}
+                                disabled={assigning}
+                                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleCreateAssignment}
+                                disabled={assigning}
+                                className="flex items-center gap-2 rounded-xl bg-[#364c83] px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-[#1f2d57] transition cursor-pointer"
+                            >
+                                {assigning && <Loader2 size={14} className="animate-spin text-white" />}
+                                <span>{assigning ? 'Assigning...' : `Assign Quiz to ${selectedStudentIds.length} Student(s)`}</span>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -1383,12 +2151,12 @@ export function SchoolAdminPortalView({
     user,
     token,
     onLogout,
-    onSwitchToStudent,
+    onSwitchToStudent: _onSwitchToStudent,
 }: {
     user: PortalUser;
     token: string;
     onLogout: () => void;
-    onSwitchToStudent: () => void;
+    onSwitchToStudent?: () => void;
 }) {
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<any | null>(null);
@@ -1991,14 +2759,6 @@ export function SchoolAdminPortalView({
                         >
                             <School size={13} className={tab === 'profile' ? 'text-white' : 'text-[#364c83]'} />
                             Profile &amp; Settings
-                        </button>
-                        <button
-                            type="button"
-                            onClick={onSwitchToStudent}
-                            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                        >
-                            <GraduationCap size={13} />
-                            Preview Exams
                         </button>
                         <button
                             type="button"

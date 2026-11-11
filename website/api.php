@@ -52,7 +52,7 @@ function getDb() {
     if (!is_array($data)) {
         $data = [];
     }
-    foreach (['subjects', 'questions', 'settings', 'users', 'sessions', 'results', 'messages', 'schools'] as $key) {
+    foreach (['subjects', 'questions', 'settings', 'users', 'sessions', 'results', 'messages', 'schools', 'quiz_assignments'] as $key) {
         if (!isset($data[$key]) || !is_array($data[$key])) {
             $data[$key] = [];
         }
@@ -343,10 +343,10 @@ function normLevel($raw) {
 }
 
 $DEFAULT_TIMERS = [
-    'ges-promotion' => 45,
-    'basic' => 30,
-    'bece' => 45,
-    'shs' => 45,
+    'ges-promotion' => 60,
+    'basic' => 60,
+    'bece' => 60,
+    'shs' => 60,
     'wassce' => 60,
     'gtle' => 60,
 ];
@@ -847,6 +847,7 @@ if ($route === 'exam/submit' && $method === 'POST') {
         'percent' => $percent,
         'passed' => $passed,
         'details' => $details,
+        'assignmentId' => !empty($b['assignmentId']) ? (string)$b['assignmentId'] : null,
         'createdAt' => $now
     ];
 
@@ -4037,6 +4038,410 @@ if ($route === 'teacher/performance' && $method === 'POST') {
         'competencyDiagnostics' => $competencyDiagnostics,
         'results' => array_slice($teacherResults, 0, 100),
         'topMissedQuestions' => array_slice($topMissedQuestions, 0, 15)
+    ]);
+}
+
+// -----------------------------------------------------------------------------
+// Teacher Quiz Assignment Endpoints
+// -----------------------------------------------------------------------------
+
+// GET /api/teacher/questions/pool
+if ($route === 'teacher/questions/pool' && $method === 'GET') {
+    $level = trim((string)($_GET['level'] ?? ''));
+    $subjectParam = trim((string)($_GET['subject'] ?? ''));
+    if ($subjectParam === '') {
+        errorOut('Subject parameter required', 400);
+    }
+
+    $subId = $subjectParam;
+    $subName = $subjectParam;
+    foreach ($db['subjects'] as $s) {
+        if (($s['id'] ?? '') === $subjectParam || strcasecmp((string)($s['name'] ?? ''), $subjectParam) === 0) {
+            $subId = (string)($s['id'] ?? '');
+            $subName = (string)($s['name'] ?? '');
+            break;
+        }
+    }
+
+    $pool = [];
+    $targetLvl = str_replace('basic ', '', strtolower($level));
+
+    foreach ($db['questions'] as $q) {
+        $qSubId = (string)($q['subjectId'] ?? '');
+        $qSubName = (string)($q['subjectName'] ?? '');
+        $matchSub = ($qSubId === $subId || strcasecmp($qSubName, $subName) === 0);
+        if (!$matchSub) continue;
+
+        if ($level !== '' && $level !== 'all') {
+            $qLvl = str_replace('basic ', '', strtolower((string)($q['level'] ?? '')));
+            $matchLvl = ($qLvl === $targetLvl);
+            if (!$matchLvl && in_array($targetLvl, ['7', '8', '9', 'bece'], true) && in_array($qLvl, ['7', '8', '9', 'bece'], true)) {
+                $matchLvl = true;
+            }
+            if (!$matchLvl && in_array($targetLvl, ['4', '5', '6'], true) && in_array($qLvl, ['4', '5', '6'], true)) {
+                $matchLvl = true;
+            }
+            if (!$matchLvl && in_array($targetLvl, ['shs 1', 'shs 2', 'shs 3', 'wassce', 'shs'], true) && in_array($qLvl, ['shs 1', 'shs 2', 'shs 3', 'wassce', 'shs'], true)) {
+                $matchLvl = true;
+            }
+            if (!$matchLvl) continue;
+        }
+
+        $pool[] = [
+            'id' => (string)($q['id'] ?? ''),
+            'text' => (string)($q['text'] ?? ''),
+            'options' => is_array($q['options'] ?? null) ? $q['options'] : [],
+            'category' => $q['category'] ?? null,
+            'year' => $q['year'] ?? null,
+            'explanation' => $q['explanation'] ?? null,
+            'level' => $q['level'] ?? null,
+            'subjectId' => $q['subjectId'] ?? null
+        ];
+    }
+
+    jsonOut([
+        'ok' => true,
+        'totalAvailable' => count($pool),
+        'questions' => $pool
+    ]);
+}
+
+// POST /api/teacher/quiz/create
+if ($route === 'teacher/quiz/create' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || !in_array($u['role'] ?? '', ['teacher', 'school_admin', 'admin', 'superadmin'], true)) {
+        errorOut('Teacher or school admin authorization required', 403);
+    }
+
+    $title = trim((string)($b['title'] ?? ''));
+    $subjectName = trim((string)($b['subjectName'] ?? ''));
+    $gradeLevel = trim((string)($b['gradeLevel'] ?? ''));
+    $studentIds = is_array($b['studentIds'] ?? null) ? array_map('strval', $b['studentIds']) : [];
+    $studentIds = array_values(array_filter($studentIds));
+    $reqCount = max(1, (int)($b['questionCount'] ?? 10));
+    $timerSeconds = max(0, isset($b['timerSeconds']) ? (int)$b['timerSeconds'] : 60);
+    $explicitQIds = is_array($b['questionIds'] ?? null) ? array_map('strval', $b['questionIds']) : [];
+    $explicitQIds = array_values(array_filter($explicitQIds));
+
+    if ($title === '') errorOut('Quiz title is required', 400);
+    if ($subjectName === '') errorOut('Subject is required', 400);
+    if ($gradeLevel === '') errorOut('Grade level is required', 400);
+    if (empty($studentIds)) errorOut('Please select at least one student to assign the quiz to', 400);
+
+    $subId = $subjectName;
+    $subMatchedName = $subjectName;
+    foreach ($db['subjects'] as $s) {
+        if (($s['id'] ?? '') === $subjectName || strcasecmp((string)($s['name'] ?? ''), $subjectName) === 0) {
+            $subId = (string)($s['id'] ?? '');
+            $subMatchedName = (string)($s['name'] ?? '');
+            break;
+        }
+    }
+
+    $finalQuestionIds = [];
+    if (!empty($explicitQIds)) {
+        $finalQuestionIds = $explicitQIds;
+    } else {
+        $candidateIds = [];
+        $targetLvl = str_replace('basic ', '', strtolower($gradeLevel));
+        foreach ($db['questions'] as $q) {
+            $qSubId = (string)($q['subjectId'] ?? '');
+            $qSubName = (string)($q['subjectName'] ?? '');
+            $matchSub = ($qSubId === $subId || strcasecmp($qSubName, $subMatchedName) === 0);
+            if (!$matchSub) continue;
+
+            $qLvl = str_replace('basic ', '', strtolower((string)($q['level'] ?? '')));
+            $matchLvl = ($qLvl === $targetLvl);
+            if (!$matchLvl && in_array($targetLvl, ['7', '8', '9', 'bece'], true) && in_array($qLvl, ['7', '8', '9', 'bece'], true)) {
+                $matchLvl = true;
+            }
+            if (!$matchLvl && in_array($targetLvl, ['4', '5', '6'], true) && in_array($qLvl, ['4', '5', '6'], true)) {
+                $matchLvl = true;
+            }
+            if (!$matchLvl && in_array($targetLvl, ['shs 1', 'shs 2', 'shs 3', 'wassce', 'shs'], true) && in_array($qLvl, ['shs 1', 'shs 2', 'shs 3', 'wassce', 'shs'], true)) {
+                $matchLvl = true;
+            }
+            if ($matchLvl) {
+                $candidateIds[] = (string)($q['id'] ?? '');
+            }
+        }
+
+        if (count($candidateIds) === 0) {
+            foreach ($db['questions'] as $q) {
+                $qSubId = (string)($q['subjectId'] ?? '');
+                $qSubName = (string)($q['subjectName'] ?? '');
+                if ($qSubId === $subId || strcasecmp($qSubName, $subMatchedName) === 0) {
+                    $candidateIds[] = (string)($q['id'] ?? '');
+                }
+            }
+        }
+
+        shuffle($candidateIds);
+        $finalQuestionIds = array_slice($candidateIds, 0, $reqCount);
+    }
+
+    if (empty($finalQuestionIds)) {
+        errorOut('No questions available in the question pool for ' . $subjectName . ' (' . $gradeLevel . ')', 400);
+    }
+
+    $assignmentId = 'asgn_' . time() . '_' . bin2hex(random_bytes(4));
+    $assignmentRecord = [
+        'id' => $assignmentId,
+        'title' => $title,
+        'teacherId' => (string)($u['id'] ?? ''),
+        'teacherName' => (string)($u['name'] ?? 'Teacher'),
+        'schoolId' => (string)($u['schoolId'] ?? ''),
+        'subjectId' => $subId,
+        'subjectName' => $subMatchedName,
+        'gradeLevel' => $gradeLevel,
+        'questionCount' => count($finalQuestionIds),
+        'questionIds' => $finalQuestionIds,
+        'assignedStudentIds' => $studentIds,
+        'timerSeconds' => $timerSeconds,
+        'status' => 'active',
+        'createdAt' => (int)(microtime(true) * 1000)
+    ];
+
+    if (!isset($db['quiz_assignments']) || !is_array($db['quiz_assignments'])) {
+        $db['quiz_assignments'] = [];
+    }
+    $db['quiz_assignments'][] = $assignmentRecord;
+    saveDb($db);
+
+    jsonOut([
+        'ok' => true,
+        'assignmentId' => $assignmentId,
+        'questionCount' => count($finalQuestionIds),
+        'assignedCount' => count($studentIds),
+        'assignment' => $assignmentRecord
+    ]);
+}
+
+// POST /api/teacher/quiz/list
+if ($route === 'teacher/quiz/list' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || !in_array($u['role'] ?? '', ['teacher', 'school_admin', 'admin', 'superadmin'], true)) {
+        errorOut('Teacher or school admin authorization required', 403);
+    }
+
+    $uid = (string)($u['id'] ?? '');
+    $schoolId = (string)($u['schoolId'] ?? '');
+    $allAssignments = is_array($db['quiz_assignments'] ?? null) ? $db['quiz_assignments'] : [];
+    $allUsers = is_array($db['users'] ?? null) ? $db['users'] : [];
+    $allResults = is_array($db['results'] ?? null) ? $db['results'] : [];
+
+    $userMap = [];
+    foreach ($allUsers as $usr) {
+        $userMap[(string)($usr['id'] ?? '')] = $usr;
+    }
+
+    $filtered = [];
+    foreach ($allAssignments as $asgn) {
+        if (($u['role'] ?? '') === 'admin' || ($u['role'] ?? '') === 'superadmin') {
+            $filtered[] = $asgn;
+        } elseif (($u['role'] ?? '') === 'school_admin') {
+            if (($asgn['schoolId'] ?? '') === $schoolId) $filtered[] = $asgn;
+        } else {
+            if (($asgn['teacherId'] ?? '') === $uid || (($asgn['schoolId'] ?? '') === $schoolId && ($asgn['schoolId'] ?? '') !== '')) {
+                $filtered[] = $asgn;
+            }
+        }
+    }
+
+    $enriched = [];
+    foreach ($filtered as $asgn) {
+        $assignedIds = is_array($asgn['assignedStudentIds'] ?? null) ? $asgn['assignedStudentIds'] : [];
+        $studentStatuses = [];
+        $completedCount = 0;
+
+        foreach ($assignedIds as $sid) {
+            $sid = (string)$sid;
+            $sObj = $userMap[$sid] ?? null;
+            $sName = $sObj ? ($sObj['name'] ?? 'Student') : 'Student';
+            $sEmail = $sObj ? ($sObj['email'] ?? '') : '';
+            $sSec = $sObj ? ($sObj['classSection'] ?? '') : '';
+
+            $resMatch = null;
+            foreach ($allResults as $res) {
+                if (!empty($res['assignmentId']) && (string)$res['assignmentId'] === (string)($asgn['id'] ?? '') && (string)($res['userId'] ?? '') === $sid) {
+                    $resMatch = $res;
+                    break;
+                }
+                if ((string)($res['userId'] ?? '') === $sid &&
+                    strcasecmp((string)($res['subjectName'] ?? ''), (string)($asgn['subjectName'] ?? '')) === 0 &&
+                    (int)($res['createdAt'] ?? 0) >= (int)($asgn['createdAt'] ?? 0)) {
+                    $resMatch = $res;
+                    break;
+                }
+            }
+
+            if ($resMatch) {
+                $completedCount++;
+                $studentStatuses[] = [
+                    'studentId' => $sid,
+                    'studentName' => $sName,
+                    'studentEmail' => $sEmail,
+                    'classSection' => $sSec,
+                    'status' => 'Completed',
+                    'score' => $resMatch['score'] ?? null,
+                    'total' => $resMatch['total'] ?? null,
+                    'percent' => $resMatch['percent'] ?? null,
+                    'completedAt' => $resMatch['createdAt'] ?? null
+                ];
+            } else {
+                $studentStatuses[] = [
+                    'studentId' => $sid,
+                    'studentName' => $sName,
+                    'studentEmail' => $sEmail,
+                    'classSection' => $sSec,
+                    'status' => 'Pending',
+                    'score' => null,
+                    'total' => null,
+                    'percent' => null,
+                    'completedAt' => null
+                ];
+            }
+        }
+
+        $asgnCopy = $asgn;
+        $asgnCopy['completedCount'] = $completedCount;
+        $asgnCopy['totalAssigned'] = count($assignedIds);
+        $asgnCopy['studentStatuses'] = $studentStatuses;
+        $enriched[] = $asgnCopy;
+    }
+
+    usort($enriched, function($a, $b) {
+        return (int)($b['createdAt'] ?? 0) <=> (int)($a['createdAt'] ?? 0);
+    });
+
+    jsonOut(['ok' => true, 'assignments' => $enriched]);
+}
+
+// POST /api/teacher/quiz/delete
+if ($route === 'teacher/quiz/delete' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u || !in_array($u['role'] ?? '', ['teacher', 'school_admin', 'admin', 'superadmin'], true)) {
+        errorOut('Not authorised', 403);
+    }
+
+    $asgnId = (string)($b['assignmentId'] ?? '');
+    if ($asgnId === '') errorOut('Assignment ID required', 400);
+
+    if (isset($db['quiz_assignments']) && is_array($db['quiz_assignments'])) {
+        $db['quiz_assignments'] = array_values(array_filter($db['quiz_assignments'], function($item) use ($asgnId) {
+            return (string)($item['id'] ?? '') !== $asgnId;
+        }));
+        saveDb($db);
+    }
+    jsonOut(['ok' => true]);
+}
+
+// POST /api/student/assigned-quizzes
+if ($route === 'student/assigned-quizzes' && $method === 'POST') {
+    $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
+    if (!$u) errorOut('Student authorization required', 401);
+
+    $uid = (string)($u['id'] ?? '');
+    $allAssignments = is_array($db['quiz_assignments'] ?? null) ? $db['quiz_assignments'] : [];
+    $allResults = is_array($db['results'] ?? null) ? $db['results'] : [];
+
+    $myAssigned = [];
+    foreach ($allAssignments as $a) {
+        if (($a['status'] ?? '') !== '' && ($a['status'] ?? '') !== 'active') continue;
+        $ids = is_array($a['assignedStudentIds'] ?? null) ? array_map('strval', $a['assignedStudentIds']) : [];
+        if (in_array($uid, $ids, true)) {
+            $myAssigned[] = $a;
+        }
+    }
+
+    $list = [];
+    foreach ($myAssigned as $asgn) {
+        $asgnId = (string)($asgn['id'] ?? '');
+        $resMatch = null;
+        foreach ($allResults as $r) {
+            if (!empty($r['assignmentId']) && (string)$r['assignmentId'] === $asgnId && (string)($r['userId'] ?? '') === $uid) {
+                $resMatch = $r;
+                break;
+            }
+            if ((string)($r['userId'] ?? '') === $uid &&
+                strcasecmp((string)($r['subjectName'] ?? ''), (string)($asgn['subjectName'] ?? '')) === 0 &&
+                (int)($r['createdAt'] ?? 0) >= (int)($asgn['createdAt'] ?? 0)) {
+                $resMatch = $r;
+                break;
+            }
+        }
+
+        $list[] = [
+            'id' => $asgnId,
+            'title' => $asgn['title'] ?? 'Assigned Quiz',
+            'subjectName' => $asgn['subjectName'] ?? '',
+            'subjectId' => $asgn['subjectId'] ?? '',
+            'gradeLevel' => $asgn['gradeLevel'] ?? '',
+            'questionCount' => $asgn['questionCount'] ?? count($asgn['questionIds'] ?? []),
+            'timerSeconds' => $asgn['timerSeconds'] ?? 60,
+            'teacherName' => $asgn['teacherName'] ?? 'Teacher',
+            'createdAt' => $asgn['createdAt'] ?? 0,
+            'isCompleted' => ($resMatch !== null),
+            'score' => $resMatch ? ($resMatch['score'] ?? null) : null,
+            'total' => $resMatch ? ($resMatch['total'] ?? null) : null,
+            'percent' => $resMatch ? ($resMatch['percent'] ?? null) : null,
+            'passed' => $resMatch ? (!empty($resMatch['passed']) || ($resMatch['percent'] ?? 0) >= 50) : null
+        ];
+    }
+
+    jsonOut(['ok' => true, 'assignedQuizzes' => $list]);
+}
+
+// GET /api/exam/assignment/:id
+if (preg_match('#^exam/assignment/([^/]+)$#', $route, $mMatches) && $method === 'GET') {
+    $asgnId = (string)$mMatches[1];
+    $allAssignments = is_array($db['quiz_assignments'] ?? null) ? $db['quiz_assignments'] : [];
+
+    $asgn = null;
+    foreach ($allAssignments as $a) {
+        if ((string)($a['id'] ?? '') === $asgnId) {
+            $asgn = $a;
+            break;
+        }
+    }
+
+    if (!$asgn) errorOut('Assignment not found', 404);
+
+    $qIdLookup = array_flip(is_array($asgn['questionIds'] ?? null) ? array_map('strval', $asgn['questionIds']) : []);
+    $questions = [];
+
+    foreach ($db['questions'] as $q) {
+        $qid = (string)($q['id'] ?? '');
+        if (isset($qIdLookup[$qid])) {
+            $questions[] = [
+                'id' => $qid,
+                'text' => (string)($q['text'] ?? ''),
+                'options' => is_array($q['options'] ?? null) ? $q['options'] : [],
+                'correctIndex' => isset($q['correctIndex']) ? (int)$q['correctIndex'] : 0,
+                'explanation' => (string)($q['explanation'] ?? ''),
+                'category' => $q['category'] ?? null,
+                'year' => $q['year'] ?? null
+            ];
+        }
+    }
+
+    jsonOut([
+        'ok' => true,
+        'assignment' => [
+            'id' => $asgn['id'],
+            'title' => $asgn['title'] ?? '',
+            'subjectName' => $asgn['subjectName'] ?? '',
+            'subjectId' => $asgn['subjectId'] ?? '',
+            'gradeLevel' => $asgn['gradeLevel'] ?? '',
+            'timerSeconds' => $asgn['timerSeconds'] ?? 60,
+            'teacherName' => $asgn['teacherName'] ?? 'Teacher',
+            'questionCount' => count($questions),
+            'questions' => $questions
+        ]
     ]);
 }
 

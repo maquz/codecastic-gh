@@ -13816,10 +13816,10 @@ async function isEditor(code) {
   return ["editor", "admin", "superadmin"].includes(u.adminRole || u.role);
 }
 var DEFAULT_TIMERS = {
-  "ges-promotion": 45,
-  "basic": 30,
-  "bece": 45,
-  "shs": 45,
+  "ges-promotion": 60,
+  "basic": 60,
+  "bece": 60,
+  "shs": 60,
   "wassce": 60,
   "gtle": 60
 };
@@ -14815,6 +14815,7 @@ var handler = router({
           score,
           total,
           percent,
+          assignmentId: b.assignmentId ? String(b.assignmentId) : null,
           createdAt: Date.now()
         }
       ]);
@@ -15528,6 +15529,274 @@ var handler = router({
         competencyDiagnostics,
         results: teacherResults.slice(0, 100),
         topMissedQuestions: topMissedQuestions.slice(0, 15)
+      });
+    }
+  ],
+  // ---------- Teacher Quiz Assignment Endpoints ----------
+  "GET /api/teacher/questions/pool": [
+    async (ctx) => {
+      const level = String(ctx.query?.level || "").trim();
+      const subjectParam = String(ctx.query?.subject || "").trim();
+      if (!subjectParam) return error("Subject parameter required", 400);
+      const { items: allSubs } = await db.list("subjects", { limit: 100 });
+      const matchedSub = allSubs.find(
+        (s) => s.id === subjectParam || String(s.name || "").toLowerCase() === subjectParam.toLowerCase()
+      );
+      const subId = matchedSub ? String(matchedSub.id) : subjectParam;
+      const subName = matchedSub ? String(matchedSub.name) : subjectParam;
+      const allQs = await allQuestions();
+      const pool2 = allQs.filter((q2) => {
+        const matchSub = q2.subjectId === subId || String(q2.subjectName || "").toLowerCase() === subName.toLowerCase();
+        if (!matchSub) return false;
+        if (!level || level === "all") return true;
+        const qLvl = String(q2.level ?? "").toLowerCase().replace("basic ", "");
+        const targetLvl = level.toLowerCase().replace("basic ", "");
+        if (qLvl === targetLvl) return true;
+        if (["7", "8", "9", "bece"].includes(targetLvl) && ["7", "8", "9", "bece"].includes(qLvl)) return true;
+        if (["4", "5", "6"].includes(targetLvl) && ["4", "5", "6"].includes(qLvl)) return true;
+        if (["shs 1", "shs 2", "shs 3", "wassce", "shs"].includes(targetLvl) && ["shs 1", "shs 2", "shs 3", "wassce", "shs"].includes(qLvl)) return true;
+        return false;
+      });
+      return json({
+        ok: true,
+        totalAvailable: pool2.length,
+        questions: pool2.map((q2) => ({
+          id: String(q2.id),
+          text: String(q2.text || ""),
+          options: Array.isArray(q2.options) ? q2.options : [],
+          category: q2.category || void 0,
+          year: q2.year || void 0,
+          explanation: q2.explanation || void 0,
+          level: q2.level || void 0,
+          subjectId: q2.subjectId
+        }))
+      });
+    }
+  ],
+  "POST /api/teacher/quiz/create": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      const u = await getUserByToken(b.token);
+      if (!u || !["teacher", "school_admin", "admin", "superadmin"].includes(u.role)) {
+        return error("Teacher or school admin authorization required", 403);
+      }
+      const title = String(b.title || "").trim();
+      const subjectName = String(b.subjectName || "").trim();
+      const gradeLevel = String(b.gradeLevel || "").trim();
+      const studentIds = Array.isArray(b.studentIds) ? b.studentIds.map(String).filter(Boolean) : [];
+      const reqCount = Math.max(1, Number(b.questionCount) || 10);
+      const timerSeconds = Math.max(0, Number(b.timerSeconds) || 60);
+      const explicitQIds = Array.isArray(b.questionIds) ? b.questionIds.map(String).filter(Boolean) : [];
+      if (!title) return error("Quiz title is required", 400);
+      if (!subjectName) return error("Subject is required", 400);
+      if (!gradeLevel) return error("Grade level is required", 400);
+      if (studentIds.length === 0) return error("Please select at least one student to assign the quiz to", 400);
+      const { items: allSubs } = await db.list("subjects", { limit: 100 });
+      const matchedSub = allSubs.find(
+        (s) => s.id === subjectName || String(s.name || "").toLowerCase() === subjectName.toLowerCase()
+      );
+      const subId = matchedSub ? String(matchedSub.id) : subjectName;
+      const cleanSubName = matchedSub ? String(matchedSub.name) : subjectName;
+      const allQs = await allQuestions();
+      const pool2 = allQs.filter((q2) => {
+        const matchSub = q2.subjectId === subId || String(q2.subjectName || "").toLowerCase() === cleanSubName.toLowerCase();
+        if (!matchSub) return false;
+        const qLvl = String(q2.level ?? "").toLowerCase().replace("basic ", "");
+        const targetLvl = gradeLevel.toLowerCase().replace("basic ", "");
+        if (qLvl === targetLvl) return true;
+        if (["7", "8", "9", "bece"].includes(targetLvl) && ["7", "8", "9", "bece"].includes(qLvl)) return true;
+        if (["4", "5", "6"].includes(targetLvl) && ["4", "5", "6"].includes(qLvl)) return true;
+        if (["shs 1", "shs 2", "shs 3", "wassce", "shs"].includes(targetLvl) && ["shs 1", "shs 2", "shs 3", "wassce", "shs"].includes(qLvl)) return true;
+        return false;
+      });
+      if (pool2.length === 0) {
+        return error(`No questions found in question pool for ${cleanSubName} (${gradeLevel}).`, 400);
+      }
+      let chosenQIds = [];
+      if (explicitQIds.length > 0) {
+        const poolSet = new Set(pool2.map((q2) => String(q2.id)));
+        chosenQIds = explicitQIds.filter((qid) => poolSet.has(qid));
+      }
+      if (chosenQIds.length === 0) {
+        const shuffled = [...pool2].sort(() => Math.random() - 0.5);
+        chosenQIds = shuffled.slice(0, Math.min(reqCount, shuffled.length)).map((q2) => String(q2.id));
+      }
+      const { items: allUsers } = await db.list("users", { limit: 1e4 });
+      const assignedStudents = studentIds.map((sid) => {
+        const st = allUsers.find((user) => String(user.id) === sid);
+        return {
+          id: sid,
+          name: st ? String(st.name || "Student") : "Student",
+          studentCode: st ? String(st.studentCode || "") : "",
+          classSection: st ? String(st.classSection || "") : "",
+          gradeLevel: st ? String(st.gradeLevel || gradeLevel) : gradeLevel
+        };
+      });
+      const assignmentRecord = {
+        id: "asgn_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+        schoolId: u.schoolId || "",
+        schoolName: u.schoolName || "",
+        teacherId: u.id,
+        teacherName: u.name,
+        title,
+        subjectName: cleanSubName,
+        subjectId: subId,
+        gradeLevel,
+        questionCount: chosenQIds.length,
+        timerSeconds,
+        questionIds: chosenQIds,
+        assignedStudentIds: studentIds,
+        assignedStudents,
+        status: "active",
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      await db.add("quiz_assignments", [assignmentRecord]);
+      return json({ ok: true, assignment: assignmentRecord });
+    }
+  ],
+  "POST /api/teacher/quiz/list": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      const u = await getUserByToken(b.token);
+      if (!u || !["teacher", "school_admin", "admin", "superadmin"].includes(u.role)) {
+        return error("Not authorised", 403);
+      }
+      const { items: rawAssignments } = await db.list("quiz_assignments", { limit: 1e3 });
+      const myAssignments = rawAssignments.filter((a) => {
+        if (u.role === "school_admin") {
+          return String(a.schoolId || "") === String(u.schoolId || "");
+        }
+        return String(a.teacherId || "") === String(u.id) || u.schoolId && String(a.schoolId || "") === String(u.schoolId);
+      });
+      const { items: allResults } = await db.list("results", { limit: 2e4 });
+      const enriched = myAssignments.map((asgn) => {
+        const assignedList = Array.isArray(asgn.assignedStudents) ? asgn.assignedStudents : [];
+        const assignedIds = new Set(Array.isArray(asgn.assignedStudentIds) ? asgn.assignedStudentIds : []);
+        const studentStatuses = assignedList.map((st) => {
+          const res = allResults.find((r) => {
+            if (r.assignmentId && String(r.assignmentId) === String(asgn.id) && String(r.userId) === String(st.id)) {
+              return true;
+            }
+            if (String(r.userId) === String(st.id) && String(r.subjectName).toLowerCase() === String(asgn.subjectName).toLowerCase() && Number(r.createdAt) >= Number(asgn.createdAt)) {
+              return true;
+            }
+            return false;
+          });
+          return {
+            studentId: st.id,
+            name: st.name,
+            studentCode: st.studentCode,
+            classSection: st.classSection,
+            status: res ? "Completed" : "Pending",
+            score: res ? res.score : null,
+            total: res ? res.total : null,
+            percent: res ? res.percent : null,
+            passed: res ? res.passed : null,
+            completedAt: res ? res.createdAt : null
+          };
+        });
+        const completedCount = studentStatuses.filter((s) => s.status === "Completed").length;
+        return {
+          ...asgn,
+          totalAssigned: assignedIds.size || assignedList.length,
+          completedCount,
+          studentStatuses
+        };
+      });
+      enriched.sort((a, b2) => (Number(b2.createdAt) || 0) - (Number(a.createdAt) || 0));
+      return json({ ok: true, assignments: enriched });
+    }
+  ],
+  "POST /api/teacher/quiz/delete": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      const u = await getUserByToken(b.token);
+      if (!u || !["teacher", "school_admin", "admin", "superadmin"].includes(u.role)) {
+        return error("Not authorised", 403);
+      }
+      const asgnId = String(b.assignmentId || "");
+      if (!asgnId) return error("Assignment ID required", 400);
+      const { items } = await db.list("quiz_assignments", { limit: 1e3 });
+      const item = items.find((a) => String(a.id) === asgnId);
+      if (item) {
+        await db.delete("quiz_assignments", item.id);
+      }
+      return json({ ok: true });
+    }
+  ],
+  "POST /api/student/assigned-quizzes": [
+    async (ctx) => {
+      const b = ctx.body || {};
+      const u = await getUserByToken(b.token);
+      if (!u) return error("Student authorization required", 401);
+      const { items: allAssignments } = await db.list("quiz_assignments", { limit: 1e3 });
+      const { items: allResults } = await db.list("results", { limit: 2e4 });
+      const myAssigned = allAssignments.filter((a) => {
+        if (a.status && a.status !== "active") return false;
+        const ids = Array.isArray(a.assignedStudentIds) ? a.assignedStudentIds : [];
+        return ids.includes(String(u.id));
+      });
+      const list = myAssigned.map((asgn) => {
+        const res = allResults.find((r) => {
+          if (r.assignmentId && String(r.assignmentId) === String(asgn.id) && String(r.userId) === String(u.id)) {
+            return true;
+          }
+          if (String(r.userId) === String(u.id) && String(r.subjectName).toLowerCase() === String(asgn.subjectName).toLowerCase() && Number(r.createdAt) >= Number(asgn.createdAt)) {
+            return true;
+          }
+          return false;
+        });
+        return {
+          id: asgn.id,
+          title: asgn.title,
+          subjectName: asgn.subjectName,
+          subjectId: asgn.subjectId,
+          gradeLevel: asgn.gradeLevel,
+          questionCount: asgn.questionCount,
+          timerSeconds: asgn.timerSeconds || 60,
+          teacherName: asgn.teacherName,
+          createdAt: asgn.createdAt,
+          isCompleted: !!res,
+          score: res ? res.score : null,
+          total: res ? res.total : null,
+          percent: res ? res.percent : null,
+          passed: res ? res.passed : null
+        };
+      });
+      return json({ ok: true, assignedQuizzes: list });
+    }
+  ],
+  "GET /api/exam/assignment/:id": [
+    async (ctx) => {
+      const asgnId = String(ctx.params.id || "");
+      const { items: allAssignments } = await db.list("quiz_assignments", { limit: 1e3 });
+      const asgn = allAssignments.find((a) => String(a.id) === asgnId);
+      if (!asgn) return error("Assignment not found", 404);
+      const qIds = new Set(Array.isArray(asgn.questionIds) ? asgn.questionIds : []);
+      const allQs = await allQuestions();
+      const questions = allQs.filter((q2) => qIds.has(String(q2.id))).map((q2) => ({
+        id: String(q2.id),
+        text: String(q2.text || ""),
+        options: Array.isArray(q2.options) ? q2.options : [],
+        correctIndex: q2.correctIndex,
+        explanation: q2.explanation || "",
+        category: q2.category || void 0,
+        year: q2.year || void 0
+      }));
+      return json({
+        ok: true,
+        assignment: {
+          id: asgn.id,
+          title: asgn.title,
+          subjectName: asgn.subjectName,
+          subjectId: asgn.subjectId,
+          gradeLevel: asgn.gradeLevel,
+          timerSeconds: asgn.timerSeconds || 60,
+          teacherName: asgn.teacherName,
+          questionCount: questions.length,
+          questions
+        }
       });
     }
   ],
