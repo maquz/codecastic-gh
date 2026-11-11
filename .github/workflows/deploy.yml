@@ -31,6 +31,17 @@ jobs:
           cd website
           npm run build
 
+      - name: Prepare Deployment Staging Directory
+        run: |
+          mkdir -p deploy_staging
+          cp -r website/dist/* deploy_staging/
+          mkdir -p deploy_staging/dist
+          cp -r website/dist/* deploy_staging/dist/
+          cp website/api.php deploy_staging/api.php
+          cp website/app.js deploy_staging/app.js
+          cp website/.htaccess deploy_staging/.htaccess
+          if [ -f deploy.php ]; then cp deploy.php deploy_staging/deploy.php; fi
+
       - name: Upload to cPanel via FTP
         if: ${{ env.FTP_SERVER != '' }}
         env:
@@ -42,5 +53,5 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftp
           port: 21
-          local-dir: website/dist/
-          server-dir: public_html/dist/
+          local-dir: deploy_staging/
+          server-dir: public_html/
