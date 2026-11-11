@@ -372,6 +372,287 @@ export function FormattedQuestionText({
     );
 }
 
+export function GlobalProfileModal({
+    isOpen,
+    onClose,
+    user,
+    token,
+    onLogout,
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    user: any;
+    token: string;
+    onLogout: () => void;
+}) {
+    const [showChangePw, setShowChangePw] = useState<boolean>(false);
+    const [candOldPw, setCandOldPw] = useState<string>('');
+    const [candNewPw, setCandNewPw] = useState<string>('');
+    const [candConfirmPw, setCandConfirmPw] = useState<string>('');
+    const [changingCandPw, setChangingCandPw] = useState<boolean>(false);
+    const [candPwMsg, setCandPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
+    const [copiedId, setCopiedId] = useState<boolean>(false);
+
+    if (!isOpen || !user) return null;
+
+    const handleCandChangePassword = async (e: FormEvent) => {
+        e.preventDefault();
+        if (candNewPw !== candConfirmPw) {
+            setCandPwMsg({ ok: false, text: 'New passwords do not match.' });
+            return;
+        }
+        if (candNewPw.length < 6) {
+            setCandPwMsg({ ok: false, text: 'Password must be at least 6 characters.' });
+            return;
+        }
+        setChangingCandPw(true);
+        setCandPwMsg(null);
+        try {
+            await api.post('/api/user/change-password', {
+                token,
+                oldPassword: candOldPw,
+                newPassword: candNewPw,
+            });
+            setCandPwMsg({ ok: true, text: 'Password successfully updated!' });
+            setCandOldPw('');
+            setCandNewPw('');
+            setCandConfirmPw('');
+        } catch (err: any) {
+            setCandPwMsg({ ok: false, text: err?.response?.data?.error || 'Failed to change password.' });
+        } finally {
+            setChangingCandPw(false);
+        }
+    };
+
+    const handleCopyId = () => {
+        const idToCopy = user.studentCode || user.teacherCode || user.schoolCode || user.id;
+        if (idToCopy) {
+            navigator.clipboard.writeText(idToCopy);
+            setCopiedId(true);
+            setTimeout(() => setCopiedId(false), 2000);
+        }
+    };
+
+    const roleName =
+        user.role === 'teacher'
+            ? 'Subject Teacher'
+            : user.role === 'school_admin'
+            ? 'School Administrator'
+            : user.accountType === 'ges-promo'
+            ? 'GES Promotion Candidate'
+            : user.role === 'admin' || user.role === 'superadmin'
+            ? 'System Administrator'
+            : `Student · ${levelLabel(user.gradeLevel)}`;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 sm:p-6 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto">
+                {/* Header */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2.5">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#364c83] text-white shadow-2xs">
+                            <User size={22} />
+                        </div>
+                        <div>
+                            <h3 className="text-base font-bold text-slate-900 leading-tight">User Profile &amp; Settings</h3>
+                            <span className="text-[11px] font-bold text-[#364c83] bg-indigo-50 px-2 py-0.5 rounded-full inline-block mt-0.5">
+                                {roleName}
+                            </span>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+
+                {/* Profile Information List */}
+                <div className="mt-4 space-y-2.5 text-xs">
+                    {/* Identity Card */}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-medium">Full Name</span>
+                            <span className="font-bold text-slate-900 text-sm">{user.name}</span>
+                        </div>
+                        {user.email && (
+                            <div className="flex items-center justify-between">
+                                <span className="text-slate-500 font-medium">Email Address</span>
+                                <span className="font-semibold text-slate-700">{user.email}</span>
+                            </div>
+                        )}
+                        <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-medium">Account Role</span>
+                            <span className="font-semibold text-slate-800 capitalize">{user.role || user.accountType}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-medium">Account ID / Code</span>
+                            <div className="flex items-center gap-1.5">
+                                <span className="font-mono font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200">
+                                    {user.studentCode || user.teacherCode || user.schoolCode || user.id?.slice(0, 8)?.toUpperCase()}
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={handleCopyId}
+                                    className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold text-slate-600 hover:bg-slate-100 transition cursor-pointer shadow-2xs"
+                                >
+                                    {copiedId ? 'Copied!' : 'Copy'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Institution / Academic Assignment Card */}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-2.5">
+                        {user.schoolName && (
+                            <div className="flex items-center justify-between">
+                                <span className="text-slate-500 font-medium">School / Institution</span>
+                                <span className="font-bold text-slate-800">{user.schoolName}</span>
+                            </div>
+                        )}
+                        {user.gradeLevel && (
+                            <div className="flex items-center justify-between">
+                                <span className="text-slate-500 font-medium">Grade Level</span>
+                                <span className="font-semibold text-slate-800">{levelLabel(user.gradeLevel)}</span>
+                            </div>
+                        )}
+                        {user.classSection && (
+                            <div className="flex items-center justify-between">
+                                <span className="text-slate-500 font-medium">Class Section</span>
+                                <span className="font-semibold text-slate-800">{user.classSection}</span>
+                            </div>
+                        )}
+                        {user.assignedSubjects && user.assignedSubjects.length > 0 && (
+                            <div className="flex items-start justify-between">
+                                <span className="text-slate-500 font-medium">Assigned Subjects</span>
+                                <span className="font-semibold text-slate-800 text-right max-w-[200px]">
+                                    {user.assignedSubjects.join(', ')}
+                                </span>
+                            </div>
+                        )}
+                        {user.assignedLevels && user.assignedLevels.length > 0 && (
+                            <div className="flex items-start justify-between">
+                                <span className="text-slate-500 font-medium">Assigned Classes</span>
+                                <span className="font-semibold text-slate-800 text-right max-w-[200px]">
+                                    {user.assignedLevels.map((l: any) => (!isNaN(Number(l)) ? `Basic ${l}` : String(l))).join(', ')}
+                                </span>
+                            </div>
+                        )}
+                        {user.promotionRank && (
+                            <div className="flex items-center justify-between">
+                                <span className="text-slate-500 font-medium">Promotion Rank</span>
+                                <span className="font-semibold text-slate-800">{user.promotionRank}</span>
+                            </div>
+                        )}
+                        {user.region && (
+                            <div className="flex items-center justify-between">
+                                <span className="text-slate-500 font-medium">Region</span>
+                                <span className="font-semibold text-slate-800">{user.region}</span>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Change Password Collapsible Section */}
+                    <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+                        <button
+                            type="button"
+                            onClick={() => setShowChangePw(!showChangePw)}
+                            className="flex w-full items-center justify-between text-xs font-bold text-slate-700 hover:text-[#364c83] cursor-pointer"
+                        >
+                            <span className="flex items-center gap-1.5">
+                                <Lock size={14} className="text-[#364c83]" />
+                                Change &amp; Update Password
+                            </span>
+                            <ChevronRight size={14} className={`transform transition-transform ${showChangePw ? 'rotate-90' : ''}`} />
+                        </button>
+
+                        {showChangePw && (
+                            <form onSubmit={handleCandChangePassword} className="mt-3 space-y-2.5 border-t border-slate-100 pt-3">
+                                <div>
+                                    <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">Current Password</label>
+                                    <input
+                                        type="password"
+                                        required
+                                        value={candOldPw}
+                                        onChange={(e) => setCandOldPw(e.target.value)}
+                                        placeholder="Enter current password"
+                                        className="input text-xs w-full"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">New Password</label>
+                                    <input
+                                        type="password"
+                                        required
+                                        value={candNewPw}
+                                        onChange={(e) => setCandNewPw(e.target.value)}
+                                        placeholder="Enter new password (min 6 chars)"
+                                        className="input text-xs w-full"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">Confirm New Password</label>
+                                    <input
+                                        type="password"
+                                        required
+                                        value={candConfirmPw}
+                                        onChange={(e) => setCandConfirmPw(e.target.value)}
+                                        placeholder="Confirm new password"
+                                        className="input text-xs w-full"
+                                    />
+                                </div>
+                                {candPwMsg && (
+                                    <div
+                                        className={`p-2 rounded text-[11px] font-semibold ${
+                                            candPwMsg.ok ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
+                                        }`}
+                                    >
+                                        {candPwMsg.text}
+                                    </div>
+                                )}
+                                <button
+                                    type="submit"
+                                    disabled={changingCandPw}
+                                    className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-[#364c83] py-2 text-xs font-bold text-white hover:bg-[#1f2d57] transition disabled:opacity-50 cursor-pointer shadow-xs"
+                                >
+                                    {changingCandPw ? <Loader2 size={13} className="animate-spin" /> : <Key size={13} />}
+                                    <span>Update Password</span>
+                                </button>
+                            </form>
+                        )}
+                    </div>
+                </div>
+
+                {/* Footer Actions */}
+                <div className="mt-5 pt-3.5 border-t border-slate-100 flex items-center justify-between gap-3">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+                    >
+                        Close
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            if (window.confirm('Are you sure you want to sign out of the portal?')) {
+                                onClose();
+                                onLogout();
+                            }
+                        }}
+                        className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100 transition cursor-pointer shadow-2xs"
+                    >
+                        <LogOut size={13} />
+                        <span>Sign Out of Portal</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 type Tab = 'student' | 'admin' | 'school' | 'teacher';
 
 export default function ExamHubPortal({
@@ -388,6 +669,9 @@ export default function ExamHubPortal({
     const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) || '');
     const [checkingAuth, setCheckingAuth] = useState<boolean>(true);
     const [showSchoolAuthModal, setShowSchoolAuthModal] = useState<boolean>(false);
+    const [showGlobalProfileModal, setShowGlobalProfileModal] = useState<boolean>(false);
+    const [teacherTab, setTeacherTab] = useState<'results' | 'roster' | 'strengths-weaknesses' | 'diagnostics' | 'assigned-quizzes'>('results');
+    const [schoolTab, setSchoolTab] = useState<'overview' | 'teachers' | 'students' | 'analysis' | 'profile' | 'lab'>('overview');
     const isGesPromoSection = activeSlug === 'ges-promotion' || initialLevel === 'GES-PROMO';
 
     useEffect(() => {
@@ -683,6 +967,8 @@ export default function ExamHubPortal({
                             token={token}
                             onLogout={handleStudentLogout}
                             onSwitchToStudent={() => setTab('student')}
+                            activeTab={schoolTab}
+                            onTabChange={(t) => setSchoolTab(t)}
                         />
                     ) : (
                         <div className="mx-auto max-w-md py-12 text-center bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
@@ -718,6 +1004,8 @@ export default function ExamHubPortal({
                             token={token}
                             onLogout={handleStudentLogout}
                             onSwitchToStudent={() => setTab('student')}
+                            activeTab={teacherTab}
+                            onTabChange={(t) => setTeacherTab(t)}
                         />
                     ) : (
                         <div className="mx-auto max-w-md py-12 text-center bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
@@ -778,49 +1066,75 @@ export default function ExamHubPortal({
                     <div className="mx-auto max-w-md flex items-center justify-between relative">
                         <button
                             type="button"
-                            onClick={() => setTab('student')}
-                            className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 hover:text-[#364c83] font-medium transition"
-                            title="Return to Student Practice"
+                            onClick={() => {
+                                if (tab === 'teacher') setTeacherTab('results');
+                                else if (tab === 'school') setSchoolTab('overview');
+                            }}
+                            className={`flex flex-col items-center justify-center flex-1 py-1 font-medium transition cursor-pointer ${
+                                (tab === 'teacher' && teacherTab === 'results') || (tab === 'school' && schoolTab === 'overview')
+                                    ? 'text-[#364c83] font-bold'
+                                    : 'text-slate-500 hover:text-[#364c83]'
+                            }`}
+                            title="Home / Overview"
                         >
                             <Home size={20} />
                             <span className="text-[10px] mt-1">Home</span>
                         </button>
                         <button
                             type="button"
-                            onClick={() => setTab('student')}
-                            className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 hover:text-amber-600 font-medium transition"
-                            title="Starred Questions"
+                            onClick={() => {
+                                if (tab === 'teacher') setTeacherTab('strengths-weaknesses');
+                                else if (tab === 'school') setSchoolTab('teachers');
+                            }}
+                            className={`flex flex-col items-center justify-center flex-1 py-1 font-medium transition cursor-pointer ${
+                                (tab === 'teacher' && teacherTab === 'strengths-weaknesses') || (tab === 'school' && schoolTab === 'teachers')
+                                    ? 'text-amber-600 font-bold'
+                                    : 'text-slate-500 hover:text-amber-600'
+                            }`}
+                            title={tab === 'teacher' ? 'Intervention Hub / Highlights' : 'Teacher Directory'}
                         >
                             <Star size={20} />
-                            <span className="text-[10px] mt-1">Star</span>
+                            <span className="text-[10px] mt-1">{tab === 'teacher' ? 'Highlights' : 'Teachers'}</span>
                         </button>
                         <div className="flex-1 flex justify-center -mt-5">
                             <button
                                 type="button"
-                                onClick={() => setTab('student')}
-                                className="group flex flex-col items-center focus:outline-none"
-                                title="Go to Exams Practice"
+                                onClick={() => {
+                                    if (tab === 'teacher') setTeacherTab('assigned-quizzes');
+                                    else if (tab === 'school') setSchoolTab('analysis');
+                                }}
+                                className="group flex flex-col items-center focus:outline-none cursor-pointer"
+                                title={tab === 'teacher' ? 'Assigned Quizzes' : 'Performance Analysis'}
                             >
                                 <div className="flex h-12 w-12 sm:h-13 sm:w-13 items-center justify-center rounded-full bg-[#364c83] text-white shadow-lg ring-4 ring-white hover:bg-[#1f2d57] transition transform group-hover:scale-105 active:scale-95">
                                     <TrendingUp size={22} className="stroke-[2.5]" />
                                 </div>
-                                <span className="text-[10px] font-bold text-[#364c83] mt-0.5 tracking-tight">Practice</span>
+                                <span className="text-[10px] font-bold text-[#364c83] mt-0.5 tracking-tight">
+                                    {tab === 'teacher' ? 'Quizzes' : 'Analysis'}
+                                </span>
                             </button>
                         </div>
                         <button
                             type="button"
-                            onClick={() => setTab('student')}
-                            className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 hover:text-[#364c83] font-medium transition"
-                            title="View Exams Taken"
+                            onClick={() => {
+                                if (tab === 'teacher') setTeacherTab('roster');
+                                else if (tab === 'school') setSchoolTab('students');
+                            }}
+                            className={`flex flex-col items-center justify-center flex-1 py-1 font-medium transition cursor-pointer ${
+                                (tab === 'teacher' && teacherTab === 'roster') || (tab === 'school' && schoolTab === 'students')
+                                    ? 'text-[#364c83] font-bold'
+                                    : 'text-slate-500 hover:text-[#364c83]'
+                            }`}
+                            title={tab === 'teacher' ? 'Class Roster & Diagnostic Profile' : 'Student Registry'}
                         >
                             <Wallet size={20} />
-                            <span className="text-[10px] mt-1">Exams Taken</span>
+                            <span className="text-[10px] mt-1">{tab === 'teacher' ? 'Roster' : 'Students'}</span>
                         </button>
                         <button
                             type="button"
-                            onClick={handleStudentLogout}
-                            className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 hover:text-rose-600 font-medium transition"
-                            title="Sign out of portal"
+                            onClick={() => setShowGlobalProfileModal(true)}
+                            className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 hover:text-[#364c83] font-medium transition cursor-pointer"
+                            title="View Profile & Account Settings"
                         >
                             <User size={20} />
                             <span className="text-[10px] mt-1">Profile</span>
@@ -828,6 +1142,14 @@ export default function ExamHubPortal({
                     </div>
                 </nav>
             )}
+
+            <GlobalProfileModal
+                isOpen={showGlobalProfileModal}
+                onClose={() => setShowGlobalProfileModal(false)}
+                user={user}
+                token={token}
+                onLogout={handleStudentLogout}
+            />
 
             <SchoolAuthModal
                 isOpen={showSchoolAuthModal}
@@ -2016,8 +2338,8 @@ function StudentView({
         }
     };
 
-    // Number of exam questions limit: Dropbox selection (10, 20, 30, 40, 50, 60, 70, 75, 100, or all)
-    const [questionLimit, setQuestionLimit] = useState<number | 'all'>(20);
+    // Number of exam questions limit: Dropbox selection (10, 20, 30, 40, 50, 60, 70, 75, 100)
+    const [questionLimit, setQuestionLimit] = useState<number>(20);
 
     // Examination Mode & Focus Filter: 'all' | 'year' | 'category'
     const [filterMode, setFilterMode] = useState<'all' | 'year' | 'category'>('all');
@@ -2342,9 +2664,7 @@ function StudentView({
             if (filterMode === 'category' && selectedCategory !== 'all') {
                 queryParts.push(`category=${encodeURIComponent(selectedCategory)}`);
             }
-            if (questionLimit !== 'all') {
-                queryParts.push(`limit=${questionLimit}`);
-            }
+            queryParts.push(`limit=${questionLimit}`);
             if (autoBackfill) {
                 queryParts.push(`backfill=true`);
             }
@@ -2363,7 +2683,7 @@ function StudentView({
             }
 
             if (qs.length === 0) {
-                const offQs = await getOfflineQuestions(level, s.id, questionLimit !== 'all' ? questionLimit : undefined);
+                const offQs = await getOfflineQuestions(level, s.id, questionLimit);
                 if (offQs.length > 0) {
                     qs = offQs as ExamQ[];
                     offlineUsed = true;
@@ -2382,7 +2702,7 @@ function StudentView({
             }
 
             let chosenQs = qs;
-            if (questionLimit !== 'all' && qs.length > questionLimit) {
+            if (qs.length > questionLimit) {
                 // Shuffle for a fresh, varied practice test
                 chosenQs = [...qs].sort(() => Math.random() - 0.5).slice(0, questionLimit);
             }
@@ -3579,7 +3899,7 @@ function StudentView({
                         </span>
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 px-3 py-1 text-xs font-bold text-emerald-800">
                             <Sparkles size={13} />
-                            {questionLimit === 'all' ? 'All Questions' : `${questionLimit} Questions Set`}
+                            {questionLimit} Questions Set
                         </span>
                     </div>
                 </div>
@@ -3595,8 +3915,8 @@ function StudentView({
                             id="question-limit-select"
                             value={String(questionLimit)}
                             onChange={(e) => {
-                                const val = e.target.value;
-                                setQuestionLimit(val === 'all' ? 'all' : Number(val));
+                                const val = Number(e.target.value) || 20;
+                                setQuestionLimit(val);
                             }}
                             className="input text-xs font-semibold text-slate-800 bg-white border-slate-300 w-full rounded-lg py-2 focus:border-[#364c83] focus:ring-1 focus:ring-[#364c83]"
                         >
@@ -3609,7 +3929,6 @@ function StudentView({
                             <option value="70">70 Questions</option>
                             <option value="75">75 Questions (Full Promotion Test)</option>
                             <option value="100">100 Questions (Mastery Drill)</option>
-                            <option value="all">All Available Questions in Question Bank</option>
                         </select>
                         <p className="mt-1 text-[11px] text-slate-400">
                             Select how many questions will be randomly drawn for your practice test session.
@@ -3801,15 +4120,13 @@ function StudentView({
 
                         const isUserRank = level === 'GES-PROMO' && user.promotionRank === s.name;
                         const isEmptyFocus = focusCount === 0;
-                        const isShortage = questionLimit !== 'all' && focusCount > 0 && focusCount < questionLimit;
+                        const isShortage = focusCount > 0 && focusCount < questionLimit;
 
                         // Calculate effective questions candidate will take
                         const questionsToTake = isEmptyFocus
                             ? 0
-                            : autoBackfill && questionLimit !== 'all'
+                            : autoBackfill
                             ? Math.min(totalCount, questionLimit)
-                            : questionLimit === 'all'
-                            ? focusCount
                             : Math.min(focusCount, questionLimit);
 
                         const disabled = isEmptyFocus || totalCount === 0 || starting !== null;

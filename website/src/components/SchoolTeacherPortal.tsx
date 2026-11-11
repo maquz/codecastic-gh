@@ -387,11 +387,15 @@ export function TeacherPortalView({
     token,
     onLogout,
     onSwitchToStudent: _onSwitchToStudent,
+    activeTab: externalTab,
+    onTabChange: externalTabChange,
 }: {
     user: PortalUser;
     token: string;
     onLogout: () => void;
     onSwitchToStudent?: () => void;
+    activeTab?: 'results' | 'roster' | 'strengths-weaknesses' | 'diagnostics' | 'assigned-quizzes';
+    onTabChange?: (tab: 'results' | 'roster' | 'strengths-weaknesses' | 'diagnostics' | 'assigned-quizzes') => void;
 }) {
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<{
@@ -438,7 +442,12 @@ export function TeacherPortalView({
     const [poolSearch, setPoolSearch] = useState<string>('');
     const [expandedAssignmentId, setExpandedAssignmentId] = useState<string | null>(null);
 
-    const [activeTab, setActiveTab] = useState<'results' | 'roster' | 'strengths-weaknesses' | 'diagnostics' | 'assigned-quizzes'>('results');
+    const [internalTab, setInternalTab] = useState<'results' | 'roster' | 'strengths-weaknesses' | 'diagnostics' | 'assigned-quizzes'>('results');
+    const activeTab = externalTab !== undefined ? externalTab : internalTab;
+    const setActiveTab = (t: 'results' | 'roster' | 'strengths-weaknesses' | 'diagnostics' | 'assigned-quizzes') => {
+        setInternalTab(t);
+        if (externalTabChange) externalTabChange(t);
+    };
     const [classFilter, setClassFilter] = useState<string>('all');
     const [search, setSearch] = useState('');
     const [selectedReview, setSelectedReview] = useState<any | null>(null);
@@ -2152,17 +2161,26 @@ export function SchoolAdminPortalView({
     token,
     onLogout,
     onSwitchToStudent: _onSwitchToStudent,
+    activeTab: externalTab,
+    onTabChange: externalTabChange,
 }: {
     user: PortalUser;
     token: string;
     onLogout: () => void;
     onSwitchToStudent?: () => void;
+    activeTab?: 'overview' | 'teachers' | 'students' | 'analysis' | 'profile' | 'lab';
+    onTabChange?: (tab: 'overview' | 'teachers' | 'students' | 'analysis' | 'profile' | 'lab') => void;
 }) {
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<any | null>(null);
     const [teachers, setTeachers] = useState<PortalUser[]>([]);
     const [students, setStudents] = useState<PortalUser[]>([]);
-    const [tab, setTab] = useState<'overview' | 'teachers' | 'students' | 'analysis' | 'profile' | 'lab'>('overview');
+    const [internalTab, setInternalTab] = useState<'overview' | 'teachers' | 'students' | 'analysis' | 'profile' | 'lab'>('overview');
+    const tab = externalTab !== undefined ? externalTab : internalTab;
+    const setTab = (t: 'overview' | 'teachers' | 'students' | 'analysis' | 'profile' | 'lab') => {
+        setInternalTab(t);
+        if (externalTabChange) externalTabChange(t);
+    };
     const [downloadingPack, setDownloadingPack] = useState(false);
     const [importingLab, setImportingLab] = useState(false);
 
