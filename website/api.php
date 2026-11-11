@@ -321,25 +321,33 @@ $TRACKS = ['BECE', 'WASSCE', 'GTLE', 'GES-PROMO'];
 function normLevel($raw) {
     global $SCHOOL_LEVELS, $SHS_LEVELS, $TRACKS;
     $s = trim((string)$raw);
-    if ($s === '') return null;
+    if ($s === '' || strtolower($s) === 'assignment' || str_starts_with(strtolower($s), 'asgn')) return null;
     $u = strtoupper($s);
     if ($u === 'ADMIN') return 8;
     if (ctype_digit($s)) {
         $n = (int)$s;
         return in_array($n, $SCHOOL_LEVELS, true) ? $n : null;
     }
-    if (preg_match('/^(?:basic|grade|class|b)\s*(\d+)$/i', $s, $m)) {
+    if (preg_match('/^(?:basic|grade|class|b|primary|p)\s*(\d+)/i', $s, $m)) {
         $n = (int)$m[1];
         return in_array($n, $SCHOOL_LEVELS, true) ? $n : null;
     }
-    if (preg_match('/^(?:shs|form)\s*([1-3])$/i', $s, $m)) {
+    if (preg_match('/^(?:shs|form)\s*([1-3])/i', $s, $m)) {
         return 'SHS ' . $m[1];
     }
     if ($u === 'SHS' || $u === 'SHS 1 - 3' || $u === 'SHS 1-3') return 'SHS 1';
-    if ($u === 'GES PROMOTION' || $u === 'GES PROMOTION EXAMS' || $u === 'GES-PROMOTION') return 'GES-PROMO';
-    if (in_array($u, $SHS_LEVELS, true)) return $u;
-    if (in_array($u, $TRACKS, true)) return $u;
-    return null;
+    if (str_contains($u, 'GES PROMOTION') || $u === 'GES-PROMO' || str_contains($u, 'PROMOTION')) return 'GES-PROMO';
+    if (str_contains($u, 'WASSCE')) return 'WASSCE';
+    if (str_contains($u, 'BECE')) return 'BECE';
+    if (str_contains($u, 'GTLE')) return 'GTLE';
+    foreach ($SHS_LEVELS as $shs) {
+        if (str_contains($u, $shs)) return $shs;
+    }
+    if (preg_match('/\b([4-9])\b/', $s, $dm)) {
+        $n = (int)$dm[1];
+        if (in_array($n, $SCHOOL_LEVELS, true)) return $n;
+    }
+    return in_array($u, $TRACKS, true) ? $u : null;
 }
 
 $DEFAULT_TIMERS = [
@@ -661,8 +669,57 @@ if ($route === 'admin/timers' && $method === 'POST') {
     jsonOut(['ok' => true, 'timers' => $current]);
 }
 
+// GET /api/exam/assignment/:id
+if (preg_match('#^exam/assignment/([^/]+)$#', $route, $mMatches) && $method === 'GET') {
+    $asgnId = (string)$mMatches[1];
+    $allAssignments = is_array($db['quiz_assignments'] ?? null) ? $db['quiz_assignments'] : [];
+
+    $asgn = null;
+    foreach ($allAssignments as $a) {
+        if ((string)($a['id'] ?? '') === $asgnId) {
+            $asgn = $a;
+            break;
+        }
+    }
+
+    if (!$asgn) errorOut('Assignment not found', 404);
+
+    $qIdLookup = array_flip(is_array($asgn['questionIds'] ?? null) ? array_map('strval', $asgn['questionIds']) : []);
+    $questions = [];
+
+    foreach ($db['questions'] as $q) {
+        $qid = (string)($q['id'] ?? '');
+        if (isset($qIdLookup[$qid])) {
+            $questions[] = [
+                'id' => $qid,
+                'text' => (string)($q['text'] ?? ''),
+                'options' => is_array($q['options'] ?? null) ? $q['options'] : [],
+                'correctIndex' => isset($q['correctIndex']) ? (int)$q['correctIndex'] : 0,
+                'explanation' => (string)($q['explanation'] ?? ''),
+                'category' => $q['category'] ?? null,
+                'year' => $q['year'] ?? null
+            ];
+        }
+    }
+
+    jsonOut([
+        'ok' => true,
+        'assignment' => [
+            'id' => $asgn['id'],
+            'title' => $asgn['title'] ?? '',
+            'subjectName' => $asgn['subjectName'] ?? '',
+            'subjectId' => $asgn['subjectId'] ?? '',
+            'gradeLevel' => $asgn['gradeLevel'] ?? '',
+            'timerSeconds' => $asgn['timerSeconds'] ?? 60,
+            'teacherName' => $asgn['teacherName'] ?? 'Teacher',
+            'questionCount' => count($questions),
+            'questions' => $questions
+        ]
+    ]);
+}
+
 // Exam Fetch: exam/:level/:subjectId
-if (preg_match('#^exam/([^/]+)/([^/]+)$#', $route, $matches) && $method === 'GET') {
+if (preg_match('#^exam/([^/]+)/([^/]+)$#', $route, $matches) && strtolower($matches[1]) !== 'assignment' && $method === 'GET') {
     $rawLevel = urldecode($matches[1]);
     $subjectId = urldecode($matches[2]);
     $level = normLevel($rawLevel);
@@ -752,16 +809,35 @@ if (preg_match('#^exam/([^/]+)/([^/]+)$#', $route, $matches) && $method === 'GET
 // Exam Submit
 if ($route === 'exam/submit' && $method === 'POST') {
     $b = getJsonBody();
+    $u = getUserByToken($db, $b['token'] ?? null);
     $rawLevel = $b['level'] ?? '';
     $level = normLevel($rawLevel);
-    if ($level === null) errorOut('Invalid level', 400);
+    if ($level === null) {
+        $level = normLevel($u['gradeLevel'] ?? null) ?? 8;
+    }
 
     // Resolve user from token or payload
-    $u = getUserByToken($db, $b['token'] ?? null);
     $userId = $u ? (string)$u['id'] : trim((string)($b['userId'] ?? ''));
     $studentName = $u ? (string)$u['name'] : trim((string)($b['studentName'] ?? 'Candidate'));
     $studentEmail = $u ? (string)$u['email'] : trim((string)($b['studentEmail'] ?? ''));
     $schoolName = $u ? (string)($u['schoolName'] ?? '') : trim((string)($b['schoolName'] ?? ''));
+
+    // If an assignment was submitted, resolve its details if needed
+    if (!empty($b['assignmentId'])) {
+        $asgnId = (string)$b['assignmentId'];
+        $allAssignments = is_array($db['quiz_assignments'] ?? null) ? $db['quiz_assignments'] : [];
+        foreach ($allAssignments as $asgn) {
+            if ((string)($asgn['id'] ?? '') === $asgnId) {
+                if (!empty($asgn['gradeLevel']) && normLevel($asgn['gradeLevel']) !== null) {
+                    $level = normLevel($asgn['gradeLevel']);
+                }
+                if (empty($b['subjectName']) && !empty($asgn['subjectName'])) {
+                    $b['subjectName'] = $asgn['subjectName'];
+                }
+                break;
+            }
+        }
+    }
 
     $subjId = (string)($b['subjectId'] ?? '');
     $subjectName = trim((string)($b['subjectName'] ?? ''));
@@ -4394,55 +4470,6 @@ if ($route === 'student/assigned-quizzes' && $method === 'POST') {
     }
 
     jsonOut(['ok' => true, 'assignedQuizzes' => $list]);
-}
-
-// GET /api/exam/assignment/:id
-if (preg_match('#^exam/assignment/([^/]+)$#', $route, $mMatches) && $method === 'GET') {
-    $asgnId = (string)$mMatches[1];
-    $allAssignments = is_array($db['quiz_assignments'] ?? null) ? $db['quiz_assignments'] : [];
-
-    $asgn = null;
-    foreach ($allAssignments as $a) {
-        if ((string)($a['id'] ?? '') === $asgnId) {
-            $asgn = $a;
-            break;
-        }
-    }
-
-    if (!$asgn) errorOut('Assignment not found', 404);
-
-    $qIdLookup = array_flip(is_array($asgn['questionIds'] ?? null) ? array_map('strval', $asgn['questionIds']) : []);
-    $questions = [];
-
-    foreach ($db['questions'] as $q) {
-        $qid = (string)($q['id'] ?? '');
-        if (isset($qIdLookup[$qid])) {
-            $questions[] = [
-                'id' => $qid,
-                'text' => (string)($q['text'] ?? ''),
-                'options' => is_array($q['options'] ?? null) ? $q['options'] : [],
-                'correctIndex' => isset($q['correctIndex']) ? (int)$q['correctIndex'] : 0,
-                'explanation' => (string)($q['explanation'] ?? ''),
-                'category' => $q['category'] ?? null,
-                'year' => $q['year'] ?? null
-            ];
-        }
-    }
-
-    jsonOut([
-        'ok' => true,
-        'assignment' => [
-            'id' => $asgn['id'],
-            'title' => $asgn['title'] ?? '',
-            'subjectName' => $asgn['subjectName'] ?? '',
-            'subjectId' => $asgn['subjectId'] ?? '',
-            'gradeLevel' => $asgn['gradeLevel'] ?? '',
-            'timerSeconds' => $asgn['timerSeconds'] ?? 60,
-            'teacherName' => $asgn['teacherName'] ?? 'Teacher',
-            'questionCount' => count($questions),
-            'questions' => $questions
-        ]
-    ]);
 }
 
 // Fallback: 404 for unknown API route
