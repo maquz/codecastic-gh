@@ -710,8 +710,8 @@ if ($route === 'admin/timers' && $method === 'POST') {
     jsonOut(['ok' => true, 'timers' => $current]);
 }
 
-// GET /api/exam/assignment/:id
-if (preg_match('#^exam/assignment/([^/]+)$#', $route, $mMatches) && $method === 'GET') {
+// GET /api/exam/assignment/:id (or /api/assignment/:id)
+if (preg_match('#^(?:exam/)?assignment/([^/]+)/?$#', $route, $mMatches) && $method === 'GET') {
     $asgnId = (string)$mMatches[1];
     $allAssignments = is_array($db['quiz_assignments'] ?? null) ? $db['quiz_assignments'] : [];
 
@@ -952,6 +952,50 @@ if ($route === 'exam/submit' && $method === 'POST') {
     $percent = $totalQuestions > 0 ? round(($score / $totalQuestions) * 100) : 0;
     $passed = $percent >= 50;
 
+    // Official WAEC BECE Stanine Grading (Applied strictly for 100 questions sitting)
+    $beceGrade = null;
+    $beceGradeValue = null;
+    $beceRemark = null;
+    if ($totalQuestions === 100) {
+        if ($percent >= 90) {
+            $beceGrade = 'Grade 1';
+            $beceGradeValue = 1;
+            $beceRemark = 'Highest Distinction';
+        } elseif ($percent >= 80) {
+            $beceGrade = 'Grade 2';
+            $beceGradeValue = 2;
+            $beceRemark = 'Higher Distinction';
+        } elseif ($percent >= 70) {
+            $beceGrade = 'Grade 3';
+            $beceGradeValue = 3;
+            $beceRemark = 'High Pass';
+        } elseif ($percent >= 60) {
+            $beceGrade = 'Grade 4';
+            $beceGradeValue = 4;
+            $beceRemark = 'Pass';
+        } elseif ($percent >= 55) {
+            $beceGrade = 'Grade 5';
+            $beceGradeValue = 5;
+            $beceRemark = 'Pass';
+        } elseif ($percent >= 50) {
+            $beceGrade = 'Grade 6';
+            $beceGradeValue = 6;
+            $beceRemark = 'Standard Pass';
+        } elseif ($percent >= 40) {
+            $beceGrade = 'Grade 7';
+            $beceGradeValue = 7;
+            $beceRemark = 'Pass';
+        } elseif ($percent >= 35) {
+            $beceGrade = 'Grade 8';
+            $beceGradeValue = 8;
+            $beceRemark = 'Pass';
+        } else {
+            $beceGrade = 'Grade 9';
+            $beceGradeValue = 9;
+            $beceRemark = 'Remedial';
+        }
+    }
+
     $now = round(microtime(true) * 1000);
     $resultRecord = [
         'id' => generateUuid(),
@@ -969,6 +1013,9 @@ if ($route === 'exam/submit' && $method === 'POST') {
         'totalQuestions' => $totalQuestions,
         'percent' => $percent,
         'passed' => $passed,
+        'beceGrade' => $beceGrade,
+        'beceGradeValue' => $beceGradeValue,
+        'beceRemark' => $beceRemark,
         'details' => $details,
         'assignmentId' => !empty($b['assignmentId']) ? (string)$b['assignmentId'] : null,
         'createdAt' => $now
@@ -984,6 +1031,9 @@ if ($route === 'exam/submit' && $method === 'POST') {
         'totalQuestions' => $totalQuestions,
         'percent' => $percent,
         'passed' => $passed,
+        'beceGrade' => $beceGrade,
+        'beceGradeValue' => $beceGradeValue,
+        'beceRemark' => $beceRemark,
         'review' => $review,
         'details' => $details
     ]);
@@ -3818,6 +3868,19 @@ if ($route === 'school/performance' && $method === 'POST') {
     $schoolName = (string)($u['schoolName'] ?? ($b['schoolName'] ?? ''));
     if ($schoolId === '' && $schoolCode === '' && $schoolName === '') errorOut('School ID required', 400);
 
+    $schoolCategory = '';
+    if (!empty($db['schools']) && is_array($db['schools'])) {
+        foreach ($db['schools'] as $sc) {
+            if (matchesSchool($sc, $schoolId, $schoolCode, $schoolName)) {
+                $schoolCategory = (string)($sc['category'] ?? '');
+                break;
+            }
+        }
+    }
+    if ($schoolCategory === '' && !empty($u['schoolCategory'])) {
+        $schoolCategory = (string)$u['schoolCategory'];
+    }
+
     $studentCount = 0;
     $teacherCount = 0;
     $maleCount = 0;
@@ -3945,6 +4008,7 @@ if ($route === 'school/performance' && $method === 'POST') {
 
     jsonOut([
         'ok' => true,
+        'category' => $schoolCategory,
         'studentCount' => $studentCount,
         'teacherCount' => $teacherCount,
         'totalExams' => $totalExams,
@@ -3961,11 +4025,14 @@ if ($route === 'school/performance' && $method === 'POST') {
 if ($route === 'teacher/performance' && $method === 'POST') {
     $b = getJsonBody();
     $u = getUserByToken($db, $b['token'] ?? null);
-    if (!$u || (($u['role'] ?? '') !== 'teacher' && ($u['role'] ?? '') !== 'school_admin' && ($u['role'] ?? '') !== 'admin')) {
+    if (!$u || (!in_array($u['role'] ?? '', ['teacher', 'school_admin', 'admin', 'superadmin', 'editor'], true) && !isTeacherRecord($u) && !isSchoolAdminRecord($u))) {
         errorOut('Not authorised. Teacher account required.', 403);
     }
 
-    $schoolId = (string)($u['schoolId'] ?? '');
+    $schoolId = (string)($u['schoolId'] ?? ($b['schoolId'] ?? ''));
+    $schoolCode = (string)($u['schoolCode'] ?? ($b['schoolCode'] ?? ''));
+    $schoolName = (string)($u['schoolName'] ?? ($b['schoolName'] ?? ''));
+
     $assignedSubjects = is_array($u['assignedSubjects'] ?? null) ? $u['assignedSubjects'] : [];
     $assignedLevels = is_array($u['assignedLevels'] ?? null) ? $u['assignedLevels'] : [];
     $classSections = is_array($u['classSections'] ?? null) ? $u['classSections'] : [];
@@ -3980,14 +4047,23 @@ if ($route === 'teacher/performance' && $method === 'POST') {
     $myStudents = [];
     $myStudentIds = [];
     foreach ($db['users'] as $usr) {
-        if (($usr['schoolId'] ?? '') === $schoolId && (($usr['role'] ?? '') === 'student' || ($usr['accountType'] ?? '') === 'student')) {
+        if (matchesSchool($usr, $schoolId, $schoolCode, $schoolName) && (($usr['role'] ?? '') === 'student' || ($usr['accountType'] ?? '') === 'student')) {
             $studentLvl = strtolower(trim((string)($usr['gradeLevel'] ?? '')));
+            $studentLvlClean = str_replace('basic ', '', $studentLvl);
             $studentSec = trim((string)($usr['classSection'] ?? ''));
 
-            $levelMatch = empty($normLvls) || in_array($studentLvl, $normLvls, true);
+            $levelMatch = empty($normLvls) || in_array($studentLvlClean, $normLvls, true) || in_array($studentLvl, $normLvls, true);
             $sectionMatch = empty($classSections) || in_array($studentSec, $classSections, true);
 
-            if ($levelMatch || $sectionMatch) {
+            // Match if levels match or if section matches. If teacher has specific sections, filter by section as well.
+            if ($levelMatch) {
+                if (!empty($classSections) && !$sectionMatch) {
+                    continue;
+                }
+                $pub = publicUser($usr);
+                $myStudents[] = $pub;
+                $myStudentIds[$pub['id']] = true;
+            } elseif ($sectionMatch && !empty($classSections)) {
                 $pub = publicUser($usr);
                 $myStudents[] = $pub;
                 $myStudentIds[$pub['id']] = true;
@@ -4003,13 +4079,16 @@ if ($route === 'teacher/performance' && $method === 'POST') {
     $classBreakdownMap = [];
 
     foreach ($db['results'] as $res) {
-        if (($res['schoolId'] ?? '') !== $schoolId) continue;
+        $rUserId = (string)($res['userId'] ?? '');
+        $isMyStudent = isset($myStudentIds[$rUserId]);
+        $isSchoolMatch = matchesSchool($res, $schoolId, $schoolCode, $schoolName);
+
+        if (!$isMyStudent && !$isSchoolMatch) continue;
 
         $rSubj = strtolower(trim((string)($res['subjectName'] ?? '')));
         $rSubjId = (string)($res['subjectId'] ?? '');
         $rLvl = strtolower(trim((string)($res['level'] ?? '')));
         $rLvlClean = str_replace('basic ', '', $rLvl);
-        $rUserId = (string)($res['userId'] ?? '');
 
         $subjectMatch = empty($normSubjs);
         if (!$subjectMatch) {
@@ -4022,7 +4101,7 @@ if ($route === 'teacher/performance' && $method === 'POST') {
         }
         if (!$subjectMatch) continue;
 
-        $levelMatch = empty($normLvls) || in_array($rLvlClean, $normLvls, true) || isset($myStudentIds[$rUserId]);
+        $levelMatch = empty($normLvls) || in_array($rLvlClean, $normLvls, true) || in_array($rLvl, $normLvls, true) || $isMyStudent;
         if (!$levelMatch) continue;
 
         $pct = (float)($res['percent'] ?? 0);
@@ -4298,7 +4377,38 @@ if ($route === 'teacher/quiz/create' && $method === 'POST') {
     }
 
     $finalQuestionIds = [];
-    if (!empty($explicitQIds)) {
+
+    // If teacher authored custom questions specifically for this quiz
+    $customQuestions = is_array($b['customQuestions'] ?? null) ? $b['customQuestions'] : [];
+    if (!empty($customQuestions)) {
+        foreach ($customQuestions as $cq) {
+            $qText = trim((string)($cq['text'] ?? ''));
+            if ($qText === '') continue;
+            $qOpts = is_array($cq['options'] ?? null) ? array_map('strval', $cq['options']) : [];
+            if (count($qOpts) < 2) continue;
+            $qCorrect = isset($cq['correctIndex']) ? (int)$cq['correctIndex'] : 0;
+            $qExpl = trim((string)($cq['explanation'] ?? ''));
+            $newQId = 'q_custom_' . generateUuid();
+
+            $newQ = [
+                'id' => $newQId,
+                'text' => $qText,
+                'options' => $qOpts,
+                'correctIndex' => $qCorrect,
+                'explanation' => $qExpl,
+                'level' => $gradeLevel,
+                'subjectId' => $subId,
+                'subjectName' => $subMatchedName,
+                'createdBy' => (string)($u['id'] ?? ''),
+                'teacherName' => (string)($u['name'] ?? 'Teacher'),
+                'isCustom' => true,
+                'createdAt' => (int)(microtime(true) * 1000)
+            ];
+
+            $db['questions'][] = $newQ;
+            $finalQuestionIds[] = $newQId;
+        }
+    } elseif (!empty($explicitQIds)) {
         $finalQuestionIds = $explicitQIds;
     } else {
         $candidateIds = [];

@@ -14933,6 +14933,48 @@ var handler = router({
       const total = qs.length;
       const percent = Math.round(score / total * 100);
       const finalSubjectName = resolvedSubjectName || (subj ? subj.name : b.subjectName || "General");
+      let beceGrade = null;
+      let beceGradeValue = null;
+      let beceRemark = null;
+      if (total === 100) {
+        if (percent >= 90) {
+          beceGrade = "Grade 1";
+          beceGradeValue = 1;
+          beceRemark = "Highest Distinction";
+        } else if (percent >= 80) {
+          beceGrade = "Grade 2";
+          beceGradeValue = 2;
+          beceRemark = "Higher Distinction";
+        } else if (percent >= 70) {
+          beceGrade = "Grade 3";
+          beceGradeValue = 3;
+          beceRemark = "High Pass";
+        } else if (percent >= 60) {
+          beceGrade = "Grade 4";
+          beceGradeValue = 4;
+          beceRemark = "Pass";
+        } else if (percent >= 55) {
+          beceGrade = "Grade 5";
+          beceGradeValue = 5;
+          beceRemark = "Pass";
+        } else if (percent >= 50) {
+          beceGrade = "Grade 6";
+          beceGradeValue = 6;
+          beceRemark = "Standard Pass";
+        } else if (percent >= 40) {
+          beceGrade = "Grade 7";
+          beceGradeValue = 7;
+          beceRemark = "Pass";
+        } else if (percent >= 35) {
+          beceGrade = "Grade 8";
+          beceGradeValue = 8;
+          beceRemark = "Pass";
+        } else {
+          beceGrade = "Grade 9";
+          beceGradeValue = 9;
+          beceRemark = "Remedial";
+        }
+      }
       await db.add("results", [
         {
           userId: user?.id || null,
@@ -14945,11 +14987,14 @@ var handler = router({
           score,
           total,
           percent,
+          beceGrade,
+          beceGradeValue,
+          beceRemark,
           assignmentId: b.assignmentId ? String(b.assignmentId) : null,
           createdAt: Date.now()
         }
       ]);
-      return json({ score, total, totalQuestions: total, percent, review, details: review });
+      return json({ score, total, totalQuestions: total, percent, beceGrade, beceGradeValue, beceRemark, review, details: review });
     }
   ],
   "POST /api/student/history": [
@@ -15496,8 +15541,15 @@ var handler = router({
         ...r,
         gender: r.gender || studentGenderMap[String(r.userId)] || ""
       }));
+      const { items: allSchools } = await db.list("schools", { limit: 1e3 });
+      let schoolCategory = String(u.schoolCategory || "");
+      if (!schoolCategory) {
+        const matchedSchool = allSchools.find((sc) => matchesSchool(sc, schoolId, schoolCode, schoolName));
+        if (matchedSchool) schoolCategory = String(matchedSchool.category || "");
+      }
       return json({
         ok: true,
+        category: schoolCategory,
         studentCount: students.length,
         teacherCount: teachers.length,
         totalExams,
@@ -15514,40 +15566,46 @@ var handler = router({
     async (ctx) => {
       const b = ctx.body || {};
       const u = await getUserByToken(b.token);
-      if (!u || !["teacher", "school_admin", "admin", "superadmin"].includes(u.role)) {
+      if (!u || !["teacher", "school_admin", "admin", "superadmin", "editor"].includes(u.role) && !isTeacherRecord(u) && !isSchoolAdminRecord(u)) {
         return error("Not authorised as teacher", 403);
       }
-      const schoolId = String(u.schoolId || "");
+      const schoolId = String(u.schoolId || b.schoolId || "");
+      const schoolCode = String(u.schoolCode || b.schoolCode || "");
+      const schoolName = String(u.schoolName || b.schoolName || "");
       const assignedLevels = Array.isArray(u.assignedLevels) ? u.assignedLevels.map(String) : [];
       const assignedSubjects = Array.isArray(u.assignedSubjects) ? u.assignedSubjects.map(String) : [];
+      const normLvls = assignedLevels.map((l) => l.toLowerCase().replace("basic ", "").trim());
+      const normSubjs = assignedSubjects.map((s) => s.toLowerCase().trim());
       const { items: allUsers } = await db.list("users", { limit: 1e4 });
       const { items: allResults } = await db.list("results", { limit: 2e4 });
       const schoolStudents = allUsers.filter(
-        (usr) => String(usr.schoolId) === schoolId && (usr.role === "student" || usr.accountType === "student")
+        (usr) => matchesSchool(usr, schoolId, schoolCode, schoolName) && (usr.role === "student" || usr.accountType === "student")
       );
       const myStudents = schoolStudents.filter((stud) => {
-        if (assignedLevels.length === 0) return true;
-        const gl = String(stud.gradeLevel ?? "");
-        const cs = String(stud.classSection ?? "");
-        return assignedLevels.some((al) => al === gl || cs && al.includes(cs));
+        if (normLvls.length === 0) return true;
+        const gl = String(stud.gradeLevel ?? "").toLowerCase().trim();
+        const glClean = gl.replace("basic ", "");
+        const cs = String(stud.classSection ?? "").toLowerCase().trim();
+        return normLvls.some((al) => al === gl || al === glClean || cs && al.includes(cs));
       });
       const myStudentIds = new Set(myStudents.map((s) => String(s.id)));
       const myStudentEmails = new Set(myStudents.map((s) => String(s.email || "").toLowerCase()).filter(Boolean));
       const teacherResults = allResults.filter((r) => {
-        if (schoolId && String(r.schoolId || "") !== schoolId) return false;
+        const isSchoolMatch = matchesSchool(r, schoolId, schoolCode, schoolName);
         const isMyStudent = r.userId && myStudentIds.has(String(r.userId)) || r.studentEmail && myStudentEmails.has(String(r.studentEmail).toLowerCase());
+        if (!isMyStudent && !isSchoolMatch) return false;
         if (!isMyStudent && myStudents.length > 0) return false;
-        if (assignedSubjects.length > 0) {
-          const subName = String(r.subjectName || "");
-          const subId = String(r.subjectId || "");
-          const matchSub = assignedSubjects.some(
-            (as) => as.toLowerCase() === subName.toLowerCase() || as === subId
+        if (normSubjs.length > 0) {
+          const subName = String(r.subjectName || "").toLowerCase().trim();
+          const subId = String(r.subjectId || "").toLowerCase().trim();
+          const matchSub = normSubjs.some(
+            (as) => as === subName || as === subId || subName.includes(as)
           );
           if (!matchSub) return false;
         }
-        if (assignedLevels.length > 0) {
-          const rLvl = String(r.level ?? "");
-          const matchLvl = assignedLevels.some((al) => al === rLvl || rLvl.includes(al));
+        if (normLvls.length > 0) {
+          const rLvl = String(r.level ?? "").toLowerCase().replace("basic ", "").trim();
+          const matchLvl = normLvls.some((al) => al === rLvl || rLvl.includes(al)) || isMyStudent;
           if (!matchLvl) return false;
         }
         return true;
@@ -15743,17 +15801,49 @@ var handler = router({
         if (["shs 1", "shs 2", "shs 3", "wassce", "shs"].includes(targetLvl) && ["shs 1", "shs 2", "shs 3", "wassce", "shs"].includes(qLvl)) return true;
         return false;
       });
-      if (pool2.length === 0) {
-        return error(`No questions found in question pool for ${cleanSubName} (${gradeLevel}).`, 400);
-      }
       let chosenQIds = [];
-      if (explicitQIds.length > 0) {
-        const poolSet = new Set(pool2.map((q2) => String(q2.id)));
-        chosenQIds = explicitQIds.filter((qid) => poolSet.has(qid));
+      const customQuestions = Array.isArray(b.customQuestions) ? b.customQuestions : [];
+      if (customQuestions.length > 0) {
+        for (const cq of customQuestions) {
+          const qText = String(cq.text || "").trim();
+          if (!qText) continue;
+          const qOpts = Array.isArray(cq.options) ? cq.options.map(String) : [];
+          if (qOpts.length < 2) continue;
+          const qCorrect = typeof cq.correctIndex === "number" ? cq.correctIndex : 0;
+          const qExpl = String(cq.explanation || "").trim();
+          const newQId = "q_custom_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+          const newQ = {
+            id: newQId,
+            text: qText,
+            options: qOpts,
+            correctIndex: qCorrect,
+            explanation: qExpl,
+            level: gradeLevel,
+            subjectId: subId,
+            subjectName: cleanSubName,
+            createdBy: u.id,
+            teacherName: u.name,
+            isCustom: true,
+            createdAt: Date.now()
+          };
+          await db.add("questions", [newQ]);
+          chosenQIds.push(newQId);
+        }
+      } else {
+        if (pool2.length === 0) {
+          return error(`No questions found in question pool for ${cleanSubName} (${gradeLevel}).`, 400);
+        }
+        if (explicitQIds.length > 0) {
+          const poolSet = new Set(pool2.map((q2) => String(q2.id)));
+          chosenQIds = explicitQIds.filter((qid) => poolSet.has(qid));
+        }
+        if (chosenQIds.length === 0) {
+          const shuffled = [...pool2].sort(() => Math.random() - 0.5);
+          chosenQIds = shuffled.slice(0, Math.min(reqCount, shuffled.length)).map((q2) => String(q2.id));
+        }
       }
       if (chosenQIds.length === 0) {
-        const shuffled = [...pool2].sort(() => Math.random() - 0.5);
-        chosenQIds = shuffled.slice(0, Math.min(reqCount, shuffled.length)).map((q2) => String(q2.id));
+        return error("No questions available to assign.", 400);
       }
       const { items: allUsers } = await db.list("users", { limit: 1e4 });
       const assignedStudents = studentIds.map((sid) => {

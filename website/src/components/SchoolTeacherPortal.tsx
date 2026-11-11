@@ -89,12 +89,36 @@ const GHANA_REGIONS = [
     'Upper East', 'Upper West', 'Volta', 'Western', 'Western North'
 ];
 
-const STANDARD_SUBJECTS = [
+export const BASIC_SCHOOL_LEVELS = [
+    { id: '4', label: 'Basic 4' },
+    { id: '5', label: 'Basic 5' },
+    { id: '6', label: 'Basic 6' },
+    { id: '7', label: 'Basic 7 (JHS 1 / BECE)' },
+    { id: '8', label: 'Basic 8 (JHS 2 / BECE)' },
+    { id: '9', label: 'Basic 9 (JHS 3 / BECE)' },
+];
+
+export const SHS_SCHOOL_LEVELS = [
+    { id: 'SHS 1', label: 'SHS 1' },
+    { id: 'SHS 2', label: 'SHS 2' },
+    { id: 'SHS 3', label: 'SHS 3 (WASSCE)' },
+];
+
+export const BASIC_SCHOOL_SUBJECTS = [
+    'Mathematics', 'Computing', 'Science', 'English', 'Social Studies',
+    'Career Technology', 'Religious & Moral Education (RME)', 'History'
+];
+
+export const SHS_SCHOOL_SUBJECTS = [
+    'Mathematics', 'English', 'Science', 'Social Studies', 'ICT'
+];
+
+export const STANDARD_SUBJECTS = [
     'Mathematics', 'Computing', 'Science', 'English', 'Social Studies',
     'Career Technology', 'Religious & Moral Education (RME)', 'History', 'ICT'
 ];
 
-const ALL_POSSIBLE_LEVELS = [
+export const ALL_POSSIBLE_LEVELS = [
     { id: '4', label: 'Basic 4' },
     { id: '5', label: 'Basic 5' },
     { id: '6', label: 'Basic 6' },
@@ -105,6 +129,54 @@ const ALL_POSSIBLE_LEVELS = [
     { id: 'SHS 2', label: 'SHS 2' },
     { id: 'SHS 3', label: 'SHS 3 (WASSCE)' },
 ];
+
+export function isBasicSchoolOnly(schoolName?: string, category?: string): boolean {
+    const cat = String(category || '').trim().toLowerCase();
+    if (cat === 'basic') return true;
+    if (cat === 'shs' || cat === 'combined') return false;
+    const name = String(schoolName || '').toLowerCase();
+    if (name.includes('shs') || name.includes('senior high') || name.includes('combined')) return false;
+    if (name.includes('jhs') || name.includes('junior high') || name.includes('basic') || name.includes('primary') || name.includes('preparatory') || name.includes('prep')) {
+        return true;
+    }
+    return false;
+}
+
+export function isShsSchoolOnly(schoolName?: string, category?: string): boolean {
+    const cat = String(category || '').trim().toLowerCase();
+    if (cat === 'shs') return true;
+    if (cat === 'basic' || cat === 'combined') return false;
+    const name = String(schoolName || '').toLowerCase();
+    if (name.includes('basic') || name.includes('jhs') || name.includes('junior high') || name.includes('primary')) return false;
+    if (name.includes('shs') || name.includes('senior high')) return true;
+    return false;
+}
+
+export function getSchoolAvailableLevels(schoolName?: string, category?: string) {
+    if (isBasicSchoolOnly(schoolName, category)) return BASIC_SCHOOL_LEVELS;
+    if (isShsSchoolOnly(schoolName, category)) return SHS_SCHOOL_LEVELS;
+    return ALL_POSSIBLE_LEVELS;
+}
+
+export function getSchoolAvailableSubjects(schoolName?: string, category?: string) {
+    if (isBasicSchoolOnly(schoolName, category)) return BASIC_SCHOOL_SUBJECTS;
+    if (isShsSchoolOnly(schoolName, category)) return SHS_SCHOOL_SUBJECTS;
+    return STANDARD_SUBJECTS;
+}
+
+export function getBeceStanineGrade(percent: number, totalQuestions: number) {
+    if (totalQuestions !== 100) return null;
+    const p = Math.round(percent);
+    if (p >= 90) return { grade: 1, label: 'Grade 1', remark: 'Highest Distinction' };
+    if (p >= 80) return { grade: 2, label: 'Grade 2', remark: 'Higher Distinction' };
+    if (p >= 70) return { grade: 3, label: 'Grade 3', remark: 'High Pass' };
+    if (p >= 60) return { grade: 4, label: 'Grade 4', remark: 'Pass' };
+    if (p >= 55) return { grade: 5, label: 'Grade 5', remark: 'Pass' };
+    if (p >= 50) return { grade: 6, label: 'Grade 6', remark: 'Standard Pass' };
+    if (p >= 40) return { grade: 7, label: 'Grade 7', remark: 'Pass' };
+    if (p >= 35) return { grade: 8, label: 'Grade 8', remark: 'Pass' };
+    return { grade: 9, label: 'Grade 9', remark: 'Remedial' };
+}
 
 function downloadCsv(filename: string, rows: (string | number)[][]) {
     const csvContent =
@@ -448,12 +520,59 @@ export function TeacherPortalView({
     const [quizLevel, setQuizLevel] = useState<string>('');
     const [quizQuestionCount, setQuizQuestionCount] = useState<number>(10);
     const [quizTimerSeconds, setQuizTimerSeconds] = useState<number>(60);
-    const [quizMode, setQuizMode] = useState<'random' | 'manual'>('random');
+    const [quizMode, setQuizMode] = useState<'random' | 'manual' | 'custom'>('random');
     const [selectedManualQIds, setSelectedManualQIds] = useState<string[]>([]);
     const [poolQuestions, setPoolQuestions] = useState<any[]>([]);
     const [loadingPool, setLoadingPool] = useState<boolean>(false);
     const [poolSearch, setPoolSearch] = useState<string>('');
     const [expandedAssignmentId, setExpandedAssignmentId] = useState<string | null>(null);
+
+    // Custom teacher-authored question state
+    const [customQuestions, setCustomQuestions] = useState<
+        Array<{ text: string; options: string[]; correctIndex: number; explanation: string }>
+    >([
+        { text: '', options: ['', '', '', ''], correctIndex: 0, explanation: '' }
+    ]);
+
+
+    const teacherAvailableLevels = useMemo(() => getSchoolAvailableLevels(user.schoolName, (user as any).schoolCategory), [user.schoolName, (user as any).schoolCategory]);
+    const teacherAvailableSubjects = useMemo(() => getSchoolAvailableSubjects(user.schoolName, (user as any).schoolCategory), [user.schoolName, (user as any).schoolCategory]);
+
+    const handleAddCustomQuestion = () => {
+        setCustomQuestions((prev) => [
+            ...prev,
+            { text: '', options: ['', '', '', ''], correctIndex: 0, explanation: '' }
+        ]);
+    };
+
+    const handleRemoveCustomQuestion = (indexToRemove: number) => {
+        setCustomQuestions((prev) => {
+            if (prev.length <= 1) return prev;
+            return prev.filter((_, idx) => idx !== indexToRemove);
+        });
+    };
+
+    const handleUpdateCustomQuestion = (
+        index: number,
+        field: 'text' | 'explanation' | 'correctIndex',
+        val: any
+    ) => {
+        setCustomQuestions((prev) => {
+            const next = [...prev];
+            next[index] = { ...next[index], [field]: val };
+            return next;
+        });
+    };
+
+    const handleUpdateCustomOption = (qIndex: number, optIndex: number, text: string) => {
+        setCustomQuestions((prev) => {
+            const next = [...prev];
+            const opts = [...next[qIndex].options];
+            opts[optIndex] = text;
+            next[qIndex] = { ...next[qIndex], options: opts };
+            return next;
+        });
+    };
 
     const [internalTab, setInternalTab] = useState<'results' | 'roster' | 'strengths-weaknesses' | 'diagnostics' | 'assigned-quizzes'>('results');
     const activeTab = externalTab !== undefined ? externalTab : internalTab;
@@ -535,9 +654,11 @@ export function TeacherPortalView({
             alert('Please select at least one student from the roster.');
             return;
         }
-        const defaultSub = user.assignedSubjects?.[0] || 'Computing';
+        const defaultSub = user.assignedSubjects?.[0] || teacherAvailableSubjects[0] || 'Computing';
         const firstSelected = stats?.studentRoster?.find((s) => selectedStudentIds.includes(s.id));
-        const defaultLvl = firstSelected ? (isNumeric(firstSelected.gradeLevel) ? `Basic ${firstSelected.gradeLevel}` : firstSelected.gradeLevel) : (user.assignedLevels?.[0] ? `Basic ${user.assignedLevels[0]}` : 'Basic 8');
+        const defaultLvl = firstSelected
+            ? (isNumeric(firstSelected.gradeLevel) ? `Basic ${firstSelected.gradeLevel}` : firstSelected.gradeLevel)
+            : (user.assignedLevels?.[0] ? `Basic ${user.assignedLevels[0]}` : (teacherAvailableLevels[0]?.id ? `Basic ${teacherAvailableLevels[0].id}` : 'Basic 8'));
 
         setQuizTitle(`${defaultSub} Practice Quiz`);
         setQuizSubject(defaultSub);
@@ -547,6 +668,9 @@ export function TeacherPortalView({
         setQuizMode('random');
         setSelectedManualQIds([]);
         setPoolSearch('');
+        setCustomQuestions([
+            { text: '', options: ['', '', '', ''], correctIndex: 0, explanation: '' }
+        ]);
         setShowAssignModal(true);
     };
 
@@ -580,6 +704,21 @@ export function TeacherPortalView({
             alert('Please select questions from the pool or switch to random selection.');
             return;
         }
+        if (quizMode === 'custom') {
+            const validCustom = customQuestions.filter((q) => q.text.trim() !== '');
+            if (validCustom.length === 0) {
+                alert('Please add at least one custom question with question text.');
+                return;
+            }
+            for (let i = 0; i < validCustom.length; i++) {
+                const filledOptions = validCustom[i].options.filter((o) => o.trim() !== '');
+                if (filledOptions.length < 2) {
+                    alert(`Question #${i + 1} must have at least 2 answer options provided.`);
+                    return;
+                }
+            }
+        }
+
         setAssigning(true);
         try {
             const payload: any = {
@@ -588,17 +727,26 @@ export function TeacherPortalView({
                 subjectName: quizSubject.trim(),
                 gradeLevel: quizLevel.trim() || 'Basic 8',
                 studentIds: selectedStudentIds,
-                questionCount: quizMode === 'manual' ? selectedManualQIds.length : quizQuestionCount,
+                questionCount: quizMode === 'manual' ? selectedManualQIds.length : (quizMode === 'custom' ? customQuestions.filter(q => q.text.trim() !== '').length : quizQuestionCount),
                 timerSeconds: quizTimerSeconds || 60,
             };
             if (quizMode === 'manual' && selectedManualQIds.length > 0) {
                 payload.questionIds = selectedManualQIds;
             }
+            if (quizMode === 'custom') {
+                const validCustom = customQuestions.filter((q) => q.text.trim() !== '');
+                payload.customQuestions = validCustom;
+                payload.questionCount = validCustom.length;
+            }
+
             const res = await api.post('/api/teacher/quiz/create', payload);
             if (res.data?.ok) {
                 setShowAssignModal(false);
                 setSelectedStudentIds([]);
                 setSelectedManualQIds([]);
+                setCustomQuestions([
+                    { text: '', options: ['', '', '', ''], correctIndex: 0, explanation: '' }
+                ]);
                 setAssignSuccessMsg(`Successfully assigned "${quizTitle}" to ${selectedStudentIds.length} student(s)!`);
                 setTimeout(() => setAssignSuccessMsg(''), 5000);
                 loadData();
@@ -926,6 +1074,14 @@ export function TeacherPortalView({
                                                 <span className={`inline-block font-bold ${r.percent >= 50 ? 'text-emerald-700' : 'text-rose-700'}`}>
                                                     {r.percent}%
                                                 </span>
+                                                {Number(r.total) === 100 && (() => {
+                                                    const bg = getBeceStanineGrade(r.percent, 100);
+                                                    return bg ? (
+                                                        <span className="ml-1.5 inline-block rounded-full bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 text-[10px] font-extrabold" title={`Official BECE 100-Question Sitting: ${bg.remark}`}>
+                                                            {bg.label}
+                                                        </span>
+                                                    ) : null;
+                                                })()}
                                             </td>
                                             <td className="px-4 py-3">
                                                 <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
@@ -1706,16 +1862,11 @@ export function TeacherPortalView({
                                                 </option>
                                             ))
                                         ) : (
-                                            <>
-                                                <option value="Computing">Computing</option>
-                                                <option value="Information and Communications Technology (ICT)">
-                                                    Information and Communications Technology (ICT)
+                                            teacherAvailableSubjects.map((sub) => (
+                                                <option key={sub} value={sub}>
+                                                    {sub}
                                                 </option>
-                                                <option value="Mathematics">Mathematics</option>
-                                                <option value="English Language">English Language</option>
-                                                <option value="Integrated Science">Integrated Science</option>
-                                                <option value="Social Studies">Social Studies</option>
-                                            </>
+                                            ))
                                         )}
                                     </select>
                                 </div>
@@ -1733,54 +1884,50 @@ export function TeacherPortalView({
                                         }}
                                         className="input w-full text-xs font-semibold"
                                     >
-                                        <option value="Basic 7">Basic 7</option>
-                                        <option value="Basic 8">Basic 8</option>
-                                        <option value="Basic 9">Basic 9</option>
-                                        <option value="BECE">BECE</option>
-                                        <option value="SHS 1">SHS 1</option>
-                                        <option value="SHS 2">SHS 2</option>
-                                        <option value="SHS 3">SHS 3</option>
-                                        <option value="WASSCE">WASSCE</option>
-                                        <option value="Basic 4">Basic 4</option>
-                                        <option value="Basic 5">Basic 5</option>
-                                        <option value="Basic 6">Basic 6</option>
+                                        {teacherAvailableLevels.map((lvl) => (
+                                            <option key={lvl.id} value={isNumeric(lvl.id) ? `Basic ${lvl.id}` : lvl.id}>
+                                                {lvl.label}
+                                            </option>
+                                        ))}
                                     </select>
                                 </div>
                             </div>
 
                             {/* Required Quiz Number / Question Volume */}
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                                    Number of Exam Questions to Administer:
-                                </label>
-                                <div className="flex flex-wrap gap-1.5 items-center">
-                                    {[10, 15, 20, 25, 30, 40, 50].map((num) => (
-                                        <button
-                                            key={num}
-                                            type="button"
-                                            onClick={() => setQuizQuestionCount(num)}
-                                            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-2xs cursor-pointer ${
-                                                quizQuestionCount === num
-                                                    ? 'bg-[#364c83] text-white shadow-xs'
-                                                    : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                                            }`}
-                                        >
-                                            {num} Questions
-                                        </button>
-                                    ))}
-                                    <div className="flex items-center gap-1 ml-1">
-                                        <span className="text-xs text-slate-500 font-semibold">Custom:</span>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            max={100}
-                                            value={quizQuestionCount}
-                                            onChange={(e) => setQuizQuestionCount(Math.max(1, Number(e.target.value) || 10))}
-                                            className="w-16 input py-1 px-2 text-xs text-center font-bold"
-                                        />
+                            {quizMode !== 'custom' && (
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                                        Number of Exam Questions to Administer:
+                                    </label>
+                                    <div className="flex flex-wrap gap-1.5 items-center">
+                                        {[10, 15, 20, 25, 30, 40, 50].map((num) => (
+                                            <button
+                                                key={num}
+                                                type="button"
+                                                onClick={() => setQuizQuestionCount(num)}
+                                                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-2xs cursor-pointer ${
+                                                    quizQuestionCount === num
+                                                        ? 'bg-[#364c83] text-white shadow-xs'
+                                                        : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                                                }`}
+                                            >
+                                                {num} Questions
+                                            </button>
+                                        ))}
+                                        <div className="flex items-center gap-1 ml-1">
+                                            <span className="text-xs text-slate-500 font-semibold">Custom:</span>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={100}
+                                                value={quizQuestionCount}
+                                                onChange={(e) => setQuizQuestionCount(Math.max(1, Number(e.target.value) || 10))}
+                                                className="w-16 input py-1 px-2 text-xs text-center font-bold"
+                                            />
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
+                            )}
 
                             {/* Default 60-second Timer Setup */}
                             <div>
@@ -1819,7 +1966,7 @@ export function TeacherPortalView({
                                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
                                     Question Pool Selection Method:
                                 </label>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                     <button
                                         type="button"
                                         onClick={() => setQuizMode('random')}
@@ -1833,7 +1980,7 @@ export function TeacherPortalView({
                                             🎲 Automatic Random Draw
                                         </span>
                                         <span className="text-[11px] text-slate-500 mt-0.5 block">
-                                            Automatically pulls {quizQuestionCount} questions from the pool for {quizSubject}.
+                                            Auto-pulls {quizQuestionCount} questions from the bank for {quizSubject}.
                                         </span>
                                     </button>
 
@@ -1850,14 +1997,150 @@ export function TeacherPortalView({
                                         }`}
                                     >
                                         <span className="font-bold text-xs text-slate-900 block">
-                                            📋 Browse &amp; Select Questions
+                                            📋 Browse Question Bank
                                         </span>
                                         <span className="text-[11px] text-slate-500 mt-0.5 block">
-                                            Hand-pick exact questions from the pool ({selectedManualQIds.length} chosen).
+                                            Pick specific questions ({selectedManualQIds.length} chosen).
+                                        </span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setQuizMode('custom')}
+                                        className={`rounded-xl border p-3 text-left transition cursor-pointer ${
+                                            quizMode === 'custom'
+                                                ? 'border-[#364c83] bg-indigo-50/50 shadow-2xs'
+                                                : 'border-slate-200 bg-white hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        <span className="font-bold text-xs text-slate-900 block">
+                                            ✍️ Author Custom Quiz
+                                        </span>
+                                        <span className="text-[11px] text-slate-500 mt-0.5 block">
+                                            Write your own questions for this quiz ({customQuestions.filter(q => q.text.trim() !== '').length} created).
                                         </span>
                                     </button>
                                 </div>
                             </div>
+
+                            {/* Custom Teacher-Authored Questions Builder */}
+                            {quizMode === 'custom' && (
+                                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <span className="text-xs font-bold text-slate-900 block">
+                                                Compose Teacher-Authored Quiz Questions ({customQuestions.length})
+                                            </span>
+                                            <span className="text-[11px] text-slate-500 block">
+                                                Write your questions, provide options, and click the radio button to select the correct answer.
+                                            </span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={handleAddCustomQuestion}
+                                            className="inline-flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-[#1f2d57] transition cursor-pointer"
+                                        >
+                                            <Plus size={13} />
+                                            <span>Add Question</span>
+                                        </button>
+                                    </div>
+
+                                    <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
+                                        {customQuestions.map((cq, qIdx) => (
+                                            <div key={qIdx} className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-3 shadow-2xs">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-xs font-bold text-[#364c83] flex items-center gap-1.5">
+                                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-100 text-[11px]">
+                                                            {qIdx + 1}
+                                                        </span>
+                                                        Question #{qIdx + 1}
+                                                    </span>
+                                                    {customQuestions.length > 1 && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleRemoveCustomQuestion(qIdx)}
+                                                            className="text-slate-400 hover:text-rose-600 p-1 text-xs font-semibold cursor-pointer"
+                                                            title="Remove question"
+                                                        >
+                                                            <Trash2 size={13} />
+                                                        </button>
+                                                    )}
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                                        Question Text <span className="text-rose-500">*</span>
+                                                    </label>
+                                                    <textarea
+                                                        rows={2}
+                                                        value={cq.text}
+                                                        onChange={(e) => handleUpdateCustomQuestion(qIdx, 'text', e.target.value)}
+                                                        placeholder={`Enter question #${qIdx + 1} text here...`}
+                                                        className="input w-full text-xs font-medium"
+                                                    />
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-[11px] font-bold text-slate-600 mb-1.5">
+                                                        Answer Choices &amp; Correct Option:
+                                                    </label>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                        {['A', 'B', 'C', 'D'].map((letter, optIdx) => (
+                                                            <div
+                                                                key={letter}
+                                                                className={`flex items-center gap-2 rounded-lg border p-2 text-xs transition ${
+                                                                    cq.correctIndex === optIdx
+                                                                        ? 'border-emerald-500 bg-emerald-50/60'
+                                                                        : 'border-slate-200 bg-white'
+                                                                }`}
+                                                            >
+                                                                <input
+                                                                    type="radio"
+                                                                    name={`cq_correct_${qIdx}`}
+                                                                    checked={cq.correctIndex === optIdx}
+                                                                    onChange={() => handleUpdateCustomQuestion(qIdx, 'correctIndex', optIdx)}
+                                                                    className="text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                                                    title={`Mark option ${letter} as correct`}
+                                                                />
+                                                                <span className="font-bold text-slate-700 w-4">{letter}.</span>
+                                                                <input
+                                                                    type="text"
+                                                                    value={cq.options[optIdx] || ''}
+                                                                    onChange={(e) => handleUpdateCustomOption(qIdx, optIdx, e.target.value)}
+                                                                    placeholder={`Option ${letter}`}
+                                                                    className="flex-1 bg-transparent border-0 p-0 text-xs font-medium focus:ring-0 text-slate-900"
+                                                                />
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                                        Explanation / Rationale (Optional):
+                                                    </label>
+                                                    <input
+                                                        type="text"
+                                                        value={cq.explanation}
+                                                        onChange={(e) => handleUpdateCustomQuestion(qIdx, 'explanation', e.target.value)}
+                                                        placeholder="Why is this answer correct? (shown in test review)"
+                                                        className="input w-full text-xs"
+                                                    />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={handleAddCustomQuestion}
+                                        className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-[#364c83] hover:bg-slate-50 transition cursor-pointer"
+                                    >
+                                        <Plus size={14} />
+                                        <span>Add Another Question (#{customQuestions.length + 1})</span>
+                                    </button>
+                                </div>
+                            )}
 
                             {/* Manual Question Picker from Pool */}
                             {quizMode === 'manual' && (
@@ -2226,6 +2509,17 @@ export function SchoolAdminPortalView({
     const [sLevel, setSLevel] = useState<string>('8');
     const [sSection, setSSection] = useState('');
     const [addingStudent, setAddingStudent] = useState(false);
+
+    // School Type & Scoped Levels/Subjects (Strictly excludes SHS for Basic schools)
+    const isBasicSchool = isBasicSchoolOnly(user.schoolName, (user as any).schoolCategory || stats?.category);
+    const isShsSchool = isShsSchoolOnly(user.schoolName, (user as any).schoolCategory || stats?.category);
+    const schoolAvailableLevels = useMemo(() => getSchoolAvailableLevels(user.schoolName, (user as any).schoolCategory || stats?.category), [user.schoolName, (user as any).schoolCategory, stats?.category]);
+    const schoolAvailableSubjects = useMemo(() => getSchoolAvailableSubjects(user.schoolName, (user as any).schoolCategory || stats?.category), [user.schoolName, (user as any).schoolCategory, stats?.category]);
+    const allLevelsLabel = isBasicSchool
+        ? 'All School Levels (Basic 4 - 9)'
+        : isShsSchool
+        ? 'All School Levels (SHS 1 - 3)'
+        : 'All School Levels (Basic 4 - SHS 3)';
 
     // Edit Student State (Schools Portal Only)
     const [editingStudent, setEditingStudent] = useState<PortalUser | null>(null);
@@ -3136,7 +3430,7 @@ export function SchoolAdminPortalView({
                             <div>
                                 <label className="block font-semibold text-slate-700 mb-1">Assigned Subject(s)</label>
                                 <div className="max-h-32 overflow-y-auto rounded-lg border border-slate-200 p-2 space-y-1 bg-slate-50/50">
-                                    {STANDARD_SUBJECTS.map((sub) => {
+                                    {schoolAvailableSubjects.map((sub) => {
                                         const checked = tSubjs.includes(sub);
                                         return (
                                             <label key={sub} className="flex items-center gap-1.5 cursor-pointer">
@@ -3158,7 +3452,7 @@ export function SchoolAdminPortalView({
                             <div>
                                 <label className="block font-semibold text-slate-700 mb-1">Assigned Classes</label>
                                 <div className="max-h-28 overflow-y-auto rounded-lg border border-slate-200 p-2 space-y-1 bg-slate-50/50">
-                                    {ALL_POSSIBLE_LEVELS.map((lvl) => {
+                                    {schoolAvailableLevels.map((lvl) => {
                                         const checked = tLevels.includes(lvl.id);
                                         return (
                                             <label key={lvl.id} className="flex items-center gap-1.5 cursor-pointer">
@@ -3365,7 +3659,7 @@ export function SchoolAdminPortalView({
                                         onChange={(e) => setSLevel(e.target.value)}
                                         className="input text-xs"
                                     >
-                                        {ALL_POSSIBLE_LEVELS.map((lvl) => (
+                                        {schoolAvailableLevels.map((lvl) => (
                                             <option key={lvl.id} value={lvl.id}>{lvl.label}</option>
                                         ))}
                                     </select>
@@ -3479,7 +3773,7 @@ export function SchoolAdminPortalView({
                     : 0;
                 const passingCount = studentsWithTests.filter((s: any) => (s.avgScore || 0) >= 50).length;
                 const passRate = studentsWithTests.length > 0 ? Math.round((passingCount / studentsWithTests.length) * 100) : 0;
-                const selectedLvlLabel = ALL_POSSIBLE_LEVELS.find(l => l.id === analysisLevel)?.label || 'All Academic Levels';
+                const selectedLvlLabel = schoolAvailableLevels.find(l => l.id === analysisLevel)?.label || allLevelsLabel;
 
                 return (
                     <div className="space-y-6">
@@ -3495,8 +3789,8 @@ export function SchoolAdminPortalView({
                                     onChange={(e) => setAnalysisLevel(e.target.value)}
                                     className="input text-xs py-1.5 w-auto"
                                 >
-                                    <option value="all">All School Levels (Basic 4 - SHS 3)</option>
-                                    {ALL_POSSIBLE_LEVELS.map((lvl) => (
+                                    <option value="all">{allLevelsLabel}</option>
+                                    {schoolAvailableLevels.map((lvl) => (
                                         <option key={lvl.id} value={lvl.id}>{lvl.label}</option>
                                     ))}
                                 </select>
@@ -3509,7 +3803,7 @@ export function SchoolAdminPortalView({
                                     className="input text-xs py-1.5 w-auto"
                                 >
                                     <option value="all">All Academic Subjects</option>
-                                    {STANDARD_SUBJECTS.map((sub) => (
+                                    {schoolAvailableSubjects.map((sub) => (
                                         <option key={sub} value={sub}>{sub}</option>
                                     ))}
                                 </select>
@@ -4330,7 +4624,7 @@ Yaw Boakye, SHS 2, Science 1`}
                                     <div>
                                         <h4 className="font-bold text-slate-800 mb-2">Enrollment Distribution by Level:</h4>
                                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                            {ALL_POSSIBLE_LEVELS.map((lvl) => {
+                                            {schoolAvailableLevels.map((lvl) => {
                                                 const count = students.filter(s => String(s.gradeLevel) === String(lvl.id)).length;
                                                 return (
                                                     <div key={lvl.id} className="rounded-lg border border-slate-200 p-2.5 flex items-center justify-between bg-white">
@@ -4544,7 +4838,7 @@ Yaw Boakye, SHS 2, Science 1`}
                     if (!t.assignedLevels || t.assignedLevels.length === 0) return true;
                     return t.assignedLevels.map(String).includes(String(printRosterLevel));
                 });
-                const lvlLabel = ALL_POSSIBLE_LEVELS.find(l => l.id === printRosterLevel)?.label || 'All School Levels (Basic 4 - SHS 3)';
+                const lvlLabel = schoolAvailableLevels.find(l => l.id === printRosterLevel)?.label || allLevelsLabel;
                 const boysCount = filteredStudents.filter(s => (s.gender || '').toLowerCase() === 'male').length;
                 const girlsCount = filteredStudents.filter(s => (s.gender || '').toLowerCase() === 'female').length;
 
@@ -4570,8 +4864,8 @@ Yaw Boakye, SHS 2, Science 1`}
                                             onChange={(e) => setPrintRosterLevel(e.target.value)}
                                             className="input text-xs py-1 w-auto"
                                         >
-                                            <option value="all">All School Levels</option>
-                                            {ALL_POSSIBLE_LEVELS.map(lvl => (
+                                            <option value="all">{allLevelsLabel}</option>
+                                            {schoolAvailableLevels.map(lvl => (
                                                 <option key={lvl.id} value={lvl.id}>{lvl.label}</option>
                                             ))}
                                         </select>
@@ -4752,7 +5046,7 @@ Yaw Boakye, SHS 2, Science 1`}
                     : 0;
                 const passingCount = studentsWithTests.filter((s: any) => (s.avgScore || 0) >= 50).length;
                 const passRate = studentsWithTests.length > 0 ? Math.round((passingCount / studentsWithTests.length) * 100) : 0;
-                const lvlLabel = ALL_POSSIBLE_LEVELS.find(l => l.id === analysisLevel)?.label || 'All School Levels (Basic 4 - SHS 3)';
+                const lvlLabel = schoolAvailableLevels.find(l => l.id === analysisLevel)?.label || allLevelsLabel;
 
                 return (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-150 overflow-y-auto">
@@ -4776,8 +5070,8 @@ Yaw Boakye, SHS 2, Science 1`}
                                             onChange={(e) => setAnalysisLevel(e.target.value)}
                                             className="input text-xs py-1 w-auto"
                                         >
-                                            <option value="all">All School Levels</option>
-                                            {ALL_POSSIBLE_LEVELS.map(lvl => (
+                                            <option value="all">{allLevelsLabel}</option>
+                                            {schoolAvailableLevels.map(lvl => (
                                                 <option key={lvl.id} value={lvl.id}>{lvl.label}</option>
                                             ))}
                                         </select>
@@ -4993,7 +5287,7 @@ Yaw Boakye, SHS 2, Science 1`}
                                     onChange={(e) => setEditSLevel(e.target.value)}
                                     className="input text-xs"
                                 >
-                                    {ALL_POSSIBLE_LEVELS.map((lvl) => (
+                                    {schoolAvailableLevels.map((lvl) => (
                                         <option key={lvl.id} value={lvl.id}>{lvl.label}</option>
                                     ))}
                                 </select>
@@ -5094,7 +5388,7 @@ Yaw Boakye, SHS 2, Science 1`}
                             <div>
                                 <label className="block font-semibold text-slate-700 mb-1">Assigned Subject(s)</label>
                                 <div className="max-h-28 overflow-y-auto rounded-lg border border-slate-200 p-2 space-y-1 bg-slate-50/50">
-                                    {STANDARD_SUBJECTS.map((sub) => {
+                                    {schoolAvailableSubjects.map((sub) => {
                                         const checked = editTSubjs.includes(sub);
                                         return (
                                             <label key={sub} className="flex items-center gap-1.5 cursor-pointer">
@@ -5116,7 +5410,7 @@ Yaw Boakye, SHS 2, Science 1`}
                             <div>
                                 <label className="block font-semibold text-slate-700 mb-1">Assigned Classes</label>
                                 <div className="max-h-28 overflow-y-auto rounded-lg border border-slate-200 p-2 space-y-1 bg-slate-50/50">
-                                    {ALL_POSSIBLE_LEVELS.map((lvl) => {
+                                    {schoolAvailableLevels.map((lvl) => {
                                         const checked = editTLevels.includes(lvl.id);
                                         return (
                                             <label key={lvl.id} className="flex items-center gap-1.5 cursor-pointer">

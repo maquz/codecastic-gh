@@ -114,6 +114,24 @@ export function getTrackSlugForCandidate(c: { accountType?: string; gradeLevel?:
     return 'basic';
 }
 
+/**
+ * Official Ghana WAEC BECE Stanine Grading Scale.
+ * Enforced strictly ONLY for candidates who completed 100 questions in a sitting.
+ */
+export function getBeceStanineGrade(percent: number, totalQuestions: number) {
+    if (totalQuestions !== 100) return null;
+    const p = Math.round(percent);
+    if (p >= 90) return { grade: 1, label: 'Grade 1', remark: 'Highest Distinction', desc: 'Score: 90–100% (Highest Distinction / Excellent Mastery)' };
+    if (p >= 80) return { grade: 2, label: 'Grade 2', remark: 'Higher Distinction', desc: 'Score: 80–89% (Distinction / Outstanding Mastery)' };
+    if (p >= 70) return { grade: 3, label: 'Grade 3', remark: 'High Pass', desc: 'Score: 70–79% (High Pass / Very Good Competence)' };
+    if (p >= 60) return { grade: 4, label: 'Grade 4', remark: 'Pass', desc: 'Score: 60–69% (Good Standard Pass)' };
+    if (p >= 55) return { grade: 5, label: 'Grade 5', remark: 'Pass', desc: 'Score: 55–59% (Credit / Satisfactory Pass)' };
+    if (p >= 50) return { grade: 6, label: 'Grade 6', remark: 'Standard Pass', desc: 'Score: 50–54% (Standard Benchmark Pass)' };
+    if (p >= 40) return { grade: 7, label: 'Grade 7', remark: 'Pass', desc: 'Score: 40–49% (Pass / Basic Foundation)' };
+    if (p >= 35) return { grade: 8, label: 'Grade 8', remark: 'Pass', desc: 'Score: 35–39% (Narrow Pass)' };
+    return { grade: 9, label: 'Grade 9', remark: 'Remedial', desc: 'Score: 0–34% (Remedial / Needs Intensive Practice)' };
+}
+
 type Subject = { id: string; name: string };
 type ContactMsg = {
     id: string;
@@ -2178,6 +2196,10 @@ function StudentView({
         if (typeof user.gradeLevel === 'number' && SCHOOL_LEVELS.includes(user.gradeLevel)) {
             return user.gradeLevel;
         }
+        const num = Number(String(user.gradeLevel || '').replace(/\D+/g, ''));
+        if (SCHOOL_LEVELS.includes(num as any)) {
+            return num as Level;
+        }
         return 8; // Default to Basic 8 (JHS 2)
     }, [activeSlug, user.gradeLevel, user.accountType]);
 
@@ -3439,6 +3461,25 @@ function StudentView({
                     </p>
                     <p className="mt-1 text-lg font-semibold text-[#364c83]">{displayPercent}%</p>
                     <p className="mt-2 text-sm text-slate-600">{msg}</p>
+
+                    {/* Official WAEC BECE Stanine Grade (Strictly 100 Questions Sitting) */}
+                    {displayTotal === 100 && (() => {
+                        const stanine = getBeceStanineGrade(displayPercent, displayTotal);
+                        if (!stanine) return null;
+                        return (
+                            <div className="mt-4 rounded-xl border-2 border-amber-300 bg-amber-50/90 p-4 text-center shadow-xs">
+                                <span className="inline-block rounded-full bg-amber-200/70 px-3 py-0.5 text-[11px] font-extrabold uppercase tracking-wider text-amber-900 border border-amber-300">
+                                    Official WAEC BECE Stanine Result (100 Questions Sitting)
+                                </span>
+                                <div className="text-2xl sm:text-3xl font-black text-amber-950 mt-1.5">
+                                    {stanine.label} &middot; {stanine.remark}
+                                </div>
+                                <p className="text-xs font-semibold text-amber-800 mt-1">
+                                    {stanine.desc}
+                                </p>
+                            </div>
+                        );
+                    })()}
                     {String((result as any)?.id || '').startsWith('offline-') && (
                         <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs font-semibold text-amber-900 flex items-center justify-between gap-2 text-left">
                             <span className="flex items-center gap-1.5">
@@ -4350,6 +4391,14 @@ function StudentView({
                                             >
                                                 {r.percent >= 50 ? 'Passed' : 'Needs Review'}
                                             </span>
+                                            {Number(r.total) === 100 && (() => {
+                                                const st = getBeceStanineGrade(r.percent, 100);
+                                                return st ? (
+                                                    <span className="inline-block mt-0.5 ml-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 text-[10px] font-extrabold">
+                                                        {st.label}
+                                                    </span>
+                                                ) : null;
+                                            })()}
                                         </div>
                                     </div>
                                 ))
