@@ -1047,6 +1047,22 @@ export default function ExamHubPortal({
                         activeSlug={activeSlug}
                         onAuthenticated={handleAuthenticated}
                     />
+                ) : user && user.role === 'teacher' ? (
+                    <TeacherPortalView
+                        user={user as unknown as PortalUser}
+                        token={token}
+                        onLogout={handleStudentLogout}
+                        activeTab={teacherTab}
+                        onTabChange={(t) => setTeacherTab(t)}
+                    />
+                ) : user && user.role === 'school_admin' ? (
+                    <SchoolAdminPortalView
+                        user={user as unknown as PortalUser}
+                        token={token}
+                        onLogout={handleStudentLogout}
+                        activeTab={schoolTab}
+                        onTabChange={(t) => setSchoolTab(t)}
+                    />
                 ) : (
                     <StudentView
                         key={`${activeSlug}-${user.id}`}
@@ -4634,6 +4650,26 @@ function StudentView({
                                 >
                                     {copiedId ? 'Copied!' : 'Copy ID'}
                                 </button>
+                            </div>
+
+                            {/* Performance Summary Stats */}
+                            <div className="grid grid-cols-3 gap-2">
+                                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-2.5 text-center">
+                                    <span className="block text-[10px] text-slate-500 font-medium">Exams Taken</span>
+                                    <span className="text-base font-bold text-slate-900">{studentStats.examsTaken}</span>
+                                </div>
+                                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-2.5 text-center">
+                                    <span className="block text-[10px] text-slate-500 font-medium">Average Score</span>
+                                    <span className="text-base font-bold text-[#364c83]">
+                                        {studentStats.examsTaken > 0 ? `${studentStats.avgScore}%` : '--%'}
+                                    </span>
+                                </div>
+                                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-2.5 text-center">
+                                    <span className="block text-[10px] text-slate-500 font-medium">Pass Rate</span>
+                                    <span className="text-base font-bold text-emerald-700">
+                                        {studentStats.examsTaken > 0 ? `${studentStats.passRate}%` : '--%'}
+                                    </span>
+                                </div>
                             </div>
 
                             {/* Details List */}
