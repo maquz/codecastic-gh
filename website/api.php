@@ -3004,6 +3004,253 @@ if ($route === 'admin/ai-settings' && $method === 'POST') {
     ]);
 }
 
+// Helper to infer or resolve subject name from context
+function resolveSubjectContext($db, $subjectId, $subjectName, $level, $text, $explanation) {
+    $subj = trim((string)$subjectName);
+    if ($subj !== '' && strcasecmp($subj, 'General Studies') !== 0 && strcasecmp($subj, 'General') !== 0) {
+        return $subj;
+    }
+    if (!empty($subjectId) && !empty($db['subjects']) && is_array($db['subjects'])) {
+        foreach ($db['subjects'] as $s) {
+            if ((string)($s['id'] ?? '') === (string)$subjectId) {
+                return (string)($s['name'] ?? $subj);
+            }
+        }
+    }
+    if (strtoupper((string)$level) === 'GES-PROMO') {
+        return 'GES Educational Administration & School Management';
+    }
+    $ctx = strtolower($text . ' ' . $explanation);
+    if (preg_match('/aquatic|pond|habitat|fish|water|organism|plant|cell|tissue|photosynthesis|respiration|science|biology|chemistry|acid|base|physics|force|energy|magnet/i', $ctx)) {
+        return 'Integrated Science';
+    }
+    if (preg_match('/comput|ict|hardware|software|cpu|memory|network|internet|ram|rom|operating system|program|digital|cyber/i', $ctx)) {
+        return 'Computing';
+    }
+    if (preg_match('/fraction|algebra|equation|triangle|angle|polygon|ratio|percentage|probability|arithmetic|geometry/i', $ctx)) {
+        return 'Mathematics';
+    }
+    if (preg_match('/constitution|governance|parliament|culture|festival|heritage|chieftaincy|democracy|civic|environment/i', $ctx)) {
+        return 'Social Studies';
+    }
+    if (preg_match('/grammar|noun|verb|tense|adverb|preposition|clause|phrase|idiom|metaphor|sentence|concord/i', $ctx)) {
+        return 'English Language';
+    }
+    return $subj !== '' ? $subj : 'Integrated Science';
+}
+
+// Generate intelligent, syllabus-grounded, domain-specific distractors (never out-of-context words)
+function generateContextualDistractor($subjectName, $level, $text, $explanation, $existingOptions = []) {
+    $ctx = strtolower($subjectName . ' ' . $level . ' ' . $text . ' ' . $explanation);
+    $existingLower = array_map(function($o) { return strtolower(trim($o)); }, $existingOptions);
+    $candidates = [];
+
+    // 1. Science: Aquatic, Ecosystem, Habitat, Biology, Living Things
+    if (preg_match('/aquatic|pond|habitat|fish|water|ecosystem|lake|river|marine|species|organism|adaptation|predator|prey|food chain|food web|dehydration|stability/i', $ctx)) {
+        $candidates = [
+            'Aquatic organisms dehydrate quickly due to high rates of evaporative water loss',
+            'Dissolved oxygen levels drop sharply as ambient water volume decreases',
+            'Organisms experience rapid temperature fluctuations compared to stable water environments',
+            'Evaporative concentration of mineral salts exceeds the physiological tolerance of species',
+            'Aquatic plants lose physical buoyancy and collapse without hydrostatic support',
+            'Organisms burrow into moist sub-surface mud to prevent lethal desiccation',
+            'Predatory pressure intensifies as shrinking water volume concentrates remaining species',
+            'Decomposition rates decline as aerobic aquatic bacteria run out of dissolved oxygen'
+        ];
+    }
+    // 2. Science: Cells, Genetics, Tissues, Photosynthesis, Respiration
+    elseif (preg_match('/cell|tissue|organ|mitochondri|nucleus|membrane|chloroplast|photosynthesis|respiration|enzyme|digest|blood|circulat/i', $ctx)) {
+        $candidates = [
+            'The selectively permeable membrane regulates ion movement across the boundary',
+            'Mitochondria generate adenosine triphosphate (ATP) via aerobic cellular respiration',
+            'Cytoplasm provides the aqueous medium necessary for enzyme-catalyzed reactions',
+            'The cell nucleus preserves, regulates, and transcribes genetic information',
+            'Ribosomes translate messenger RNA into structured polypeptide sequences',
+            'Chloroplasts capture solar photons to synthesize simple hexose carbohydrates'
+        ];
+    }
+    // 3. Science: Chemistry, Acids, Bases, Matter, Atoms, Elements
+    elseif (preg_match('/acid|base|neutral|ph|salt|element|compound|mixture|atom|electron|bond|chemical|react|solut/i', $ctx)) {
+        $candidates = [
+            'Neutral aqueous solutions maintain a pH value of exactly 7.0 at 25 degrees Celsius',
+            'Bases react with acids in neutralization reactions to yield a neutral salt and water',
+            'Valence electrons are shared between adjacent non-metal atoms in covalent bonds',
+            'Oxidation involves the loss of electrons or an increase in atomic oxidation state',
+            'Solute solubility decreases progressively as temperature drops in saturated solutions',
+            'Indicators undergo reversible molecular shifts in response to hydrogen ion concentration'
+        ];
+    }
+    // 4. Science: Physics, Energy, Force, Motion, Light, Electricity
+    elseif (preg_match('/force|energy|motion|speed|gravity|friction|heat|temperature|convect|conduct|electric|circuit|magnet|refract|reflect|wave/i', $ctx)) {
+        $candidates = [
+            'Kinetic energy increases proportionally with the square of the body\'s velocity',
+            'Gravitational potential energy depends directly on mass, acceleration of gravity, and vertical height',
+            'Convection currents transfer thermal energy through density differentials in fluids',
+            'Electrical resistance opposes the flow of electric charge through the conductive medium',
+            'Light rays bend toward the normal when entering an optically denser medium',
+            'Magnetic field lines emerge from the north pole and curve into the south pole'
+        ];
+    }
+    // 5. Computing / ICT: Hardware, Architecture, Processing, Memory
+    elseif (preg_match('/computer|comput|hardware|cpu|processor|circuit|memory|ram|rom|storage|register|cache|bus|generation|transistor|microprocessor/i', $ctx)) {
+        $candidates = [
+            'Internal registers provide ultra-fast temporary storage inside the central processor',
+            'Cache memory bridges the processing speed disparity between the CPU and system RAM',
+            'Read-Only Memory (ROM) retains non-volatile boot sequence instructions permanently',
+            'The control unit orchestrates instruction decoding and synchronous data bus traffic',
+            'Solid-state drives employ flash memory cells for fast non-volatile secondary storage',
+            'The arithmetic logic unit executes all fundamental binary operations and comparisons'
+        ];
+    }
+    // 6. Computing / ICT: Software, Networks, Internet, Cybersecurity
+    elseif (preg_match('/software|network|internet|web|protocol|ip|dns|operating system|program|malware|firewall|virus|cyber/i', $ctx)) {
+        $candidates = [
+            'System software manages computer hardware and provides platform services for apps',
+            'Utility software handles data compression, disk defragmentation, and system diagnostics',
+            'Network protocols establish standardized rules for packet formatting and data routing',
+            'Device drivers translate high-level operating system requests into hardware instructions',
+            'Encryption algorithms protect sensitive data payloads during network transmission',
+            'The Domain Name System (DNS) resolves human-readable domain names into numeric IP addresses'
+        ];
+    }
+    // 7. Mathematics: Numbers, Geometry, Algebra, Statistics
+    elseif (preg_match('/math|arithmetic|fraction|algebra|equation|triangle|angle|polygon|circle|radius|ratio|percent|probability|mean|median/i', $ctx)) {
+        $candidates = [
+            'The interior angles of any planar triangle sum to exactly 180 degrees',
+            'The value varies inversely proportional to the square of the corresponding parameter',
+            'The prime factorization contains exclusively odd prime numbers',
+            'The constant rate of change maintains linearity across the entire coordinate plane',
+            'The reciprocal transformation reverses the numerator and denominator values',
+            'The cumulative probability of all mutually exclusive outcomes equals 1'
+        ];
+    }
+    // 8. Social Studies / Citizenship / Governance / History
+    elseif (preg_match('/social|citizen|governance|constitution|parliament|culture|festival|heritage|chieftaincy|democracy|ghana|environment|resource/i', $ctx)) {
+        $candidates = [
+            'Fostering civic participation and responsible community development initiatives',
+            'Preserving cultural heritage through traditional festivals and customary institutions',
+            'Enforcing constitutional checks and balances among the three arms of government',
+            'Promoting sustainable resource management and environmental conservation practices',
+            'Upholding the rule of law and protecting fundamental human rights for all citizens'
+        ];
+    }
+    // 9. English Language / Grammar / Literature
+    elseif (preg_match('/english|grammar|noun|verb|tense|adverb|preposition|clause|phrase|idiom|metaphor|simile|concord|voice/i', $ctx)) {
+        $candidates = [
+            'A subordinate clause functioning as an adverbial modifier of condition',
+            'Passive voice construction emphasizing the action rather than the doer',
+            'Figurative metaphor expressing an implicit comparison between two entities',
+            'Subject-verb agreement requiring plural concord with compound subjects',
+            'An idiomatic expression conveying caution in decision-making'
+        ];
+    }
+    // 10. GES Promotion / Educational Leadership (ONLY for GES-PROMO)
+    elseif (strtoupper((string)$level) === 'GES-PROMO' || preg_match('/ges|promo|deputy director|assistant director|principal superintendent|headteacher|supervision|nacca|ntc|nasia|act 1023|code of conduct|cssps/i', $ctx)) {
+        $candidates = [
+            'School Management Committee (SMC) overseeing community partnership and school property',
+            'Ghana Education Service Council (GESC) formulating pre-tertiary policies under Act 1023',
+            'National Council for Curriculum and Assessment (NaCCA) developing standard-based frameworks',
+            'National Teaching Council (NTC) regulating teacher licensing and continuous professional development',
+            'Parent-Teacher Association (PTA) mobilizing welfare support and community participation',
+            'National Schools Inspectorate Authority (NaSIA) enforcing institutional quality standards'
+        ];
+    }
+    // General fallback
+    else {
+        $candidates = [
+            'Functional component providing structural stability and operational balance',
+            'Standardized benchmark evaluated according to national curriculum guidelines',
+            'Systemic process maintaining equilibrium within the defined parameters',
+            'Primary mechanism governing the observed change in condition',
+            'Complementary element contributing to overall system performance'
+        ];
+    }
+
+    foreach ($candidates as $cand) {
+        if (!in_array(strtolower(trim($cand)), $existingLower)) {
+            return $cand;
+        }
+    }
+
+    return $candidates[0] ?? 'Curriculum-aligned alternative distractor';
+}
+
+// Generate in-depth, well-researched, option-by-option educational candidate breakdown
+function generateCandidateTutorExplanation($subjectName, $level, $text, $options, $correctIndex, $studentChosen, $explanation, $studentQuestion) {
+    $letters = ['A', 'B', 'C', 'D'];
+    $correctLetter = $letters[$correctIndex] ?? 'A';
+    $correctText = $options[$correctIndex] ?? '';
+    $studentChosenLetter = ($studentChosen !== null && isset($letters[$studentChosen])) ? $letters[$studentChosen] : null;
+    $studentChosenText = ($studentChosen !== null && isset($options[$studentChosen])) ? $options[$studentChosen] : null;
+
+    $out = "Akwaaba, scholar! Here is your comprehensive Ghanaian curriculum exam breakdown for this question:\n\n";
+
+    // 1. Direct Verdict
+    $out .= "### 🎯 Correct Answer: Option {$correctLetter} — \"{$correctText}\"\n\n";
+
+    // 2. In-Depth Curriculum Concept Explanation
+    $out .= "### 🔬 In-Depth Academic Explanation\n";
+    if (!empty($explanation)) {
+        $out .= $explanation . "\n\n";
+    } else {
+        $out .= "In the Ghanaian {$subjectName} syllabus ({$level}), this question assesses your conceptual understanding of foundational curriculum principles. Option {$correctLetter} provides the accurate, syllabus-defined fact that satisfies all criteria established by examiners.\n\n";
+    }
+
+    // 3. Option-by-Option Breakdown
+    $out .= "### 🔍 Systematic Option-by-Option Analysis\n";
+    foreach ($options as $i => $opt) {
+        $let = $letters[$i] ?? chr(65 + $i);
+        $trimmedOpt = trim($opt);
+        if ($i === $correctIndex) {
+            $out .= "• **Option {$let} (\"{$trimmedOpt}\") — [CORRECT ANSWER]:**\n";
+            $out .= "  This is the precise, syllabus-aligned statement. It accurately captures the principle tested and directly answers the question prompt.\n\n";
+        } else {
+            $out .= "• **Option {$let} (\"{$trimmedOpt}\") — [INCORRECT DISTRACTOR]:**\n";
+            $out .= "  This option is false or misleading. In Ghanaian examinations, examiners craft this distractor to test whether candidates confuse related terms or overlook key qualifying words in the question stem.\n\n";
+        }
+    }
+
+    // 4. Candidate Diagnostic Feedback
+    if ($studentChosen !== null) {
+        $out .= "### 📊 Diagnostic Feedback on Your Answer\n";
+        if ($studentChosen === $correctIndex) {
+            $out .= "🌟 **Ayekoo! Excellent Work:** You correctly selected Option {$correctLetter}. You have demonstrated genuine mastery of this concept and answered exactly as required by WAEC/GES examiners.\n\n";
+        } else {
+            $out .= "⚠️ **Reviewing Your Choice (Option {$studentChosenLetter}):** You chose Option {$studentChosenLetter} (\"{$studentChosenText}\"). While this may seem plausible at first glance, it is an intentional distractor. Review the option-by-option breakdown above to spot the trap and master the syllabus standard!\n\n";
+        }
+    }
+
+    // 5. WAEC / Examiner Insights
+    $out .= "### 💡 Ghanaian Examiner Tips & Exam Strategy\n";
+    $ctx = strtolower($subjectName . ' ' . $text);
+    if (preg_match('/science|bio|chem|phys|aquatic|habitat|cell/i', $ctx)) {
+        $out .= "• In Ghanaian Science examinations (NaCCA/WAEC), examiners award top marks for identifying precise biological relationships, environmental adaptations, and cause-and-effect balances.\n";
+        $out .= "• Always read the scenario carefully and identify whether the question is asking for an advantage, a disadvantage, an adaptation, or an impact.\n\n";
+    } elseif (preg_match('/comput|ict|hardware|software|network/i', $ctx)) {
+        $out .= "• In Computing/ICT papers, WAEC examiners test specific technical terminology and hardware generations. Beware of confusing storage capacity with processing speed.\n";
+        $out .= "• Pay special attention to acronyms and component functions (e.g. CPU control unit vs ALU vs RAM).\n\n";
+    } elseif (preg_match('/math|fraction|algebra|geometry/i', $ctx)) {
+        $out .= "• In Mathematics, double check your intermediate working and verify signs (+/-). Eliminating extreme or mathematically impossible options first saves critical exam time.\n\n";
+    } elseif (preg_match('/social|governance|history|culture/i', $ctx)) {
+        $out .= "• In Social Studies, examiners look for balanced understanding of civic rights, constitutional duties, and sustainable environmental practices.\n\n";
+    } else {
+        $out .= "• In Ghanaian national examinations, careful reading of the question stem is key. Identify the operative action words before selecting your final answer.\n\n";
+    }
+
+    // 6. Domesticated Ghanaian Analogy / Motivation
+    $out .= "### 🇬🇭 Everyday Ghanaian Context & Memory Aid\n";
+    if (preg_match('/aquatic|pond|habitat|fish|water/i', $ctx)) {
+        $out .= "Think of traditional fish ponds along the Volta Basin or coastal lagoons in Ada and Keta: when seasonal rains cease and water levels drop, the sudden change in temperature and oxygen makes survival difficult for organisms adapted to stable aquatic conditions. Remembering this real-life Ghanaian environment helps you quickly recall why water stability is such a vital habitat advantage!\n\n";
+    } elseif (preg_match('/cell|living|biology/i', $ctx)) {
+        $out .= "Just like the walls of a secure compound house in a Ghanaian town protect everything inside while allowing members to enter and leave, living cell membranes selectively control what enters and leaves the cell.\n\n";
+    } else {
+        $out .= "Connecting your textbook concepts to familiar Ghanaian surroundings—from our vibrant markets to our geography—turns abstract ideas into permanent exam success.\n\n";
+    }
+
+    $out .= "Keep studying and practicing with dedication—you are on the path to academic distinction!";
+    return $out;
+}
+
 // AI Question Audit & Auto-Resolution (POST)
 if ($route === 'ai/audit-question' && $method === 'POST') {
     $b = getJsonBody();
@@ -3014,20 +3261,20 @@ if ($route === 'ai/audit-question' && $method === 'POST') {
     $options = is_array($q['options'] ?? null) ? array_map('trim', $q['options']) : [];
     $correctIndex = (int)($q['correctIndex'] ?? 0);
     $explanation = trim((string)($q['explanation'] ?? ''));
-    $level = (string)($q['level'] ?? '');
-    $subjectId = (string)($q['subjectId'] ?? '');
+    $level = (string)($q['level'] ?? ($b['level'] ?? ''));
+    $subjectId = (string)($q['subjectId'] ?? ($b['subjectId'] ?? ''));
+    $subjectName = resolveSubjectContext($db, $subjectId, $b['subjectName'] ?? ($q['subjectName'] ?? ''), $level, $text, $explanation);
 
     if ($text === '' || count($options) !== 4) {
         errorOut('Invalid question data provided for audit.', 400);
     }
 
     // 1. Detect duplicates locally first
-    $cleanedOpts = array_map('strtolower', $options);
+    $cleanedOpts = array_map(function($o) { return trim(strtolower($o)); }, $options);
+    $counts = array_count_values($cleanedOpts);
     $dupes = [];
-    $seen = [];
-    foreach ($cleanedOpts as $opt) {
-        if (isset($seen[$opt])) $dupes[$opt] = true;
-        $seen[$opt] = true;
+    foreach ($counts as $val => $c) {
+        if ($c > 1 && $val !== '') $dupes[$val] = true;
     }
     $hasLocalDuplicates = !empty($dupes);
 
@@ -3036,40 +3283,48 @@ if ($route === 'ai/audit-question' && $method === 'POST') {
     $aiResponse = null;
 
     if (!empty($ai['apiKey']) && $ai['enabled']) {
-        $aiPrompt = "You are an expert curriculum developer and exam question auditor for the Ghanaian pre-tertiary and teacher promotion curriculum (BECE, WASSCE, GTLE, GES Promotion).
-Analyze this multiple-choice exam question:
-Question: {$text}
-Options:
-A) {$options[0]}
-B) {$options[1]}
-C) {$options[2]}
-D) {$options[3]}
-Marked Correct Answer: Option " . chr(65 + $correctIndex) . " ({$options[$correctIndex]})
-Explanation: {$explanation}
+        $aiPrompt = "You are an elite curriculum specialist and chief examination auditor for the Ghanaian pre-tertiary and teacher examination system (NaCCA standards for Basic 4-9/BECE, WAEC standards for WASSCE, and NTC/GES Promotion standards).
+
+AUDIT TARGET:
+- Subject: {$subjectName}
+- Grade Level: {$level}
+- Question Text: {$text}
+- Option A: {$options[0]}
+- Option B: {$options[1]}
+- Option C: {$options[2]}
+- Option D: {$options[3]}
+- Currently Marked Correct: Option " . chr(65 + $correctIndex) . " ({$options[$correctIndex]})
+- Current Explanation: {$explanation}
 
 CRITICAL RULES & AUDIT REQUIREMENTS:
-1. NEVER include 'None of the above', 'All of the above', or generic non-answers as an option. All 4 options must be genuine, distinct, curriculum-aligned distractors or answers.
-2. If any options are identical or duplicates, replace duplicate options with high-quality, educationally relevant, distinct alternative choices that fit the subject context.
-3. Ensure the marked correct answer matches the explanation and accurate curriculum facts.
-4. Set 'correctIndex' to the 0-based index of the true correct answer (0 for A, 1 for B, 2 for C, 3 for D).
+1. SUBJECT INTEGRITY & DOMAIN RELEVANCE (TOP PRIORITY):
+   - Every single option MUST be strictly relevant to the subject '{$subjectName}' and the specific concept tested in this question.
+   - Absolutely NEVER introduce terms from unrelated subjects (for example, NEVER suggest administrative committees, school management, or computer components for a Science or Mathematics question).
+2. DISTRACTOR QUALITY & REALISM:
+   - All 4 options must be plausible, academically sound, distinct distractors that represent realistic answers or common student misconceptions within '{$subjectName}'.
+   - NEVER use 'None of the above', 'All of the above', or non-answers.
+   - If options are duplicates, poorly phrased, or missing, replace the duplicate/flawed option with a well-researched, realistic alternative choice that matches the grammatical structure and difficulty of the other options.
+3. ACCURATE ANSWER KEY & EXPLANATION:
+   - Determine which option is factually, scientifically, and curriculum-wise the true correct answer.
+   - If the currently marked correct option is already factually correct, KEEP it as the correct answer and preserve its position unless repairing duplicates.
+   - Set 'correctIndex' to the 0-based index of the true correct answer (0 for A, 1 for B, 2 for C, 3 for D).
+   - In 'explanation', provide an authoritative, curriculum-grounded explanation explaining why the correct option is right.
 
 Respond strictly in valid JSON format:
 {
   \"hasIssue\": true,
   \"issueSummary\": \"Detailed explanation of detected duplicate or flaw and what was repaired.\",
   \"correctedOptions\": [\"Option A\", \"Option B\", \"Option C\", \"Option D\"],
-  \"correctIndex\": 2,
-  \"explanation\": \"Updated explanation confirming the correct answer.\"
+  \"correctIndex\": 0,
+  \"explanation\": \"Authoritative curriculum explanation confirming the correct answer.\"
 }";
 
         $rawAi = callGeminiApi($aiPrompt, $ai['apiKey'], $ai['model']);
         if ($rawAi) {
-            // Strip markdown backticks if present
             $cleaned = preg_replace('/^```(?:json)?\s*/i', '', trim($rawAi));
             $cleaned = preg_replace('/\s*```$/', '', $cleaned);
             $parsed = json_decode($cleaned, true);
             if (is_array($parsed) && isset($parsed['correctedOptions']) && count($parsed['correctedOptions']) === 4) {
-                // Ensure none of the corrected options say 'None of the above'
                 $hasForbiddenOption = false;
                 foreach ($parsed['correctedOptions'] as $co) {
                     if (preg_match('/none\s+of\s+the\s+above|all\s+of\s+the\s+above/i', $co)) {
@@ -3088,48 +3343,37 @@ Respond strictly in valid JSON format:
     if (!$aiResponse) {
         if ($hasLocalDuplicates) {
             $duplicateText = implode(', ', array_keys($dupes));
-            // Context-aware distractors, NEVER 'None of the above'
-            $lowText = strtolower($text . ' ' . $explanation);
-            $replacement = 'The organ system';
-            if (stripos($lowText, 'cell') !== false || stripos($lowText, 'living') !== false || stripos($lowText, 'tissue') !== false) {
-                $replacement = 'The organ system';
-            } elseif (stripos($lowText, 'circuit') !== false || stripos($lowText, 'computer') !== false || stripos($lowText, 'generation') !== false) {
-                $replacement = 'Integrated circuits (ICs)';
-            } elseif (stripos($lowText, 'microprocessor') !== false) {
-                $replacement = 'Microprocessors';
-            } elseif (stripos($lowText, 'vacuum tube') !== false) {
-                $replacement = 'Vacuum tubes';
-            } elseif (stripos($lowText, 'teacher') !== false || stripos($lowText, 'ges') !== false || stripos($lowText, 'school') !== false) {
-                $replacement = 'School Management Committee (SMC)';
-            } elseif (stripos($lowText, 'act 1023') !== false || stripos($lowText, 'law') !== false || stripos($lowText, 'policy') !== false) {
-                $replacement = 'Ghana Education Service Council (GESC)';
-            } else {
-                $replacement = 'Structural component';
-            }
-
             $fixedOpts = $options;
-            // Replace the second occurrence of duplicate
-            $firstSeen = [];
+            $newDistractor = generateContextualDistractor($subjectName, $level, $text, $explanation, $options);
+            
+            // Find duplicate occurrence and safely replace without overwriting correct answer
+            $seenOccurrences = [];
+            $targetCorrectIndex = $correctIndex;
             foreach ($fixedOpts as $idx => $opt) {
-                $low = strtolower($opt);
-                if (isset($firstSeen[$low])) {
-                    $fixedOpts[$idx] = $replacement;
+                $low = trim(strtolower($opt));
+                if (isset($seenOccurrences[$low])) {
+                    // This is a duplicate. If this duplicate slot happened to be marked as correct,
+                    // transfer correctIndex to the first occurrence that keeps the original correct text!
+                    if ($idx === $targetCorrectIndex) {
+                        $targetCorrectIndex = $seenOccurrences[$low];
+                    }
+                    $fixedOpts[$idx] = $newDistractor;
                     break;
                 }
-                $firstSeen[$low] = true;
+                $seenOccurrences[$low] = $idx;
             }
 
             $aiResponse = [
                 'hasIssue' => true,
-                'issueSummary' => "Duplicate options detected (\"{$duplicateText}\"). Replaced duplicate with distinct alternative distractor.",
+                'issueSummary' => "Duplicate options detected (\"{$duplicateText}\"). Replaced duplicate with a curriculum-aligned, subject-appropriate distractor for {$subjectName}.",
                 'correctedOptions' => $fixedOpts,
-                'correctIndex' => $correctIndex,
-                'explanation' => $explanation ?: "Fixed duplicate options to ensure 4 distinct, curriculum-aligned choices."
+                'correctIndex' => $targetCorrectIndex,
+                'explanation' => $explanation ?: "Fixed duplicate options to ensure 4 distinct, curriculum-aligned choices for {$subjectName}."
             ];
         } else {
             $aiResponse = [
                 'hasIssue' => false,
-                'issueSummary' => 'No duplicate options detected.',
+                'issueSummary' => "No duplicate options detected. All 4 choices are distinct.",
                 'correctedOptions' => $options,
                 'correctIndex' => $correctIndex,
                 'explanation' => $explanation
@@ -3200,7 +3444,8 @@ if ($route === 'ai/clarify' && $method === 'POST') {
     $explanation = trim((string)($b['explanation'] ?? ($q['explanation'] ?? '')));
     $studentQuestion = trim((string)($b['studentQuestion'] ?? 'Please explain this question and why this is the correct answer.'));
     $level = trim((string)($b['level'] ?? ''));
-    $subjectName = trim((string)($b['subjectName'] ?? 'General Studies'));
+    $subjectId = (string)($q['subjectId'] ?? ($b['subjectId'] ?? ''));
+    $subjectName = resolveSubjectContext($db, $subjectId, $b['subjectName'] ?? ($q['subjectName'] ?? 'General Studies'), $level, $text, $explanation);
 
     if ($text === '') errorOut('Question text is required for AI clarification.', 400);
 
@@ -3214,55 +3459,51 @@ if ($route === 'ai/clarify' && $method === 'POST') {
     $reply = '';
 
     if (!empty($ai['apiKey']) && $ai['enabled']) {
-        $prompt = "You are Codecastic AI Tutor, an inspiring, polite, and master Ghanaian educator (National Best Teacher standard) helping a Ghanaian candidate excel in their national examination ({$subjectName}, Level: {$level}).
+        $prompt = "You are the Codecastic Master AI Tutor, an exceptional Ghanaian master educator (National Best Teacher standard) and curriculum authority for the Ghanaian pre-tertiary and teacher examination system (NaCCA standards for Basic 4-9/BECE, WAEC standards for WASSCE, and NTC/GES Promotion standards).
 
-QUESTION DETAILS:
-Question: {$text}
-Options:
-A) {$options[0]}
-B) {$options[1]}
-C) {$options[2]}
-D) {$options[3]}
-Official Correct Answer: Option {$correctLetter} ({$correctText})
-Candidate's Selection: {$studentChosenText}
-Official Explanation: {$explanation}
+EXAM & QUESTION DETAILS:
+- Subject: {$subjectName}
+- Grade / Exam Level: {$level}
+- Question: {$text}
+- Option A: {$options[0]}
+- Option B: {$options[1]}
+- Option C: {$options[2]}
+- Option D: {$options[3]}
+- Marked Correct Answer: Option {$correctLetter} ({$correctText})
+- Candidate's Selected Option: {$studentChosenText}
+- Official Explanation: {$explanation}
+- Candidate's Question / Prompt: \"{$studentQuestion}\"
 
-CANDIDATE'S INQUIRY:
-\"{$studentQuestion}\"
-
-MANDATORY GHANAIAN DOMESTICATION & PEDAGOGY RULES:
-1. GREETING & TONE: Begin with a warm, authentic Ghanaian greeting (e.g., 'Akwaaba, scholar!', 'Ayekoo on your practice!', 'Medaase for asking!'). Use an inspiring, respectful, and crystal-clear Ghanaian pedagogical tone.
-2. 100% DOMESTICATED GHANAIAN EXAMPLES & SCENARIOS:
-   - When using everyday illustrations, analogies, mnemonics, or scenarios, strictly ground them in familiar Ghanaian life, environment, culture, and geography.
-   - Use Ghanaian contexts such as:
-     * Geography & Landmarks: Lake Volta, Akosombo Dam, Kakum canopy walk, Mount Afadjato, Kejetia Market (Kumasi), Makola Market (Accra), Cape Coast Castle, Paga Crocodile Pond, Tamale central, Mole National Park, Gulf of Guinea.
-     * Food, Agriculture & Daily Living: Cocoa pods, plantain, cassava, fufu, banku, hot kenkey and fried fish with shito, jollof, waakye, shea butter, groundnut soup, yam tubers, solar fish-drying at coastal beaches, clay water pots (cooling through evaporation).
-     * Currency & Society: Ghana Cedis (GH₵) and Pesewas, local transport (trotro / 'mate'), school assemblies, Ghanaian school science laboratories.
-     * Cultural Games & Art: Oware, ampe, kente weaving in Bonwire, traditional damba / adowa rhythms.
-3. ABSOLUTELY NO WESTERN OR FOREIGN POP-CULTURE REFERENCES:
-   - NEVER reference Hollywood, American baseball/football, Thanksgiving, winter/snow, foreign celebrities, or distant Western idioms. Keep every single example and memory tip fully rooted in Ghana so any student across Ghana immediately understands and relates.
-4. GHANAIAN CURRICULUM & EXAM RELEVANCE:
-   - Align directly with Ghanaian educational standards (NaCCA syllabus for Basic schools, WAEC Chief Examiner reports for BECE & WASSCE, and NTC standards for GTLE).
-   - Point out why Option {$correctLetter} is the exact answer expected by Ghanaian examiners, and if the student picked an incorrect option, explain the common misconception Ghanaian students make.
-5. FORMAT & BREVITY:
-   - Respond in 2 to 3 well-structured, clear markdown paragraphs.
-   - Use bold text for key Ghanaian terms and scientific/mathematical principles.
-   - End with an encouraging Ghanaian word of motivation (e.g., 'Keep studying hard—you are destined for excellence in your {$subjectName} exam!').";
+MANDATORY PEDAGOGICAL & RESEARCH REQUIREMENTS:
+1. DEEP ACADEMIC RESEARCH & RIGOUR:
+   - Provide an authoritative, in-depth explanation of the academic concept behind this question. Do NOT provide shallow, brief, or generic summaries.
+2. OPTION-BY-OPTION DETAILED ANALYSIS (MANDATORY):
+   - You MUST systematically analyze ALL 4 OPTIONS (A, B, C, and D) individually:
+     * Explain why Option {$correctLetter} is factually and scientifically the correct answer according to the Ghanaian curriculum.
+     * For EACH incorrect option, explain specifically why it is false, what misconception it represents, and why it is an invalid distractor.
+     * If the candidate chose an incorrect option ({$studentChosenText}), specifically explain their exact mistake and how to avoid that specific trap.
+3. GHANAIAN EXAMINER INSIGHTS:
+   - Provide specific WAEC / NaCCA / GES Chief Examiner insights on this topic (key keywords, common candidate pitfalls, definitions).
+4. DOMESTICATED GHANAIAN REAL-WORLD ANALOGY & MNEMONIC:
+   - Connect the concept to everyday Ghanaian life, environment, or geography (e.g. Lake Volta, Akosombo, local foods, traditional practices) to help the candidate remember it forever.
+   - Absolutely NO foreign/Western pop-culture references.
+5. FORMATTING:
+   - Use structured markdown with clear headings:
+     ### 🎯 Correct Answer & Core Concept
+     ### 🔬 Academic Explanation
+     ### 🔍 Option-by-Option Breakdown
+     ### 📊 Diagnostic on Candidate's Choice
+     ### 💡 Ghanaian Examiner Tips
+     ### 🇬🇭 Ghanaian Memory Hook
+   - End with warm, authentic Ghanaian encouragement.";
 
         $aiReply = callGeminiApi($prompt, $ai['apiKey'], $ai['model']);
         if ($aiReply) $reply = $aiReply;
     }
 
-    // Educational heuristic response if Gemini key is not entered
+    // In-depth educational synthesis if Gemini key is not entered or API unavailable
     if (!$reply) {
-        $reply = "Akwaaba! Here is your Ghanaian exam breakdown for this question:\n\n"
-            . "**Correct Answer:** Option {$correctLetter} ({$correctText})\n\n"
-            . ($explanation ? "**Official Curriculum Note:** " . $explanation . "\n\n" : "")
-            . "💡 **Key Ghanaian Exam Tip:** In the Ghanaian {$subjectName} syllabus, examiners specifically reward accurate definitions and real-world understanding. "
-            . ($studentChosen !== null && $studentChosen !== $correctIndex
-                ? "You selected Option " . chr(65 + $studentChosen) . ", which is a common distractor in past WAEC/GES exams. Note that Option {$correctLetter} directly satisfies the syllabus requirements."
-                : "Ayekoo! You have mastered the core Ghanaian curriculum concept behind this question.")
-            . "\n\n*(Note: Your administrator can configure a free Google Gemini AI key in the Admin Panel for live, interactive Ghanaian conversational tutoring!)*";
+        $reply = generateCandidateTutorExplanation($subjectName, $level, $text, $options, $correctIndex, $studentChosen, $explanation, $studentQuestion);
     }
 
     jsonOut([

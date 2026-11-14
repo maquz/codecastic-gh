@@ -2448,7 +2448,9 @@ function StudentView({
                 question: {
                     text: tutorQuestion.text,
                     options: tutorQuestion.options,
+                    subjectId: subject?.id || '',
                 },
+                subjectId: subject?.id || '',
                 correctIndex: tutorQuestion.correctIndex,
                 studentChosen: tutorQuestion.chosen,
                 explanation: tutorQuestion.explanation,
@@ -6770,9 +6772,16 @@ function QuestionsAdmin({
         setAuditEditableExplanation(q.explanation || '');
 
         try {
+            const matchedSubj = subjects.find((s) => s.id === q.subjectId);
+            const currentSubjName = matchedSubj?.name || '';
             const res = await api.post('/api/ai/audit-question', {
                 passcode: authPasscode,
-                question: q,
+                question: {
+                    ...q,
+                    subjectName: currentSubjName,
+                },
+                subjectName: currentSubjName,
+                level: q.level,
             });
             if (res.data?.ok) {
                 setAuditResult(res.data);

@@ -1154,6 +1154,238 @@ function parseBulkQuestionsPayload(body: any): RawBulkItem[] {
 }
 
 /* ------------------------------------------------------------------ */
+/* Subject & AI Curriculum Helpers                                    */
+/* ------------------------------------------------------------------ */
+
+function resolveSubjectContextNode(
+    subjectList: any[],
+    subjectId: string,
+    subjectName: string,
+    level: string,
+    text: string,
+    explanation: string
+): string {
+    const subj = String(subjectName || '').trim();
+    if (subj && !/^(General Studies|General)$/i.test(subj)) return subj;
+    if (subjectId && Array.isArray(subjectList)) {
+        const found = subjectList.find((s: any) => String(s.id) === String(subjectId));
+        if (found?.name) return String(found.name).trim();
+    }
+    if (String(level).toUpperCase() === 'GES-PROMO') {
+        return 'GES Educational Administration & School Management';
+    }
+    const ctx = `${text} ${explanation}`.toLowerCase();
+    if (/aquatic|pond|habitat|fish|water|organism|plant|cell|tissue|photosynthesis|respiration|science|biology|chemistry|acid|base|physics|force|energy|magnet/i.test(ctx)) {
+        return 'Integrated Science';
+    }
+    if (/comput|ict|hardware|software|cpu|memory|network|internet|ram|rom|operating system|program|digital|cyber/i.test(ctx)) {
+        return 'Computing';
+    }
+    if (/fraction|algebra|equation|triangle|angle|polygon|ratio|percentage|probability|arithmetic|geometry/i.test(ctx)) {
+        return 'Mathematics';
+    }
+    if (/constitution|governance|parliament|culture|festival|heritage|chieftaincy|democracy|civic|environment/i.test(ctx)) {
+        return 'Social Studies';
+    }
+    if (/grammar|noun|verb|tense|adverb|preposition|clause|phrase|idiom|metaphor|sentence|concord/i.test(ctx)) {
+        return 'English Language';
+    }
+    return subj || 'Integrated Science';
+}
+
+function generateContextualDistractorNode(
+    subjectName: string,
+    level: string,
+    text: string,
+    explanation: string,
+    existingOptions: string[] = []
+): string {
+    const ctx = `${subjectName} ${level} ${text} ${explanation}`.toLowerCase();
+    const existingLower = existingOptions.map((o) => o.trim().toLowerCase());
+    let candidates: string[] = [];
+
+    if (/aquatic|pond|habitat|fish|water|ecosystem|lake|river|marine|species|organism|adaptation|predator|prey|food chain|food web|dehydration|stability/i.test(ctx)) {
+        candidates = [
+            'Aquatic organisms dehydrate quickly due to high rates of evaporative water loss',
+            'Dissolved oxygen levels drop sharply as ambient water volume decreases',
+            'Organisms experience rapid temperature fluctuations compared to stable water environments',
+            'Evaporative concentration of mineral salts exceeds the physiological tolerance of species',
+            'Aquatic plants lose physical buoyancy and collapse without hydrostatic support',
+            'Organisms burrow into moist sub-surface mud to prevent lethal desiccation',
+            'Predatory pressure intensifies as shrinking water volume concentrates remaining species',
+            'Decomposition rates decline as aerobic aquatic bacteria run out of dissolved oxygen',
+        ];
+    } else if (/cell|tissue|organ|mitochondri|nucleus|membrane|chloroplast|photosynthesis|respiration|enzyme|digest|blood|circulat/i.test(ctx)) {
+        candidates = [
+            'The selectively permeable membrane regulates ion movement across the boundary',
+            'Mitochondria generate adenosine triphosphate (ATP) via aerobic cellular respiration',
+            'Cytoplasm provides the aqueous medium necessary for enzyme-catalyzed reactions',
+            'The cell nucleus preserves, regulates, and transcribes genetic information',
+            'Ribosomes translate messenger RNA into structured polypeptide sequences',
+            'Chloroplasts capture solar photons to synthesize simple hexose carbohydrates',
+        ];
+    } else if (/acid|base|neutral|ph|salt|element|compound|mixture|atom|electron|bond|chemical|react|solut/i.test(ctx)) {
+        candidates = [
+            'Neutral aqueous solutions maintain a pH value of exactly 7.0 at 25 degrees Celsius',
+            'Bases react with acids in neutralization reactions to yield a neutral salt and water',
+            'Valence electrons are shared between adjacent non-metal atoms in covalent bonds',
+            'Oxidation involves the loss of electrons or an increase in atomic oxidation state',
+            'Solute solubility decreases progressively as temperature drops in saturated solutions',
+            'Indicators undergo reversible molecular shifts in response to hydrogen ion concentration',
+        ];
+    } else if (/force|energy|motion|speed|gravity|friction|heat|temperature|convect|conduct|electric|circuit|magnet|refract|reflect|wave/i.test(ctx)) {
+        candidates = [
+            "Kinetic energy increases proportionally with the square of the body's velocity",
+            'Gravitational potential energy depends directly on mass, acceleration of gravity, and vertical height',
+            'Convection currents transfer thermal energy through density differentials in fluids',
+            'Electrical resistance opposes the flow of electric charge through the conductive medium',
+            'Light rays bend toward the normal when entering an optically denser medium',
+            'Magnetic field lines emerge from the north pole and curve into the south pole',
+        ];
+    } else if (/computer|comput|hardware|cpu|processor|circuit|memory|ram|rom|storage|register|cache|bus|generation|transistor|microprocessor/i.test(ctx)) {
+        candidates = [
+            'Internal registers provide ultra-fast temporary storage inside the central processor',
+            'Cache memory bridges the processing speed disparity between the CPU and system RAM',
+            'Read-Only Memory (ROM) retains non-volatile boot sequence instructions permanently',
+            'The control unit orchestrates instruction decoding and synchronous data bus traffic',
+            'Solid-state drives employ flash memory cells for fast non-volatile secondary storage',
+            'The arithmetic logic unit executes all fundamental binary operations and comparisons',
+        ];
+    } else if (/software|network|internet|web|protocol|ip|dns|operating system|program|malware|firewall|virus|cyber/i.test(ctx)) {
+        candidates = [
+            'System software manages computer hardware and provides platform services for apps',
+            'Utility software handles data compression, disk defragmentation, and system diagnostics',
+            'Network protocols establish standardized rules for packet formatting and data routing',
+            'Device drivers translate high-level operating system requests into hardware instructions',
+            'Encryption algorithms protect sensitive data payloads during network transmission',
+            'The Domain Name System (DNS) resolves human-readable domain names into numeric IP addresses',
+        ];
+    } else if (/math|arithmetic|fraction|algebra|equation|triangle|angle|polygon|circle|radius|ratio|percent|probability|mean|median/i.test(ctx)) {
+        candidates = [
+            'The interior angles of any planar triangle sum to exactly 180 degrees',
+            'The value varies inversely proportional to the square of the corresponding parameter',
+            'The prime factorization contains exclusively odd prime numbers',
+            'The constant rate of change maintains linearity across the entire coordinate plane',
+            'The reciprocal transformation reverses the numerator and denominator values',
+            'The cumulative probability of all mutually exclusive outcomes equals 1',
+        ];
+    } else if (/social|citizen|governance|constitution|parliament|culture|festival|heritage|chieftaincy|democracy|ghana|environment|resource/i.test(ctx)) {
+        candidates = [
+            'Fostering civic participation and responsible community development initiatives',
+            'Preserving cultural heritage through traditional festivals and customary institutions',
+            'Enforcing constitutional checks and balances among the three arms of government',
+            'Promoting sustainable resource management and environmental conservation practices',
+            'Upholding the rule of law and protecting fundamental human rights for all citizens',
+        ];
+    } else if (/english|grammar|noun|verb|tense|adverb|preposition|clause|phrase|idiom|metaphor|simile|concord|voice/i.test(ctx)) {
+        candidates = [
+            'A subordinate clause functioning as an adverbial modifier of condition',
+            'Passive voice construction emphasizing the action rather than the doer',
+            'Figurative metaphor expressing an implicit comparison between two entities',
+            'Subject-verb agreement requiring plural concord with compound subjects',
+            'An idiomatic expression conveying caution in decision-making',
+        ];
+    } else if (String(level).toUpperCase() === 'GES-PROMO' || /ges|promo|deputy director|assistant director|principal superintendent|headteacher|supervision|nacca|ntc|nasia|act 1023|code of conduct|cssps/i.test(ctx)) {
+        candidates = [
+            'School Management Committee (SMC) overseeing community partnership and school property',
+            'Ghana Education Service Council (GESC) formulating pre-tertiary policies under Act 1023',
+            'National Council for Curriculum and Assessment (NaCCA) developing standard-based frameworks',
+            'National Teaching Council (NTC) regulating teacher licensing and continuous professional development',
+            'Parent-Teacher Association (PTA) mobilizing welfare support and community participation',
+            'National Schools Inspectorate Authority (NaSIA) enforcing institutional quality standards',
+        ];
+    } else {
+        candidates = [
+            'Functional component providing structural stability and operational balance',
+            'Standardized benchmark evaluated according to national curriculum guidelines',
+            'Systemic process maintaining equilibrium within the defined parameters',
+            'Primary mechanism governing the observed change in condition',
+            'Complementary element contributing to overall system performance',
+        ];
+    }
+
+    for (const cand of candidates) {
+        if (!existingLower.includes(cand.trim().toLowerCase())) {
+            return cand;
+        }
+    }
+    return candidates[0] || 'Curriculum-aligned alternative distractor';
+}
+
+function generateCandidateTutorExplanationNode(
+    subjectName: string,
+    level: string,
+    text: string,
+    options: string[],
+    correctIndex: number,
+    studentChosen: number | null,
+    explanation: string,
+    studentQuestion: string
+): string {
+    const letters = ['A', 'B', 'C', 'D'];
+    const correctLetter = letters[correctIndex] || 'A';
+    const correctText = options[correctIndex] || '';
+    const studentChosenLetter = studentChosen !== null && letters[studentChosen] ? letters[studentChosen] : null;
+    const studentChosenText = studentChosen !== null && options[studentChosen] ? options[studentChosen] : null;
+
+    let out = 'Akwaaba, scholar! Here is your comprehensive Ghanaian curriculum exam breakdown for this question:\n\n';
+    out += `### 🎯 Correct Answer: Option ${correctLetter} — "${correctText}"\n\n`;
+
+    out += `### 🔬 In-Depth Academic Explanation\n`;
+    if (explanation) {
+        out += `${explanation}\n\n`;
+    } else {
+        out += `In the Ghanaian ${subjectName} syllabus (${level}), this question assesses your conceptual understanding of foundational curriculum principles. Option ${correctLetter} provides the accurate, syllabus-defined fact that satisfies all criteria established by examiners.\n\n`;
+    }
+
+    out += `### 🔍 Systematic Option-by-Option Analysis\n`;
+    for (let i = 0; i < options.length; i++) {
+        const letStr = letters[i] || String.fromCharCode(65 + i);
+        const optText = String(options[i] || '').trim();
+        if (i === correctIndex) {
+            out += `• **Option ${letStr} ("${optText}") — [CORRECT ANSWER]:**\n  This is the precise, syllabus-aligned statement. It accurately captures the principle tested and directly answers the question prompt.\n\n`;
+        } else {
+            out += `• **Option ${letStr} ("${optText}") — [INCORRECT DISTRACTOR]:**\n  This option is false or misleading. In Ghanaian examinations, examiners craft this distractor to test whether candidates confuse related principles or overlook key qualifying words in the question stem.\n\n`;
+        }
+    }
+
+    if (studentChosen !== null) {
+        out += `### 📊 Diagnostic Feedback on Your Answer\n`;
+        if (studentChosen === correctIndex) {
+            out += `🌟 **Ayekoo! Excellent Work:** You correctly selected Option ${correctLetter}. You have demonstrated genuine mastery of this concept and answered exactly as required by WAEC/GES examiners.\n\n`;
+        } else {
+            out += `⚠️ **Reviewing Your Choice (Option ${studentChosenLetter}):** You chose Option ${studentChosenLetter} ("${studentChosenText}"). While this may seem plausible at first glance, it is an intentional distractor. Review the option-by-option breakdown above to spot the trap and master the syllabus standard!\n\n`;
+        }
+    }
+
+    out += `### 💡 Ghanaian Examiner Tips & Exam Strategy\n`;
+    const ctx = `${subjectName} ${text}`.toLowerCase();
+    if (/science|bio|chem|phys|aquatic|habitat|cell/i.test(ctx)) {
+        out += `• In Ghanaian Science examinations (NaCCA/WAEC), examiners award top marks for identifying precise biological relationships, environmental adaptations, and cause-and-effect balances.\n• Always read the scenario carefully and identify whether the question is asking for an advantage, a disadvantage, an adaptation, or an impact.\n\n`;
+    } else if (/comput|ict|hardware|software|network/i.test(ctx)) {
+        out += `• In Computing/ICT papers, WAEC examiners test specific technical terminology and hardware generations. Beware of confusing storage capacity with processing speed.\n• Pay special attention to acronyms and component functions (e.g. CPU control unit vs ALU vs RAM).\n\n`;
+    } else if (/math|fraction|algebra|geometry/i.test(ctx)) {
+        out += `• In Mathematics, double check your intermediate working and verify signs (+/-). Eliminating extreme or mathematically impossible options first saves critical exam time.\n\n`;
+    } else if (/social|governance|history|culture/i.test(ctx)) {
+        out += `• In Social Studies, examiners look for balanced understanding of civic rights, constitutional duties, and sustainable environmental practices.\n\n`;
+    } else {
+        out += `• In Ghanaian national examinations, careful reading of the question stem is key. Identify the operative action words before selecting your final answer.\n\n`;
+    }
+
+    out += `### 🇬🇭 Everyday Ghanaian Context & Memory Aid\n`;
+    if (/aquatic|pond|habitat|fish|water/i.test(ctx)) {
+        out += `Think of traditional fish ponds along the Volta Basin or coastal lagoons in Ada and Keta: when seasonal rains cease and water levels drop, the sudden change in temperature and oxygen makes survival difficult for organisms adapted to stable aquatic conditions. Remembering this real-life Ghanaian environment helps you quickly recall why water stability is such a vital habitat advantage!\n\n`;
+    } else if (/cell|living|biology/i.test(ctx)) {
+        out += `Just like the walls of a secure compound house in a Ghanaian town protect everything inside while allowing members to enter and leave, living cell membranes selectively control what enters and leaves the cell.\n\n`;
+    } else {
+        out += `Connecting your textbook concepts to familiar Ghanaian surroundings—from our vibrant markets to our geography—turns abstract ideas into permanent exam success.\n\n`;
+    }
+
+    out += `Keep studying and practicing with dedication—you are on the path to academic distinction!`;
+    return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* Unified API Router                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -3728,15 +3960,27 @@ export const handler = router({
             const options: string[] = Array.isArray(q.options) ? q.options.map((o: unknown) => String(o || '').trim()) : [];
             const correctIndex = Number(q.correctIndex) || 0;
             const explanation = String(q.explanation || '').trim();
+            const level = String(q.level || b.level || '');
+            const subjectId = String(q.subjectId || b.subjectId || '');
+
+            const { items: allSubjects } = await db.list('subjects', { limit: 100 });
+            const subjectName = resolveSubjectContextNode(
+                allSubjects,
+                subjectId,
+                String(b.subjectName || q.subjectName || ''),
+                level,
+                text,
+                explanation
+            );
 
             if (!text || options.length !== 4) return error('Invalid question payload', 400);
 
             // Local duplicate detection
-            const cleaned = options.map((o) => o.toLowerCase());
+            const cleaned = options.map((o) => o.trim().toLowerCase());
             const dupes: Record<string, boolean> = {};
             const seen = new Set<string>();
             for (const opt of cleaned) {
-                if (seen.has(opt)) dupes[opt] = true;
+                if (seen.has(opt) && opt !== '') dupes[opt] = true;
                 seen.add(opt);
             }
             const hasLocalDuplicates = Object.keys(dupes).length > 0;
@@ -3748,30 +3992,40 @@ export const handler = router({
 
             if (apiKey && aiDoc?.enabled !== false) {
                 try {
-                    const prompt = `You are an expert exam reviewer and curriculum auditor for the Ghanaian pre-tertiary and teacher promotion curriculum (BECE, WASSCE, GTLE, GES Promotion).
-Analyze this multiple-choice question:
-Question: ${text}
-Options:
-A) ${options[0]}
-B) ${options[1]}
-C) ${options[2]}
-D) ${options[3]}
-Currently Marked Correct: Option ${String.fromCharCode(65 + correctIndex)} (${options[correctIndex] || ''})
-Explanation: ${explanation}
+                    const prompt = `You are an elite curriculum specialist and chief examination auditor for the Ghanaian pre-tertiary and teacher examination system (NaCCA standards for Basic 4-9/BECE, WAEC standards for WASSCE, and NTC/GES Promotion standards).
 
-CRITICAL RULES:
-1. NEVER include 'None of the above', 'All of the above', or generic non-answers as an option. All 4 options must be genuine, distinct, syllabus-aligned distractors or answers.
-2. If any options are duplicates, replace duplicate options with realistic, distinct alternative choices that fit the subject context.
-3. Ensure the marked correct answer matches the explanation and educational standards.
-4. Set 'correctIndex' to the 0-based index of the true correct answer (0 for A, 1 for B, 2 for C, 3 for D).
+AUDIT TARGET:
+- Subject: ${subjectName}
+- Grade Level: ${level}
+- Question Text: ${text}
+- Option A: ${options[0]}
+- Option B: ${options[1]}
+- Option C: ${options[2]}
+- Option D: ${options[3]}
+- Currently Marked Correct: Option ${String.fromCharCode(65 + correctIndex)} (${options[correctIndex] || ''})
+- Current Explanation: ${explanation}
 
-Provide the output strictly in valid JSON format:
+CRITICAL RULES & AUDIT REQUIREMENTS:
+1. SUBJECT INTEGRITY & DOMAIN RELEVANCE (TOP PRIORITY):
+   - Every single option MUST be strictly relevant to the subject '${subjectName}' and the specific concept tested in this question.
+   - Absolutely NEVER introduce terms from unrelated subjects (for example, NEVER suggest administrative committees, school management, or computer components for a Science or Mathematics question).
+2. DISTRACTOR QUALITY & REALISM:
+   - All 4 options must be plausible, academically sound, distinct distractors that represent realistic answers or common student misconceptions within '${subjectName}'.
+   - NEVER use 'None of the above', 'All of the above', or non-answers.
+   - If options are duplicates, poorly phrased, or missing, replace the duplicate/flawed option with a well-researched, realistic alternative choice that matches the grammatical structure and difficulty of the other options.
+3. ACCURATE ANSWER KEY & EXPLANATION:
+   - Determine which option is factually, scientifically, and curriculum-wise the true correct answer.
+   - If the currently marked correct option is already factually correct, KEEP it as the correct answer and preserve its position unless repairing duplicates.
+   - Set 'correctIndex' to the 0-based index of the true correct answer (0 for A, 1 for B, 2 for C, 3 for D).
+   - In 'explanation', provide an authoritative, curriculum-grounded explanation explaining why the correct option is right.
+
+Respond strictly in valid JSON format:
 {
   "hasIssue": true,
-  "issueSummary": "Option A and Option C are duplicates. The correct answer should be integrated circuits (ICs).",
+  "issueSummary": "Detailed explanation of detected duplicate or flaw and what was repaired.",
   "correctedOptions": ["Option A", "Option B", "Option C", "Option D"],
-  "correctIndex": 2,
-  "explanation": "Clear curriculum-aligned explanation here."
+  "correctIndex": 0,
+  "explanation": "Authoritative curriculum explanation confirming the correct answer."
 }`;
 
                     const candidateModels = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
@@ -3815,38 +4069,34 @@ Provide the output strictly in valid JSON format:
             if (!aiResponse) {
                 if (hasLocalDuplicates) {
                     const duplicateText = Object.keys(dupes).join(', ');
-                    const lowText = `${text} ${explanation}`.toLowerCase();
-                    let replacement = 'The organ system';
-                    if (/cell|living|tissue/i.test(lowText)) replacement = 'The organ system';
-                    else if (/circuit|computer|hardware|generation/i.test(lowText)) replacement = 'Integrated circuits (ICs)';
-                    else if (/microprocessor/i.test(lowText)) replacement = 'Microprocessors';
-                    else if (/vacuum tube/i.test(lowText)) replacement = 'Vacuum tubes';
-                    else if (/teacher|school|ges/i.test(lowText)) replacement = 'School Management Committee (SMC)';
-                    else if (/act 1023|law|policy/i.test(lowText)) replacement = 'Ghana Education Service Council (GESC)';
-                    else replacement = 'Structural component';
-
                     const fixedOpts = [...options];
-                    const seenFirst = new Set<string>();
+                    const newDistractor = generateContextualDistractorNode(subjectName, level, text, explanation, options);
+
+                    const seenOccurrences: Record<string, number> = {};
+                    let targetCorrectIndex = correctIndex;
                     for (let idx = 0; idx < fixedOpts.length; idx++) {
-                        const low = fixedOpts[idx].toLowerCase();
-                        if (seenFirst.has(low)) {
-                            fixedOpts[idx] = replacement;
+                        const low = fixedOpts[idx].trim().toLowerCase();
+                        if (seenOccurrences[low] !== undefined) {
+                            if (idx === targetCorrectIndex) {
+                                targetCorrectIndex = seenOccurrences[low];
+                            }
+                            fixedOpts[idx] = newDistractor;
                             break;
                         }
-                        seenFirst.add(low);
+                        seenOccurrences[low] = idx;
                     }
 
                     aiResponse = {
                         hasIssue: true,
-                        issueSummary: `Duplicate options detected ("${duplicateText}"). Replaced duplicate with distinct alternative distractor.`,
+                        issueSummary: `Duplicate options detected ("${duplicateText}"). Replaced duplicate with a curriculum-aligned, subject-appropriate distractor for ${subjectName}.`,
                         correctedOptions: fixedOpts,
-                        correctIndex,
-                        explanation: explanation || 'Fixed duplicate options to ensure 4 distinct, syllabus-aligned answers.',
+                        correctIndex: targetCorrectIndex,
+                        explanation: explanation || `Fixed duplicate options to ensure 4 distinct, curriculum-aligned choices for ${subjectName}.`,
                     };
                 } else {
                     aiResponse = {
                         hasIssue: false,
-                        issueSummary: 'No duplicate options detected.',
+                        issueSummary: 'No duplicate options detected. All 4 choices are distinct.',
                         correctedOptions: options,
                         correctIndex,
                         explanation,
@@ -3906,14 +4156,25 @@ Provide the output strictly in valid JSON format:
             const explanation = String(b.explanation || q.explanation || '').trim();
             const studentQuestion = String(b.studentQuestion || 'Please clarify this answer for me.').trim();
             const level = String(b.level || '');
-            const subjectName = String(b.subjectName || 'General');
+            const subjectId = String(q.subjectId || b.subjectId || '');
+
+            const { items: allSubjects } = await db.list('subjects', { limit: 100 });
+            const subjectName = resolveSubjectContextNode(
+                allSubjects,
+                subjectId,
+                String(b.subjectName || q.subjectName || 'General Studies'),
+                level,
+                text,
+                explanation
+            );
 
             if (!text) return error('Question text is required', 400);
 
-            const correctLetter = String.fromCharCode(65 + correctIndex);
+            const letters = ['A', 'B', 'C', 'D'];
+            const correctLetter = letters[correctIndex] || 'A';
             const correctText = options[correctIndex] || 'Correct answer';
             const studentChosenText = studentChosen !== null && options[studentChosen]
-                ? `${String.fromCharCode(65 + studentChosen)}) ${options[studentChosen]}`
+                ? `${letters[studentChosen] || String.fromCharCode(65 + studentChosen)}) ${options[studentChosen]}`
                 : 'Unanswered';
 
             const { items } = await db.list('settings', { limit: 50 });
@@ -3923,40 +4184,43 @@ Provide the output strictly in valid JSON format:
             let reply = '';
             if (apiKey && aiDoc?.enabled !== false) {
                 try {
-                    const prompt = `You are Codecastic AI Tutor, an inspiring, polite, and master Ghanaian educator (National Best Teacher standard) helping a Ghanaian candidate excel in their national examination (${subjectName}, Level: ${level}).
+                    const prompt = `You are the Codecastic Master AI Tutor, an exceptional Ghanaian master educator (National Best Teacher standard) and curriculum authority for the Ghanaian pre-tertiary and teacher examination system (NaCCA standards for Basic 4-9/BECE, WAEC standards for WASSCE, and NTC/GES Promotion standards).
 
-QUESTION DETAILS:
-Question: ${text}
-Options:
-A) ${options[0]}
-B) ${options[1]}
-C) ${options[2]}
-D) ${options[3]}
-Official Correct Answer: Option ${correctLetter} (${correctText})
-Candidate's Selection: ${studentChosenText}
-Official Explanation: ${explanation}
+EXAM & QUESTION DETAILS:
+- Subject: ${subjectName}
+- Grade / Exam Level: ${level}
+- Question: ${text}
+- Option A: ${options[0]}
+- Option B: ${options[1]}
+- Option C: ${options[2]}
+- Option D: ${options[3]}
+- Marked Correct Answer: Option ${correctLetter} (${correctText})
+- Candidate's Selected Option: ${studentChosenText}
+- Official Explanation: ${explanation}
+- Candidate's Question / Prompt: "${studentQuestion}"
 
-CANDIDATE'S INQUIRY:
-"${studentQuestion}"
-
-MANDATORY GHANAIAN DOMESTICATION & PEDAGOGY RULES:
-1. GREETING & TONE: Begin with a warm, authentic Ghanaian greeting (e.g., 'Akwaaba, scholar!', 'Ayekoo on your practice!', 'Medaase for asking!'). Use an inspiring, respectful, and crystal-clear Ghanaian pedagogical tone.
-2. 100% DOMESTICATED GHANAIAN EXAMPLES & SCENARIOS:
-   - When using everyday illustrations, analogies, mnemonics, or scenarios, strictly ground them in familiar Ghanaian life, environment, culture, and geography.
-   - Use Ghanaian contexts such as:
-     * Geography & Landmarks: Lake Volta, Akosombo Dam, Kakum canopy walk, Mount Afadjato, Kejetia Market (Kumasi), Makola Market (Accra), Cape Coast Castle, Paga Crocodile Pond, Tamale central, Mole National Park, Gulf of Guinea.
-     * Food, Agriculture & Daily Living: Cocoa pods, plantain, cassava, fufu, banku, hot kenkey and fried fish with shito, jollof, waakye, shea butter, groundnut soup, yam tubers, solar fish-drying at coastal beaches, clay water pots (cooling through evaporation).
-     * Currency & Society: Ghana Cedis (GH₵) and Pesewas, local transport (trotro / 'mate'), school assemblies, Ghanaian school science laboratories.
-     * Cultural Games & Art: Oware, ampe, kente weaving in Bonwire, traditional damba / adowa rhythms.
-3. ABSOLUTELY NO WESTERN OR FOREIGN POP-CULTURE REFERENCES:
-   - NEVER reference Hollywood, American baseball/football, Thanksgiving, winter/snow, foreign celebrities, or distant Western idioms. Keep every single example and memory tip fully rooted in Ghana so any student across Ghana immediately understands and relates.
-4. GHANAIAN CURRICULUM & EXAM RELEVANCE:
-   - Align directly with Ghanaian educational standards (NaCCA syllabus for Basic schools, WAEC Chief Examiner reports for BECE & WASSCE, and NTC standards for GTLE).
-   - Point out why Option ${correctLetter} is the exact answer expected by Ghanaian examiners, and if the student picked an incorrect option, explain the common misconception Ghanaian students make.
-5. FORMAT & BREVITY:
-   - Respond in 2 to 3 well-structured, clear markdown paragraphs.
-   - Use bold text for key Ghanaian terms and scientific/mathematical principles.
-   - End with an encouraging Ghanaian word of motivation (e.g., 'Keep studying hard—you are destined for excellence in your ${subjectName} exam!').`;
+MANDATORY PEDAGOGICAL & RESEARCH REQUIREMENTS:
+1. DEEP ACADEMIC RESEARCH & RIGOUR:
+   - Provide an authoritative, in-depth explanation of the academic concept behind this question. Do NOT provide shallow, brief, or generic summaries.
+2. OPTION-BY-OPTION DETAILED ANALYSIS (MANDATORY):
+   - You MUST systematically analyze ALL 4 OPTIONS (A, B, C, and D) individually:
+     * Explain why Option ${correctLetter} is factually and scientifically the correct answer according to the Ghanaian curriculum.
+     * For EACH incorrect option, explain specifically why it is false, what misconception it represents, and why it is an invalid distractor.
+     * If the candidate chose an incorrect option (${studentChosenText}), specifically explain their exact mistake and how to avoid that specific trap.
+3. GHANAIAN EXAMINER INSIGHTS:
+   - Provide specific WAEC / NaCCA / GES Chief Examiner insights on this topic (key keywords, common candidate pitfalls, definitions).
+4. DOMESTICATED GHANAIAN REAL-WORLD ANALOGY & MNEMONIC:
+   - Connect the concept to everyday Ghanaian life, environment, or geography (e.g. Lake Volta, Akosombo, local foods, traditional practices) to help the candidate remember it forever.
+   - Absolutely NO foreign/Western pop-culture references.
+5. FORMATTING:
+   - Use structured markdown with clear headings:
+     ### 🎯 Correct Answer & Core Concept
+     ### 🔬 Academic Explanation
+     ### 🔍 Option-by-Option Breakdown
+     ### 📊 Diagnostic on Candidate's Choice
+     ### 💡 Ghanaian Examiner Tips
+     ### 🇬🇭 Ghanaian Memory Hook
+   - End with warm, authentic Ghanaian encouragement.`;
 
                     const candidateModels = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
                     for (const m of candidateModels) {
@@ -3969,7 +4233,7 @@ MANDATORY GHANAIAN DOMESTICATION & PEDAGOGY RULES:
                                 },
                                 body: JSON.stringify({
                                     contents: [{ parts: [{ text: prompt }] }],
-                                    generationConfig: { temperature: 0.3, maxOutputTokens: 1000 },
+                                    generationConfig: { temperature: 0.3, maxOutputTokens: 1200 },
                                 }),
                             });
                             if (res.ok) {
@@ -3987,13 +4251,16 @@ MANDATORY GHANAIAN DOMESTICATION & PEDAGOGY RULES:
             }
 
             if (!reply) {
-                reply = `Akwaaba! Here is your Ghanaian exam breakdown for this question:
-
-**Correct Answer:** Option ${correctLetter} (${correctText})
-
-${explanation ? `**Official Curriculum Note:** ${explanation}\n\n` : ''}💡 **Key Ghanaian Exam Tip:** In the Ghanaian ${subjectName} syllabus, examiners specifically reward accurate definitions and real-world understanding. ${studentChosen !== null && studentChosen !== correctIndex ? `You selected Option ${String.fromCharCode(65 + studentChosen)}, which is a common distractor in past WAEC/GES exams. Note that Option ${correctLetter} directly satisfies the syllabus requirements.` : 'Ayekoo! You have mastered the core Ghanaian curriculum concept behind this question!'}
-
-*(Note: Your administrator can configure a free Google Gemini AI key in the Admin Panel for live, interactive Ghanaian conversational tutoring!)*`;
+                reply = generateCandidateTutorExplanationNode(
+                    subjectName,
+                    level,
+                    text,
+                    options,
+                    correctIndex,
+                    studentChosen,
+                    explanation,
+                    studentQuestion
+                );
             }
 
             return json({ ok: true, reply });
