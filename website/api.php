@@ -725,17 +725,34 @@ if (preg_match('#^(?:exam/)?assignment/([^/]+)/?$#', $route, $mMatches) && $meth
 
     if (!$asgn) errorOut('Assignment not found', 404);
 
-    $qIdLookup = array_flip(is_array($asgn['questionIds'] ?? null) ? array_map('strval', $asgn['questionIds']) : []);
-    $questions = [];
-
+    $orderedIds = is_array($asgn['questionIds'] ?? null) ? array_map('strval', $asgn['questionIds']) : [];
+    $qMap = [];
     foreach ($db['questions'] as $q) {
         $qid = (string)($q['id'] ?? '');
-        if (isset($qIdLookup[$qid])) {
+        if ($qid !== '') $qMap[$qid] = $q;
+    }
+
+    $questions = [];
+    $hasCustom = false;
+
+    foreach ($orderedIds as $qid) {
+        if (isset($qMap[$qid])) {
+            $q = $qMap[$qid];
+            if (!empty($q['isCustom'])) $hasCustom = true;
+            $qType = (string)($q['type'] ?? 'multiple_choice');
+            if (!in_array($qType, ['multiple_choice', 'text', 'file_upload'], true)) {
+                $qType = 'multiple_choice';
+            }
             $questions[] = [
                 'id' => $qid,
+                'type' => $qType,
                 'text' => (string)($q['text'] ?? ''),
+                'imageUrl' => !empty($q['imageUrl']) ? (string)$q['imageUrl'] : null,
                 'options' => is_array($q['options'] ?? null) ? $q['options'] : [],
                 'correctIndex' => isset($q['correctIndex']) ? (int)$q['correctIndex'] : 0,
+                'acceptedAnswer' => isset($q['acceptedAnswer']) ? (string)$q['acceptedAnswer'] : '',
+                'longAnswer' => !empty($q['longAnswer']),
+                'allowedFileTypes' => !empty($q['allowedFileTypes']) ? (string)$q['allowedFileTypes'] : 'any',
                 'explanation' => (string)($q['explanation'] ?? ''),
                 'category' => $q['category'] ?? null,
                 'year' => $q['year'] ?? null
@@ -743,8 +760,10 @@ if (preg_match('#^(?:exam/)?assignment/([^/]+)/?$#', $route, $mMatches) && $meth
         }
     }
 
-    // Shuffle questions so students taking assigned quizzes get a fresh randomized order
-    shuffle($questions);
+    // Shuffle pool-drawn questions, but preserve exact order for teacher-authored custom quizzes (e.g. "Use image for Q1-3")
+    if (!$hasCustom) {
+        shuffle($questions);
+    }
 
     jsonOut([
         'ok' => true,
@@ -898,6 +917,8 @@ if ($route === 'exam/submit' && $method === 'POST') {
     }
 
     $answers = is_array($b['answers'] ?? null) ? $b['answers'] : [];
+    $textAnswers = is_array($b['textAnswers'] ?? null) ? $b['textAnswers'] : [];
+    $fileAnswers = is_array($b['fileAnswers'] ?? null) ? $b['fileAnswers'] : [];
     $allQsMap = [];
     foreach ($db['questions'] as $q) {
         if (isset($q['id'])) {
@@ -907,28 +928,72 @@ if ($route === 'exam/submit' && $method === 'POST') {
 
     $questionIds = is_array($b['questionIds'] ?? null) ? $b['questionIds'] : array_keys($answers);
     if (empty($questionIds)) {
-        $questionIds = array_keys($answers);
+        $questionIds = array_values(array_unique(array_merge(array_keys($answers), array_keys($textAnswers), array_keys($fileAnswers))));
     }
 
     $score = 0;
+    $autoGradedCount = 0;
+    $pendingReviewCount = 0;
     $details = [];
     $review = [];
 
     foreach ($questionIds as $qid) {
         if (!isset($allQsMap[$qid])) continue;
         $q = $allQsMap[$qid];
+        $qType = (string)($q['type'] ?? 'multiple_choice');
+        if (!in_array($qType, ['multiple_choice', 'text', 'file_upload'], true)) {
+            $qType = 'multiple_choice';
+        }
         $selected = isset($answers[$qid]) ? $answers[$qid] : null;
         $correct = (int)($q['correctIndex'] ?? 0);
-        $isCorrect = ($selected !== null && (int)$selected === $correct);
-        if ($isCorrect) $score++;
+        $studentText = isset($textAnswers[$qid]) ? trim((string)$textAnswers[$qid]) : '';
+        $acceptedAnswer = trim((string)($q['acceptedAnswer'] ?? ''));
+        $rawFileAns = isset($fileAnswers[$qid]) && is_array($fileAnswers[$qid]) ? $fileAnswers[$qid] : null;
+        $fileAnswer = null;
+        if ($rawFileAns && !empty($rawFileAns['name']) && !empty($rawFileAns['dataUrl'])) {
+            $fileAnswer = [
+                'name' => (string)$rawFileAns['name'],
+                'type' => (string)($rawFileAns['type'] ?? 'application/octet-stream'),
+                'size' => (int)($rawFileAns['size'] ?? 0),
+                'dataUrl' => (string)$rawFileAns['dataUrl']
+            ];
+        }
+
+        $isCorrect = false;
+        $pendingReview = false;
+
+        if ($qType === 'text') {
+            if ($acceptedAnswer !== '') {
+                $autoGradedCount++;
+                $acceptedList = array_filter(array_map(function($a) { return strtolower(trim($a)); }, explode(',', $acceptedAnswer)));
+                $isCorrect = ($studentText !== '' && in_array(strtolower($studentText), $acceptedList, true));
+                if ($isCorrect) $score++;
+            } else {
+                $pendingReview = true;
+                $pendingReviewCount++;
+            }
+        } elseif ($qType === 'file_upload') {
+            $pendingReview = true;
+            $pendingReviewCount++;
+        } else {
+            $autoGradedCount++;
+            $isCorrect = ($selected !== null && (int)$selected === $correct);
+            if ($isCorrect) $score++;
+        }
 
         $detailItem = [
             'questionId' => $qid,
             'id' => $qid,
+            'type' => $qType,
             'text' => $q['text'] ?? '',
+            'imageUrl' => !empty($q['imageUrl']) ? (string)$q['imageUrl'] : null,
             'options' => $q['options'] ?? [],
             'selected' => $selected,
             'chosen' => $selected,
+            'textAnswer' => $studentText !== '' ? $studentText : null,
+            'acceptedAnswer' => $acceptedAnswer !== '' ? $acceptedAnswer : null,
+            'fileAnswer' => $fileAnswer,
+            'pendingReview' => $pendingReview,
             'correctIndex' => $correct,
             'isCorrect' => $isCorrect,
             'correct' => $isCorrect,
@@ -939,8 +1004,14 @@ if ($route === 'exam/submit' && $method === 'POST') {
         $details[] = $detailItem;
         $review[] = [
             'id' => $qid,
+            'type' => $qType,
+            'imageUrl' => !empty($q['imageUrl']) ? (string)$q['imageUrl'] : null,
             'correctIndex' => $correct,
             'chosen' => $selected,
+            'textAnswer' => $studentText !== '' ? $studentText : null,
+            'acceptedAnswer' => $acceptedAnswer !== '' ? $acceptedAnswer : null,
+            'fileAnswer' => $fileAnswer,
+            'pendingReview' => $pendingReview,
             'correct' => $isCorrect,
             'explanation' => $q['explanation'] ?? '',
             'text' => $q['text'] ?? '',
@@ -949,7 +1020,8 @@ if ($route === 'exam/submit' && $method === 'POST') {
     }
 
     $totalQuestions = count($questionIds) > 0 ? count($questionIds) : count($details);
-    $percent = $totalQuestions > 0 ? round(($score / $totalQuestions) * 100) : 0;
+    $gradingDenominator = $autoGradedCount > 0 ? $autoGradedCount : $totalQuestions;
+    $percent = $gradingDenominator > 0 ? round(($score / $gradingDenominator) * 100) : 0;
     $passed = $percent >= 50;
 
     // Official WAEC BECE Stanine Grading (Applied strictly for 100 questions sitting)
@@ -4625,17 +4697,32 @@ if ($route === 'teacher/quiz/create' && $method === 'POST') {
         foreach ($customQuestions as $cq) {
             $qText = trim((string)($cq['text'] ?? ''));
             if ($qText === '') continue;
+            $qType = (string)($cq['type'] ?? 'multiple_choice');
+            if (!in_array($qType, ['multiple_choice', 'text', 'file_upload'], true)) {
+                $qType = 'multiple_choice';
+            }
             $qOpts = is_array($cq['options'] ?? null) ? array_map('strval', $cq['options']) : [];
-            if (count($qOpts) < 2) continue;
+            if ($qType === 'multiple_choice' && count(array_filter($qOpts, function($o) { return trim($o) !== ''; })) < 2) {
+                continue;
+            }
             $qCorrect = isset($cq['correctIndex']) ? (int)$cq['correctIndex'] : 0;
             $qExpl = trim((string)($cq['explanation'] ?? ''));
+            $qAccepted = trim((string)($cq['acceptedAnswer'] ?? ''));
+            $qLongAnswer = !empty($cq['longAnswer']);
+            $qAllowedFiles = trim((string)($cq['allowedFileTypes'] ?? 'any'));
+            $qImageUrl = !empty($cq['imageUrl']) ? (string)$cq['imageUrl'] : null;
             $newQId = 'q_custom_' . generateUuid();
 
             $newQ = [
                 'id' => $newQId,
+                'type' => $qType,
                 'text' => $qText,
-                'options' => $qOpts,
-                'correctIndex' => $qCorrect,
+                'imageUrl' => $qImageUrl,
+                'options' => $qType === 'multiple_choice' ? $qOpts : [],
+                'correctIndex' => $qType === 'multiple_choice' ? $qCorrect : 0,
+                'acceptedAnswer' => $qType === 'text' ? $qAccepted : '',
+                'longAnswer' => $qType === 'text' ? $qLongAnswer : false,
+                'allowedFileTypes' => $qType === 'file_upload' ? ($qAllowedFiles ?: 'any') : 'any',
                 'explanation' => $qExpl,
                 'level' => $gradeLevel,
                 'subjectId' => $subId,

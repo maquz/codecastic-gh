@@ -14541,7 +14541,7 @@ function generateContextualDistractorNode(subjectName, level, text, explanation,
   }
   return candidates[0] || "Curriculum-aligned alternative distractor";
 }
-function generateCandidateTutorExplanationNode(subjectName, level, text, options, correctIndex, studentChosen, explanation, studentQuestion) {
+function generateCandidateTutorExplanationNode(subjectName, level, text, options, correctIndex, studentChosen, explanation, _studentQuestion) {
   const letters = ["A", "B", "C", "D"];
   const correctLetter = letters[correctIndex] || "A";
   const correctText = options[correctIndex] || "";
@@ -15024,18 +15024,35 @@ var handler = router({
       const { items: allAssignments } = await db.list("quiz_assignments", { limit: 1e3 });
       const asgn = allAssignments.find((a) => String(a.id) === asgnId);
       if (!asgn) return error("Assignment not found", 404);
-      const qIds = new Set(Array.isArray(asgn.questionIds) ? asgn.questionIds : []);
+      const orderedIds = Array.isArray(asgn.questionIds) ? asgn.questionIds.map(String) : [];
       const allQs = await allQuestions();
-      const questions = allQs.filter((q2) => qIds.has(String(q2.id))).map((q2) => ({
-        id: String(q2.id),
-        text: String(q2.text || ""),
-        options: Array.isArray(q2.options) ? q2.options : [],
-        correctIndex: q2.correctIndex,
-        explanation: q2.explanation || "",
-        category: q2.category || void 0,
-        year: q2.year || void 0
-      }));
-      const shuffledQuestions = [...questions].sort(() => Math.random() - 0.5);
+      const qMap = /* @__PURE__ */ new Map();
+      for (const q2 of allQs) {
+        qMap.set(String(q2.id), q2);
+      }
+      let hasCustom = false;
+      const questions = [];
+      for (const qid of orderedIds) {
+        const q2 = qMap.get(qid);
+        if (!q2) continue;
+        if (q2.isCustom) hasCustom = true;
+        const qType = ["multiple_choice", "text", "file_upload"].includes(String(q2.type || "")) ? String(q2.type) : "multiple_choice";
+        questions.push({
+          id: String(q2.id),
+          type: qType,
+          text: String(q2.text || ""),
+          imageUrl: q2.imageUrl || void 0,
+          options: Array.isArray(q2.options) ? q2.options : [],
+          correctIndex: q2.correctIndex,
+          acceptedAnswer: q2.acceptedAnswer || "",
+          longAnswer: Boolean(q2.longAnswer),
+          allowedFileTypes: q2.allowedFileTypes || "any",
+          explanation: q2.explanation || "",
+          category: q2.category || void 0,
+          year: q2.year || void 0
+        });
+      }
+      const finalQuestions = hasCustom ? questions : [...questions].sort(() => Math.random() - 0.5);
       return json({
         ok: true,
         assignment: {
@@ -15046,8 +15063,8 @@ var handler = router({
           gradeLevel: asgn.gradeLevel,
           timerSeconds: asgn.timerSeconds || 60,
           teacherName: asgn.teacherName,
-          questionCount: shuffledQuestions.length,
-          questions: shuffledQuestions
+          questionCount: finalQuestions.length,
+          questions: finalQuestions
         }
       });
     }
@@ -15148,23 +15165,64 @@ var handler = router({
         qs = questionIds.length > 0 ? allLevelQs.filter((q2) => qSet.has(q2.id)) : allLevelQs;
         if (qs.length === 0) return error("No matching questions found for this exam submission", 400);
       }
+      const textAnswers = b.textAnswers && typeof b.textAnswers === "object" ? b.textAnswers : {};
+      const fileAnswers = b.fileAnswers && typeof b.fileAnswers === "object" ? b.fileAnswers : {};
       let score = 0;
+      let autoGradedCount = 0;
       const review = qs.map((q2) => {
+        const qType = ["multiple_choice", "text", "file_upload"].includes(String(q2.type || "")) ? String(q2.type) : "multiple_choice";
         const chosen = typeof answers[q2.id] === "number" ? answers[q2.id] : null;
-        const correct = chosen === q2.correctIndex;
-        if (correct) score += 1;
+        const studentText = typeof textAnswers[q2.id] === "string" ? textAnswers[q2.id].trim() : "";
+        const acceptedAnswer = String(q2.acceptedAnswer || "").trim();
+        const rawFile = fileAnswers[q2.id];
+        const fileAnswer = rawFile && typeof rawFile === "object" && rawFile.name && rawFile.dataUrl ? {
+          name: String(rawFile.name),
+          type: String(rawFile.type || "application/octet-stream"),
+          size: Number(rawFile.size || 0),
+          dataUrl: String(rawFile.dataUrl)
+        } : null;
+        let correct = false;
+        let pendingReview = false;
+        if (qType === "text") {
+          if (acceptedAnswer) {
+            autoGradedCount += 1;
+            const acceptedList = acceptedAnswer.split(",").map((a) => a.trim().toLowerCase()).filter(Boolean);
+            correct = studentText !== "" && acceptedList.includes(studentText.toLowerCase());
+            if (correct) score += 1;
+          } else {
+            pendingReview = true;
+          }
+        } else if (qType === "file_upload") {
+          pendingReview = true;
+        } else {
+          autoGradedCount += 1;
+          correct = chosen === q2.correctIndex;
+          if (correct) score += 1;
+        }
         return {
           id: q2.id,
-          correctIndex: q2.correctIndex,
+          questionId: q2.id,
+          type: qType,
+          text: String(q2.text || ""),
+          imageUrl: q2.imageUrl || null,
+          options: Array.isArray(q2.options) ? q2.options : [],
+          correctIndex: q2.correctIndex ?? 0,
           chosen,
+          selected: chosen,
+          textAnswer: studentText || null,
+          acceptedAnswer: acceptedAnswer || null,
+          fileAnswer,
+          pendingReview,
           correct,
+          isCorrect: correct,
           explanation: q2.explanation || ""
         };
       });
       const { items: subjects } = await db.list("subjects", { limit: 100 });
       const subj = subjects.find((s) => s.id === subjectId) || PROMOTION_RANK_ITEMS.find((r) => r.id === subjectId);
       const total = qs.length;
-      const percent = Math.round(score / total * 100);
+      const gradingDenominator = autoGradedCount > 0 ? autoGradedCount : total;
+      const percent = gradingDenominator > 0 ? Math.round(score / gradingDenominator * 100) : 0;
       const finalSubjectName = resolvedSubjectName || (subj ? subj.name : b.subjectName || "General");
       let beceGrade = null;
       let beceGradeValue = null;
@@ -15223,6 +15281,7 @@ var handler = router({
           beceGrade,
           beceGradeValue,
           beceRemark,
+          details: review,
           assignmentId: b.assignmentId ? String(b.assignmentId) : null,
           createdAt: Date.now()
         }
@@ -16040,16 +16099,26 @@ var handler = router({
         for (const cq of customQuestions) {
           const qText = String(cq.text || "").trim();
           if (!qText) continue;
+          const qType = ["multiple_choice", "text", "file_upload"].includes(String(cq.type || "")) ? String(cq.type) : "multiple_choice";
           const qOpts = Array.isArray(cq.options) ? cq.options.map(String) : [];
-          if (qOpts.length < 2) continue;
+          if (qType === "multiple_choice" && qOpts.filter((o) => o.trim() !== "").length < 2) continue;
           const qCorrect = typeof cq.correctIndex === "number" ? cq.correctIndex : 0;
           const qExpl = String(cq.explanation || "").trim();
+          const qAccepted = String(cq.acceptedAnswer || "").trim();
+          const qLongAnswer = Boolean(cq.longAnswer);
+          const qAllowedFiles = String(cq.allowedFileTypes || "any").trim() || "any";
+          const qImageUrl = cq.imageUrl ? String(cq.imageUrl) : void 0;
           const newQId = "q_custom_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
           const newQ = {
             id: newQId,
+            type: qType,
             text: qText,
-            options: qOpts,
-            correctIndex: qCorrect,
+            imageUrl: qImageUrl,
+            options: qType === "multiple_choice" ? qOpts : [],
+            correctIndex: qType === "multiple_choice" ? qCorrect : 0,
+            acceptedAnswer: qType === "text" ? qAccepted : "",
+            longAnswer: qType === "text" ? qLongAnswer : false,
+            allowedFileTypes: qType === "file_upload" ? qAllowedFiles : "any",
             explanation: qExpl,
             level: gradeLevel,
             subjectId: subId,

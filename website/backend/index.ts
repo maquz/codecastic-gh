@@ -1320,7 +1320,7 @@ function generateCandidateTutorExplanationNode(
     correctIndex: number,
     studentChosen: number | null,
     explanation: string,
-    studentQuestion: string
+    _studentQuestion: string
 ): string {
     const letters = ['A', 'B', 'C', 'D'];
     const correctLetter = letters[correctIndex] || 'A';
@@ -1843,22 +1843,40 @@ export const handler = router({
             const asgn: any = allAssignments.find((a: any) => String(a.id) === asgnId);
             if (!asgn) return error('Assignment not found', 404);
 
-            const qIds = new Set(Array.isArray(asgn.questionIds) ? asgn.questionIds : []);
+            const orderedIds = Array.isArray(asgn.questionIds) ? asgn.questionIds.map(String) : [];
             const allQs = await allQuestions();
-            const questions = allQs
-                .filter((q: any) => qIds.has(String(q.id)))
-                .map((q: any) => ({
+            const qMap = new Map<string, any>();
+            for (const q of allQs) {
+                qMap.set(String(q.id), q);
+            }
+
+            let hasCustom = false;
+            const questions: any[] = [];
+            for (const qid of orderedIds) {
+                const q = qMap.get(qid);
+                if (!q) continue;
+                if (q.isCustom) hasCustom = true;
+                const qType = ['multiple_choice', 'text', 'file_upload'].includes(String(q.type || ''))
+                    ? String(q.type)
+                    : 'multiple_choice';
+                questions.push({
                     id: String(q.id),
+                    type: qType,
                     text: String(q.text || ''),
+                    imageUrl: q.imageUrl || undefined,
                     options: Array.isArray(q.options) ? q.options : [],
                     correctIndex: q.correctIndex,
+                    acceptedAnswer: q.acceptedAnswer || '',
+                    longAnswer: Boolean(q.longAnswer),
+                    allowedFileTypes: q.allowedFileTypes || 'any',
                     explanation: q.explanation || '',
                     category: q.category || undefined,
                     year: q.year || undefined,
-                }));
+                });
+            }
 
-            // Randomize question sequence so students get a fresh shuffled order
-            const shuffledQuestions = [...questions].sort(() => Math.random() - 0.5);
+            // Shuffle pool-drawn questions, preserve authored sequence for teacher-authored custom quizzes
+            const finalQuestions = hasCustom ? questions : [...questions].sort(() => Math.random() - 0.5);
 
             return json({
                 ok: true,
@@ -1870,8 +1888,8 @@ export const handler = router({
                     gradeLevel: asgn.gradeLevel,
                     timerSeconds: asgn.timerSeconds || 60,
                     teacherName: asgn.teacherName,
-                    questionCount: shuffledQuestions.length,
-                    questions: shuffledQuestions,
+                    questionCount: finalQuestions.length,
+                    questions: finalQuestions,
                 },
             });
         },
@@ -1996,16 +2014,68 @@ export const handler = router({
                 if (qs.length === 0) return error('No matching questions found for this exam submission', 400);
             }
 
+            const textAnswers: Record<string, string> = b.textAnswers && typeof b.textAnswers === 'object' ? b.textAnswers : {};
+            const fileAnswers: Record<string, any> = b.fileAnswers && typeof b.fileAnswers === 'object' ? b.fileAnswers : {};
+
             let score = 0;
+            let autoGradedCount = 0;
             const review = qs.map((q: any) => {
+                const qType = ['multiple_choice', 'text', 'file_upload'].includes(String(q.type || ''))
+                    ? String(q.type)
+                    : 'multiple_choice';
                 const chosen = typeof answers[q.id] === 'number' ? answers[q.id] : null;
-                const correct = chosen === q.correctIndex;
-                if (correct) score += 1;
+                const studentText = typeof textAnswers[q.id] === 'string' ? textAnswers[q.id].trim() : '';
+                const acceptedAnswer = String(q.acceptedAnswer || '').trim();
+                const rawFile = fileAnswers[q.id];
+                const fileAnswer =
+                    rawFile && typeof rawFile === 'object' && rawFile.name && rawFile.dataUrl
+                        ? {
+                              name: String(rawFile.name),
+                              type: String(rawFile.type || 'application/octet-stream'),
+                              size: Number(rawFile.size || 0),
+                              dataUrl: String(rawFile.dataUrl),
+                          }
+                        : null;
+
+                let correct = false;
+                let pendingReview = false;
+
+                if (qType === 'text') {
+                    if (acceptedAnswer) {
+                        autoGradedCount += 1;
+                        const acceptedList = acceptedAnswer
+                            .split(',')
+                            .map((a) => a.trim().toLowerCase())
+                            .filter(Boolean);
+                        correct = studentText !== '' && acceptedList.includes(studentText.toLowerCase());
+                        if (correct) score += 1;
+                    } else {
+                        pendingReview = true;
+                    }
+                } else if (qType === 'file_upload') {
+                    pendingReview = true;
+                } else {
+                    autoGradedCount += 1;
+                    correct = chosen === q.correctIndex;
+                    if (correct) score += 1;
+                }
+
                 return {
                     id: q.id as string,
-                    correctIndex: q.correctIndex as number,
+                    questionId: q.id as string,
+                    type: qType,
+                    text: String(q.text || ''),
+                    imageUrl: q.imageUrl || null,
+                    options: Array.isArray(q.options) ? q.options : [],
+                    correctIndex: (q.correctIndex ?? 0) as number,
                     chosen,
+                    selected: chosen,
+                    textAnswer: studentText || null,
+                    acceptedAnswer: acceptedAnswer || null,
+                    fileAnswer,
+                    pendingReview,
                     correct,
+                    isCorrect: correct,
                     explanation: (q.explanation || '') as string,
                 };
             });
@@ -2015,7 +2085,8 @@ export const handler = router({
                 subjects.find((s: any) => s.id === subjectId) ||
                 PROMOTION_RANK_ITEMS.find((r) => r.id === subjectId);
             const total = qs.length;
-            const percent = Math.round((score / total) * 100);
+            const gradingDenominator = autoGradedCount > 0 ? autoGradedCount : total;
+            const percent = gradingDenominator > 0 ? Math.round((score / gradingDenominator) * 100) : 0;
             const finalSubjectName = resolvedSubjectName || (subj ? subj.name : b.subjectName || 'General');
 
             // Official WAEC BECE Stanine Grading (Applied strictly for 100 questions sitting)
@@ -2077,6 +2148,7 @@ export const handler = router({
                     beceGrade,
                     beceGradeValue,
                     beceRemark,
+                    details: review,
                     assignmentId: b.assignmentId ? String(b.assignmentId) : null,
                     createdAt: Date.now(),
                 },
@@ -3043,17 +3115,29 @@ export const handler = router({
                 for (const cq of customQuestions) {
                     const qText = String(cq.text || '').trim();
                     if (!qText) continue;
+                    const qType = ['multiple_choice', 'text', 'file_upload'].includes(String(cq.type || ''))
+                        ? String(cq.type)
+                        : 'multiple_choice';
                     const qOpts = Array.isArray(cq.options) ? cq.options.map(String) : [];
-                    if (qOpts.length < 2) continue;
+                    if (qType === 'multiple_choice' && qOpts.filter((o: string) => o.trim() !== '').length < 2) continue;
                     const qCorrect = typeof cq.correctIndex === 'number' ? cq.correctIndex : 0;
                     const qExpl = String(cq.explanation || '').trim();
+                    const qAccepted = String(cq.acceptedAnswer || '').trim();
+                    const qLongAnswer = Boolean(cq.longAnswer);
+                    const qAllowedFiles = String(cq.allowedFileTypes || 'any').trim() || 'any';
+                    const qImageUrl = cq.imageUrl ? String(cq.imageUrl) : undefined;
                     const newQId = 'q_custom_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
 
                     const newQ = {
                         id: newQId,
+                        type: qType,
                         text: qText,
-                        options: qOpts,
-                        correctIndex: qCorrect,
+                        imageUrl: qImageUrl,
+                        options: qType === 'multiple_choice' ? qOpts : [],
+                        correctIndex: qType === 'multiple_choice' ? qCorrect : 0,
+                        acceptedAnswer: qType === 'text' ? qAccepted : '',
+                        longAnswer: qType === 'text' ? qLongAnswer : false,
+                        allowedFileTypes: qType === 'file_upload' ? qAllowedFiles : 'any',
                         explanation: qExpl,
                         level: gradeLevel,
                         subjectId: subId,

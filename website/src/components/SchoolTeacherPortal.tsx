@@ -36,6 +36,10 @@ import {
     Filter,
     Clock,
     ClipboardList,
+    Image as ImageIcon,
+    Type as TypeIcon,
+    ListChecks,
+    Paperclip,
 } from 'lucide-react';
 import type { Level } from './ExamHubPortal';
 
@@ -527,22 +531,55 @@ export function TeacherPortalView({
     const [poolSearch, setPoolSearch] = useState<string>('');
     const [expandedAssignmentId, setExpandedAssignmentId] = useState<string | null>(null);
 
-    // Custom teacher-authored question state
-    const [customQuestions, setCustomQuestions] = useState<
-        Array<{ text: string; options: string[]; correctIndex: number; explanation: string }>
-    >([
-        { text: '', options: ['', '', '', ''], correctIndex: 0, explanation: '' }
+    // Custom teacher-authored question state (Multiple Choice, Text, File Upload + optional question image)
+    type CustomQuestionItem = {
+        type: 'multiple_choice' | 'text' | 'file_upload';
+        text: string;
+        imageUrl?: string;
+        options: string[];
+        correctIndex: number;
+        acceptedAnswer: string;
+        longAnswer: boolean;
+        allowedFileTypes: 'any' | 'images_pdf' | 'documents';
+        explanation: string;
+    };
+
+    const createBlankCustomQuestion = (qType: 'multiple_choice' | 'text' | 'file_upload' = 'multiple_choice'): CustomQuestionItem => ({
+        type: qType,
+        text: '',
+        imageUrl: undefined,
+        options: ['', '', '', ''],
+        correctIndex: 0,
+        acceptedAnswer: '',
+        longAnswer: false,
+        allowedFileTypes: 'any',
+        explanation: '',
+    });
+
+    const [customQuestions, setCustomQuestions] = useState<CustomQuestionItem[]>([
+        createBlankCustomQuestion('multiple_choice')
     ]);
 
 
     const teacherAvailableLevels = useMemo(() => getSchoolAvailableLevels(user.schoolName, (user as any).schoolCategory), [user.schoolName, (user as any).schoolCategory]);
     const teacherAvailableSubjects = useMemo(() => getSchoolAvailableSubjects(user.schoolName, (user as any).schoolCategory), [user.schoolName, (user as any).schoolCategory]);
 
-    const handleAddCustomQuestion = () => {
+    const handleAddCustomQuestion = (qType: 'multiple_choice' | 'text' | 'file_upload' = 'multiple_choice') => {
         setCustomQuestions((prev) => [
             ...prev,
-            { text: '', options: ['', '', '', ''], correctIndex: 0, explanation: '' }
+            createBlankCustomQuestion(qType)
         ]);
+    };
+
+    const handleDuplicateCustomQuestion = (indexToCopy: number) => {
+        setCustomQuestions((prev) => {
+            const target = prev[indexToCopy];
+            if (!target) return prev;
+            const clone: CustomQuestionItem = { ...target, options: [...target.options] };
+            const next = [...prev];
+            next.splice(indexToCopy + 1, 0, clone);
+            return next;
+        });
     };
 
     const handleRemoveCustomQuestion = (indexToRemove: number) => {
@@ -554,7 +591,7 @@ export function TeacherPortalView({
 
     const handleUpdateCustomQuestion = (
         index: number,
-        field: 'text' | 'explanation' | 'correctIndex',
+        field: 'type' | 'text' | 'imageUrl' | 'explanation' | 'correctIndex' | 'acceptedAnswer' | 'longAnswer' | 'allowedFileTypes',
         val: any
     ) => {
         setCustomQuestions((prev) => {
@@ -562,6 +599,23 @@ export function TeacherPortalView({
             next[index] = { ...next[index], [field]: val };
             return next;
         });
+    };
+
+    const handleAttachQuestionImage = (qIndex: number, file: File | null) => {
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+            alert('Please select a valid image file (PNG, JPG, GIF, WebP).');
+            return;
+        }
+        if (file.size > 2 * 1024 * 1024) {
+            alert('Image is too large. Please upload an image under 2 MB.');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            handleUpdateCustomQuestion(qIndex, 'imageUrl', String(reader.result || ''));
+        };
+        reader.readAsDataURL(file);
     };
 
     const handleUpdateCustomOption = (qIndex: number, optIndex: number, text: string) => {
@@ -668,9 +722,7 @@ export function TeacherPortalView({
         setQuizMode('random');
         setSelectedManualQIds([]);
         setPoolSearch('');
-        setCustomQuestions([
-            { text: '', options: ['', '', '', ''], correctIndex: 0, explanation: '' }
-        ]);
+        setCustomQuestions([createBlankCustomQuestion('multiple_choice')]);
         setShowAssignModal(true);
     };
 
@@ -711,10 +763,12 @@ export function TeacherPortalView({
                 return;
             }
             for (let i = 0; i < validCustom.length; i++) {
-                const filledOptions = validCustom[i].options.filter((o) => o.trim() !== '');
-                if (filledOptions.length < 2) {
-                    alert(`Question #${i + 1} must have at least 2 answer options provided.`);
-                    return;
+                if (validCustom[i].type === 'multiple_choice') {
+                    const filledOptions = validCustom[i].options.filter((o) => o.trim() !== '');
+                    if (filledOptions.length < 2) {
+                        alert(`Question #${i + 1} (Multiple Choice) must have at least 2 answer options provided.`);
+                        return;
+                    }
                 }
             }
         }
@@ -744,9 +798,7 @@ export function TeacherPortalView({
                 setShowAssignModal(false);
                 setSelectedStudentIds([]);
                 setSelectedManualQIds([]);
-                setCustomQuestions([
-                    { text: '', options: ['', '', '', ''], correctIndex: 0, explanation: '' }
-                ]);
+                setCustomQuestions([createBlankCustomQuestion('multiple_choice')]);
                 setAssignSuccessMsg(`Successfully assigned "${quizTitle}" to ${selectedStudentIds.length} student(s)!`);
                 setTimeout(() => setAssignSuccessMsg(''), 5000);
                 loadData();
@@ -2026,98 +2078,282 @@ export function TeacherPortalView({
                             {/* Custom Teacher-Authored Questions Builder */}
                             {quizMode === 'custom' && (
                                 <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
-                                    <div className="flex items-center justify-between">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
                                         <div>
                                             <span className="text-xs font-bold text-slate-900 block">
                                                 Compose Teacher-Authored Quiz Questions ({customQuestions.length})
                                             </span>
                                             <span className="text-[11px] text-slate-500 block">
-                                                Write your questions, provide options, and click the radio button to select the correct answer.
+                                                Choose Multiple Choice, Text, or Upload File for each question, and optionally attach a diagram/image.
                                             </span>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={handleAddCustomQuestion}
-                                            className="inline-flex items-center gap-1.5 rounded-lg bg-[#364c83] px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-[#1f2d57] transition cursor-pointer"
-                                        >
-                                            <Plus size={13} />
-                                            <span>Add Question</span>
-                                        </button>
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddCustomQuestion('multiple_choice')}
+                                                className="inline-flex items-center gap-1 rounded-lg bg-[#364c83] px-2.5 py-1.5 text-[11px] font-bold text-white shadow-xs hover:bg-[#1f2d57] transition cursor-pointer"
+                                            >
+                                                <ListChecks size={13} />
+                                                <span>+ Choice</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddCustomQuestion('text')}
+                                                className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#364c83] shadow-2xs hover:bg-indigo-50 transition cursor-pointer"
+                                            >
+                                                <TypeIcon size={13} />
+                                                <span>+ Text</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddCustomQuestion('file_upload')}
+                                                className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#364c83] shadow-2xs hover:bg-indigo-50 transition cursor-pointer"
+                                            >
+                                                <Upload size={13} />
+                                                <span>+ Upload File</span>
+                                            </button>
+                                        </div>
                                     </div>
 
-                                    <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
+                                    <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
                                         {customQuestions.map((cq, qIdx) => (
                                             <div key={qIdx} className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-3 shadow-2xs">
-                                                <div className="flex items-center justify-between">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
                                                     <span className="text-xs font-bold text-[#364c83] flex items-center gap-1.5">
                                                         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-indigo-100 text-[11px]">
                                                             {qIdx + 1}
                                                         </span>
                                                         Question #{qIdx + 1}
                                                     </span>
-                                                    {customQuestions.length > 1 && (
+
+                                                    {/* Question Type Selector Pills */}
+                                                    <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5">
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleRemoveCustomQuestion(qIdx)}
-                                                            className="text-slate-400 hover:text-rose-600 p-1 text-xs font-semibold cursor-pointer"
-                                                            title="Remove question"
+                                                            onClick={() => handleUpdateCustomQuestion(qIdx, 'type', 'multiple_choice')}
+                                                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold transition cursor-pointer ${
+                                                                cq.type === 'multiple_choice'
+                                                                    ? 'bg-white text-[#364c83] shadow-2xs'
+                                                                    : 'text-slate-500 hover:text-slate-800'
+                                                            }`}
                                                         >
-                                                            <Trash2 size={13} />
+                                                            <ListChecks size={12} />
+                                                            <span>Multiple Choice</span>
                                                         </button>
-                                                    )}
-                                                </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleUpdateCustomQuestion(qIdx, 'type', 'text')}
+                                                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold transition cursor-pointer ${
+                                                                cq.type === 'text'
+                                                                    ? 'bg-white text-[#364c83] shadow-2xs'
+                                                                    : 'text-slate-500 hover:text-slate-800'
+                                                            }`}
+                                                        >
+                                                            <TypeIcon size={12} />
+                                                            <span>Text</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleUpdateCustomQuestion(qIdx, 'type', 'file_upload')}
+                                                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold transition cursor-pointer ${
+                                                                cq.type === 'file_upload'
+                                                                    ? 'bg-white text-[#364c83] shadow-2xs'
+                                                                    : 'text-slate-500 hover:text-slate-800'
+                                                            }`}
+                                                        >
+                                                            <Upload size={12} />
+                                                            <span>Upload File</span>
+                                                        </button>
+                                                    </div>
 
-                                                <div>
-                                                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                                                        Question Text <span className="text-rose-500">*</span>
-                                                    </label>
-                                                    <textarea
-                                                        rows={2}
-                                                        value={cq.text}
-                                                        onChange={(e) => handleUpdateCustomQuestion(qIdx, 'text', e.target.value)}
-                                                        placeholder={`Enter question #${qIdx + 1} text here...`}
-                                                        className="input w-full text-xs font-medium"
-                                                    />
-                                                </div>
-
-                                                <div>
-                                                    <label className="block text-[11px] font-bold text-slate-600 mb-1.5">
-                                                        Answer Choices &amp; Correct Option:
-                                                    </label>
-                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                                        {['A', 'B', 'C', 'D'].map((letter, optIdx) => (
-                                                            <div
-                                                                key={letter}
-                                                                className={`flex items-center gap-2 rounded-lg border p-2 text-xs transition ${
-                                                                    cq.correctIndex === optIdx
-                                                                        ? 'border-emerald-500 bg-emerald-50/60'
-                                                                        : 'border-slate-200 bg-white'
-                                                                }`}
+                                                    <div className="flex items-center gap-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDuplicateCustomQuestion(qIdx)}
+                                                            className="text-slate-400 hover:text-[#364c83] p-1 text-xs font-semibold cursor-pointer"
+                                                            title="Duplicate question"
+                                                        >
+                                                            <Copy size={13} />
+                                                        </button>
+                                                        {customQuestions.length > 1 && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleRemoveCustomQuestion(qIdx)}
+                                                                className="text-slate-400 hover:text-rose-600 p-1 text-xs font-semibold cursor-pointer"
+                                                                title="Remove question"
                                                             >
-                                                                <input
-                                                                    type="radio"
-                                                                    name={`cq_correct_${qIdx}`}
-                                                                    checked={cq.correctIndex === optIdx}
-                                                                    onChange={() => handleUpdateCustomQuestion(qIdx, 'correctIndex', optIdx)}
-                                                                    className="text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                                                                    title={`Mark option ${letter} as correct`}
-                                                                />
-                                                                <span className="font-bold text-slate-700 w-4">{letter}.</span>
-                                                                <input
-                                                                    type="text"
-                                                                    value={cq.options[optIdx] || ''}
-                                                                    onChange={(e) => handleUpdateCustomOption(qIdx, optIdx, e.target.value)}
-                                                                    placeholder={`Option ${letter}`}
-                                                                    className="flex-1 bg-transparent border-0 p-0 text-xs font-medium focus:ring-0 text-slate-900"
-                                                                />
-                                                            </div>
-                                                        ))}
+                                                                <Trash2 size={13} />
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
 
                                                 <div>
+                                                    <div className="flex items-center justify-between mb-1">
+                                                        <label className="block text-[11px] font-bold text-slate-600">
+                                                            Question Text <span className="text-rose-500">*</span>
+                                                        </label>
+                                                        <label className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 px-2 py-0.5 text-[11px] font-semibold text-[#364c83] cursor-pointer transition">
+                                                            <ImageIcon size={12} />
+                                                            <span>{cq.imageUrl ? 'Change Image' : 'Attach Image'}</span>
+                                                            <input
+                                                                type="file"
+                                                                accept="image/*"
+                                                                className="hidden"
+                                                                onChange={(e) => {
+                                                                    const f = e.target.files?.[0] || null;
+                                                                    handleAttachQuestionImage(qIdx, f);
+                                                                    e.target.value = '';
+                                                                }}
+                                                            />
+                                                        </label>
+                                                    </div>
+                                                    <textarea
+                                                        rows={2}
+                                                        value={cq.text}
+                                                        onChange={(e) => handleUpdateCustomQuestion(qIdx, 'text', e.target.value)}
+                                                        placeholder={
+                                                            cq.type === 'file_upload'
+                                                                ? `e.g. Use the attached diagram or upload your completed worksheet for question #${qIdx + 1}...`
+                                                                : `Enter question #${qIdx + 1} text here...`
+                                                        }
+                                                        className="input w-full text-xs font-medium"
+                                                    />
+
+                                                    {/* Optional Question Reference Image Preview */}
+                                                    {cq.imageUrl && (
+                                                        <div className="mt-2 relative inline-block rounded-lg border border-slate-200 bg-slate-50 p-1.5">
+                                                            <img
+                                                                src={cq.imageUrl}
+                                                                alt={`Question ${qIdx + 1} attachment`}
+                                                                className="max-h-36 rounded object-contain"
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleUpdateCustomQuestion(qIdx, 'imageUrl', undefined)}
+                                                                className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-600 text-white shadow hover:bg-rose-700 cursor-pointer"
+                                                                title="Remove attached image"
+                                                            >
+                                                                <X size={11} />
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* TYPE 1: MULTIPLE CHOICE */}
+                                                {cq.type === 'multiple_choice' && (
+                                                    <div>
+                                                        <label className="block text-[11px] font-bold text-slate-600 mb-1.5">
+                                                            Answer Choices &amp; Correct Option:
+                                                        </label>
+                                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                            {['A', 'B', 'C', 'D'].map((letter, optIdx) => (
+                                                                <div
+                                                                    key={letter}
+                                                                    className={`flex items-center gap-2 rounded-lg border p-2 text-xs transition ${
+                                                                        cq.correctIndex === optIdx
+                                                                            ? 'border-emerald-500 bg-emerald-50/60'
+                                                                            : 'border-slate-200 bg-white'
+                                                                    }`}
+                                                                >
+                                                                    <input
+                                                                        type="radio"
+                                                                        name={`cq_correct_${qIdx}`}
+                                                                        checked={cq.correctIndex === optIdx}
+                                                                        onChange={() => handleUpdateCustomQuestion(qIdx, 'correctIndex', optIdx)}
+                                                                        className="text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                                                        title={`Mark option ${letter} as correct`}
+                                                                    />
+                                                                    <span className="font-bold text-slate-700 w-4">{letter}.</span>
+                                                                    <input
+                                                                        type="text"
+                                                                        value={cq.options[optIdx] || ''}
+                                                                        onChange={(e) => handleUpdateCustomOption(qIdx, optIdx, e.target.value)}
+                                                                        placeholder={`Option ${letter}`}
+                                                                        className="flex-1 bg-transparent border-0 p-0 text-xs font-medium focus:ring-0 text-slate-900"
+                                                                    />
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* TYPE 2: TEXT ANSWER */}
+                                                {cq.type === 'text' && (
+                                                    <div className="rounded-lg border border-indigo-100 bg-indigo-50/30 p-3 space-y-2.5">
+                                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                                            <span className="text-[11px] font-bold text-[#364c83] flex items-center gap-1.5">
+                                                                <TypeIcon size={13} />
+                                                                Student Text Response Configuration
+                                                            </span>
+                                                            <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-700 cursor-pointer">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={cq.longAnswer}
+                                                                    onChange={(e) => handleUpdateCustomQuestion(qIdx, 'longAnswer', e.target.checked)}
+                                                                    className="rounded border-slate-300 text-[#364c83] focus:ring-[#364c83]"
+                                                                />
+                                                                <span>Long Answer (Paragraph)</span>
+                                                            </label>
+                                                        </div>
+                                                        <div className="rounded-md border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-slate-400 italic">
+                                                            {cq.longAnswer
+                                                                ? 'Student will see a multi-line text box to write a paragraph answer...'
+                                                                : 'Student will see a short text input box to type their answer...'}
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                                                Expected / Accepted Answer (Optional — for Auto-Grading):
+                                                            </label>
+                                                            <input
+                                                                type="text"
+                                                                value={cq.acceptedAnswer}
+                                                                onChange={(e) => handleUpdateCustomQuestion(qIdx, 'acceptedAnswer', e.target.value)}
+                                                                placeholder="Leave blank for teacher manual review, or enter accepted answer(s) separated by commas"
+                                                                className="input w-full text-xs bg-white"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* TYPE 3: UPLOAD FILE */}
+                                                {cq.type === 'file_upload' && (
+                                                    <div className="rounded-lg border border-indigo-100 bg-indigo-50/30 p-3 space-y-2.5">
+                                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                                            <span className="text-[11px] font-bold text-[#364c83] flex items-center gap-1.5">
+                                                                <Paperclip size={13} />
+                                                                Student File Upload Configuration
+                                                            </span>
+                                                            <span className="text-[10px] font-semibold text-slate-500">
+                                                                Max file size: 5 MB
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex flex-wrap items-center gap-3">
+                                                            <div className="inline-flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-500">
+                                                                <Upload size={14} className="text-[#364c83]" />
+                                                                <span>Upload file</span>
+                                                            </div>
+                                                            <div className="flex-1 min-w-[180px]">
+                                                                <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                                                                    Allowed File Types
+                                                                </label>
+                                                                <select
+                                                                    value={cq.allowedFileTypes}
+                                                                    onChange={(e) => handleUpdateCustomQuestion(qIdx, 'allowedFileTypes', e.target.value)}
+                                                                    className="input w-full text-xs py-1 bg-white"
+                                                                >
+                                                                    <option value="any">Any File (Images, PDF, Word, Excel, Text)</option>
+                                                                    <option value="images_pdf">Images &amp; PDF Only (JPG, PNG, PDF)</option>
+                                                                    <option value="documents">Documents Only (PDF, DOC, DOCX, TXT)</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                <div>
                                                     <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                                                        Explanation / Rationale (Optional):
+                                                        Explanation / Marking Guide (Optional):
                                                     </label>
                                                     <input
                                                         type="text"
@@ -2131,14 +2367,38 @@ export function TeacherPortalView({
                                         ))}
                                     </div>
 
-                                    <button
-                                        type="button"
-                                        onClick={handleAddCustomQuestion}
-                                        className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white py-2.5 text-xs font-bold text-[#364c83] hover:bg-slate-50 transition cursor-pointer"
-                                    >
-                                        <Plus size={14} />
-                                        <span>Add Another Question (#{customQuestions.length + 1})</span>
-                                    </button>
+                                    {/* Quick Start / Add Another Question Bar */}
+                                    <div className="rounded-xl border border-dashed border-slate-300 bg-white p-3">
+                                        <span className="block text-[11px] font-bold text-slate-600 mb-2">
+                                            Add Question #{customQuestions.length + 1} — Quick start with:
+                                        </span>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddCustomQuestion('multiple_choice')}
+                                                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50/70 hover:bg-indigo-50 hover:border-indigo-300 py-2 text-xs font-bold text-[#364c83] transition cursor-pointer"
+                                            >
+                                                <ListChecks size={14} />
+                                                <span>Multiple Choice</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddCustomQuestion('text')}
+                                                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50/70 hover:bg-indigo-50 hover:border-indigo-300 py-2 text-xs font-bold text-[#364c83] transition cursor-pointer"
+                                            >
+                                                <TypeIcon size={14} />
+                                                <span>Text</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddCustomQuestion('file_upload')}
+                                                className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50/70 hover:bg-indigo-50 hover:border-indigo-300 py-2 text-xs font-bold text-[#364c83] transition cursor-pointer"
+                                            >
+                                                <Upload size={14} />
+                                                <span>Upload File</span>
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
 
@@ -2406,32 +2666,116 @@ export function TeacherPortalView({
 
                         <div className="mt-4 space-y-4">
                             {selectedReview.details?.map((item: any, i: number) => {
+                                const qType = item.type || 'multiple_choice';
+                                const isPending = Boolean(item.pendingReview);
                                 const isCor = item.isCorrect || item.correct;
                                 const chosen = item.selected !== null && item.selected !== undefined ? item.selected : item.chosen;
+                                const cardBorder = isPending
+                                    ? 'border-amber-200 bg-amber-50/30'
+                                    : isCor
+                                    ? 'border-emerald-200 bg-emerald-50/30'
+                                    : 'border-rose-200 bg-rose-50/30';
                                 return (
-                                    <div key={item.id || i} className={`rounded-xl border p-4 text-xs ${isCor ? 'border-emerald-200 bg-emerald-50/30' : 'border-rose-200 bg-rose-50/30'}`}>
+                                    <div key={item.id || i} className={`rounded-xl border p-4 text-xs ${cardBorder}`}>
                                         <div className="flex items-center justify-between font-bold mb-1.5">
-                                            <span className="text-slate-700">Question {i + 1}</span>
-                                            <span className={`inline-flex items-center gap-1 font-bold ${isCor ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                                {isCor ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
-                                                {isCor ? 'Correct (+1)' : 'Wrong (0)'}
+                                            <span className="text-slate-700 flex items-center gap-1.5">
+                                                <span>Question {i + 1}</span>
+                                                {qType === 'text' && (
+                                                    <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-[#364c83]">Text</span>
+                                                )}
+                                                {qType === 'file_upload' && (
+                                                    <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-800">File Upload</span>
+                                                )}
                                             </span>
+                                            {isPending ? (
+                                                <span className="inline-flex items-center gap-1 font-bold text-amber-700">
+                                                    <Clock size={13} />
+                                                    Submitted for Review
+                                                </span>
+                                            ) : (
+                                                <span className={`inline-flex items-center gap-1 font-bold ${isCor ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                    {isCor ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
+                                                    {isCor ? 'Correct (+1)' : 'Wrong (0)'}
+                                                </span>
+                                            )}
                                         </div>
                                         <p className="font-semibold text-slate-900 mb-2.5">{item.text}</p>
-                                        <div className="space-y-1 mb-2">
-                                            {item.options?.map((opt: string, optIdx: number) => {
-                                                const isStudentChoice = chosen === optIdx;
-                                                const isTheCorrectOne = item.correctIndex === optIdx;
-                                                let style = 'text-slate-600 bg-white/60';
-                                                if (isTheCorrectOne) style = 'bg-emerald-100 text-emerald-900 font-bold border border-emerald-300';
-                                                else if (isStudentChoice && !isTheCorrectOne) style = 'bg-rose-100 text-rose-900 font-bold border border-rose-300 line-through';
-                                                return (
-                                                    <div key={optIdx} className={`px-2.5 py-1 rounded text-[11px] ${style}`}>
-                                                        {chr(optIdx)}) {opt} {isStudentChoice ? '(Student Choice)' : ''} {isTheCorrectOne ? '✓' : ''}
+                                        {item.imageUrl && (
+                                            <img
+                                                src={item.imageUrl}
+                                                alt={`Question ${i + 1} visual`}
+                                                className="mb-2.5 max-h-40 rounded-lg border border-slate-200 bg-white p-1 object-contain"
+                                            />
+                                        )}
+
+                                        {qType === 'text' ? (
+                                            <div className="space-y-1.5 mb-2">
+                                                <div className="rounded-lg border border-slate-200 bg-white p-2.5">
+                                                    <span className="block text-[10px] font-bold uppercase text-slate-400 mb-0.5">Student's Text Response</span>
+                                                    <p className="text-xs font-medium text-slate-900 whitespace-pre-wrap">
+                                                        {item.textAnswer || <span className="italic text-slate-400">No text answer submitted</span>}
+                                                    </p>
+                                                </div>
+                                                {item.acceptedAnswer && (
+                                                    <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-2">
+                                                        <span className="text-[11px] font-bold text-emerald-800">Expected Answer: </span>
+                                                        <span className="text-[11px] text-emerald-900">{item.acceptedAnswer}</span>
                                                     </div>
-                                                );
-                                            })}
-                                        </div>
+                                                )}
+                                            </div>
+                                        ) : qType === 'file_upload' ? (
+                                            <div className="mb-2">
+                                                {item.fileAnswer?.dataUrl ? (
+                                                    <div className="rounded-lg border border-indigo-200 bg-white p-2.5 space-y-2">
+                                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                                            <div className="flex items-center gap-2">
+                                                                <Paperclip size={14} className="text-[#364c83]" />
+                                                                <span className="font-bold text-slate-900">{item.fileAnswer.name}</span>
+                                                                {item.fileAnswer.size > 0 && (
+                                                                    <span className="text-[10px] text-slate-500">
+                                                                        ({(item.fileAnswer.size / 1024).toFixed(1)} KB)
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <a
+                                                                href={item.fileAnswer.dataUrl}
+                                                                download={item.fileAnswer.name}
+                                                                className="inline-flex items-center gap-1 rounded-md bg-[#364c83] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#1f2d57]"
+                                                            >
+                                                                <Download size={12} />
+                                                                Download File
+                                                            </a>
+                                                        </div>
+                                                        {String(item.fileAnswer.type || '').startsWith('image/') && (
+                                                            <img
+                                                                src={item.fileAnswer.dataUrl}
+                                                                alt={item.fileAnswer.name}
+                                                                className="max-h-48 rounded border border-slate-200 object-contain"
+                                                            />
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <p className="rounded-lg border border-slate-200 bg-white p-2.5 italic text-slate-400">
+                                                        No file was uploaded by the student.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-1 mb-2">
+                                                {item.options?.map((opt: string, optIdx: number) => {
+                                                    const isStudentChoice = chosen === optIdx;
+                                                    const isTheCorrectOne = item.correctIndex === optIdx;
+                                                    let style = 'text-slate-600 bg-white/60';
+                                                    if (isTheCorrectOne) style = 'bg-emerald-100 text-emerald-900 font-bold border border-emerald-300';
+                                                    else if (isStudentChoice && !isTheCorrectOne) style = 'bg-rose-100 text-rose-900 font-bold border border-rose-300 line-through';
+                                                    return (
+                                                        <div key={optIdx} className={`px-2.5 py-1 rounded text-[11px] ${style}`}>
+                                                            {chr(optIdx)}) {opt} {isStudentChoice ? '(Student Choice)' : ''} {isTheCorrectOne ? '✓' : ''}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
                                         {item.explanation && (
                                             <p className="text-[11px] text-slate-600 bg-white/80 p-2 rounded border border-slate-100">
                                                 <strong>Explanation:</strong> {item.explanation}

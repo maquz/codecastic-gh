@@ -145,11 +145,22 @@ type ContactMsg = {
     replyCount?: number;
     lastReply?: string;
 };
+type UploadedAnswerFile = {
+    name: string;
+    type: string;
+    size: number;
+    dataUrl: string;
+};
 type ExamQ = {
     id: string;
+    type?: 'multiple_choice' | 'text' | 'file_upload';
     text: string;
+    imageUrl?: string | null;
     options: string[];
     correctIndex?: number;
+    acceptedAnswer?: string;
+    longAnswer?: boolean;
+    allowedFileTypes?: 'any' | 'images_pdf' | 'documents' | string;
     explanation?: string;
     year?: string;
     category?: string;
@@ -158,7 +169,19 @@ type ExamQ = {
     subjectName?: string;
 };
 type AdminQ = ExamQ & { subjectId: string; level: Level; correctIndex: number; explanation: string };
-type ReviewItem = { id: string; correctIndex: number; chosen: number | null; correct: boolean; explanation: string };
+type ReviewItem = {
+    id: string;
+    type?: 'multiple_choice' | 'text' | 'file_upload';
+    imageUrl?: string | null;
+    correctIndex: number;
+    chosen: number | null;
+    textAnswer?: string | null;
+    acceptedAnswer?: string | null;
+    fileAnswer?: UploadedAnswerFile | null;
+    pendingReview?: boolean;
+    correct: boolean;
+    explanation: string;
+};
 type ResultRow = {
     id: string;
     studentName: string;
@@ -2294,6 +2317,8 @@ function StudentView({
             setPerQuestionSeconds(timer);
             setQuestionSecondsLeft(timer);
             setAnswers({});
+            setTextAnswers({});
+            setFileAnswers({});
             setIndex(0);
             setStage('exam');
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2411,6 +2436,8 @@ function StudentView({
     const [subject, setSubject] = useState<Subject | null>(null);
     const [questions, setQuestions] = useState<ExamQ[]>([]);
     const [answers, setAnswers] = useState<Record<string, number>>({});
+    const [textAnswers, setTextAnswers] = useState<Record<string, string>>({});
+    const [fileAnswers, setFileAnswers] = useState<Record<string, UploadedAnswerFile>>({});
     const [index, setIndex] = useState(0);
     const [submitting, setSubmitting] = useState(false);
     const [result, setResult] = useState<{ score: number; total: number; percent: number; review: ReviewItem[] } | null>(null);
@@ -2775,6 +2802,8 @@ function StudentView({
             setSubject(s);
             setQuestions(chosenQs);
             setAnswers({});
+            setTextAnswers({});
+            setFileAnswers({});
             setIndex(0);
             setResult(null);
 
@@ -2803,8 +2832,13 @@ function StudentView({
         setSubmitting(true);
         try {
             // When a candidate ends a quiz, do not include or summarize questions not taken
+            const isQAnswered = (q: ExamQ) => {
+                if (q.type === 'text') return (textAnswers[q.id] || '').trim() !== '';
+                if (q.type === 'file_upload') return Boolean(fileAnswers[q.id]?.dataUrl);
+                return answers[q.id] !== undefined;
+            };
             const takenQuestions = force
-                ? questions.filter((q) => answers[q.id] !== undefined)
+                ? questions.filter(isQAnswered)
                 : questions;
             const finalQuestions = takenQuestions.length > 0 ? takenQuestions : [questions[index] || questions[0]];
 
@@ -2822,6 +2856,8 @@ function StudentView({
                         subjectId: subject.id,
                         subjectName: subject.name,
                         answers,
+                        textAnswers,
+                        fileAnswers,
                         questionIds: finalQuestions.map((q) => q.id),
                         assignmentId: activeAssignmentId || null,
                     });
@@ -2840,21 +2876,53 @@ function StudentView({
 
             // Grade offline locally
             let offScore = 0;
+            let offAutoGraded = 0;
             const offReview: any[] = [];
             const offDetails: any[] = [];
             finalQuestions.forEach((q) => {
+                const qType = q.type || 'multiple_choice';
                 const chosen = answers[q.id];
+                const studentText = (textAnswers[q.id] || '').trim();
+                const fileAns = fileAnswers[q.id] || null;
+                const acceptedAnswer = (q.acceptedAnswer || '').trim();
                 const correct = typeof q.correctIndex === 'number' ? q.correctIndex : 0;
-                const isCorrect = chosen !== undefined && chosen !== null && Number(chosen) === correct;
-                if (isCorrect) offScore++;
+
+                let isCorrect = false;
+                let pendingReview = false;
+
+                if (qType === 'text') {
+                    if (acceptedAnswer) {
+                        offAutoGraded++;
+                        const acceptedList = acceptedAnswer
+                            .split(',')
+                            .map((a) => a.trim().toLowerCase())
+                            .filter(Boolean);
+                        isCorrect = studentText !== '' && acceptedList.includes(studentText.toLowerCase());
+                        if (isCorrect) offScore++;
+                    } else {
+                        pendingReview = true;
+                    }
+                } else if (qType === 'file_upload') {
+                    pendingReview = true;
+                } else {
+                    offAutoGraded++;
+                    isCorrect = chosen !== undefined && chosen !== null && Number(chosen) === correct;
+                    if (isCorrect) offScore++;
+                }
 
                 const item = {
                     id: q.id,
                     questionId: q.id,
+                    type: qType,
                     text: q.text,
+                    imageUrl: q.imageUrl || null,
                     options: q.options,
                     chosen: chosen !== undefined ? chosen : null,
                     selected: chosen !== undefined ? chosen : null,
+                    textAnswer: studentText || null,
+                    acceptedAnswer: acceptedAnswer || null,
+                    fileAnswer: fileAns,
+                    pendingReview,
                     correctIndex: correct,
                     isCorrect,
                     correct: isCorrect,
@@ -2867,7 +2935,8 @@ function StudentView({
             });
 
             const totalQ = finalQuestions.length;
-            const percent = totalQ > 0 ? Math.round((offScore / totalQ) * 100) : 0;
+            const denom = offAutoGraded > 0 ? offAutoGraded : totalQ;
+            const percent = denom > 0 ? Math.round((offScore / denom) * 100) : 0;
             const passed = percent >= 50;
 
             const offId = 'offline-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
@@ -2943,6 +3012,8 @@ function StudentView({
         setSubject(null);
         setQuestions([]);
         setAnswers({});
+        setTextAnswers({});
+        setFileAnswers({});
         setResult(null);
         setNotice('');
         loadStudentStats().catch(() => undefined);
@@ -2960,6 +3031,8 @@ function StudentView({
         setSubject({ id: 'starred', name: 'Starred Questions Revision' });
         setQuestions(pool);
         setAnswers({});
+        setTextAnswers({});
+        setFileAnswers({});
         setIndex(0);
         setResult(null);
         setNotice('');
@@ -3009,26 +3082,68 @@ function StudentView({
     /* ---------------- Exam ---------------- */
     if (stage === 'exam' && subject && level !== null) {
         const q = questions[index];
+        const qType = q.type || 'multiple_choice';
         const isLast = index === questions.length - 1;
         const selectedOption = answers[q.id];
-        const isAnswered = selectedOption !== undefined;
-        const isCorrectChoice = isAnswered && q.correctIndex !== undefined && selectedOption === q.correctIndex;
+        const currentTextAns = textAnswers[q.id] || '';
+        const currentFileAns = fileAnswers[q.id] || null;
+        const isAnswered =
+            qType === 'text'
+                ? currentTextAns.trim() !== ''
+                : qType === 'file_upload'
+                ? Boolean(currentFileAns?.dataUrl)
+                : selectedOption !== undefined;
+        const isCorrectChoice = qType === 'multiple_choice' && isAnswered && q.correctIndex !== undefined && selectedOption === q.correctIndex;
 
         // Basic 4 - 9, BECE, SHS 1 - 3, and WASSCE are school candidates who receive explanations at the end
         const isSchoolCandidate = level !== 'GES-PROMO' && activeSlug !== 'ges-promotion' && level !== 'GTLE' && activeSlug !== 'gtle';
 
         // Calculate live score
         const liveScore = questions.reduce((acc, curr) => {
+            if ((curr.type || 'multiple_choice') !== 'multiple_choice') return acc;
             const ans = answers[curr.id];
             return ans !== undefined && curr.correctIndex !== undefined && ans === curr.correctIndex ? acc + 1 : acc;
         }, 0);
-        const answeredCount = questions.filter((x) => answers[x.id] !== undefined).length;
+        const answeredCount = questions.filter((x) => {
+            if (x.type === 'text') return (textAnswers[x.id] || '').trim() !== '';
+            if (x.type === 'file_upload') return Boolean(fileAnswers[x.id]?.dataUrl);
+            return answers[x.id] !== undefined;
+        }).length;
         const livePercent = answeredCount > 0 ? Math.round((liveScore / answeredCount) * 100) : 0;
 
         const handleSelectOption = (optIdx: number) => {
             if (!isSchoolCandidate && isAnswered) return; // Locked once answered only for adult study tracks
             setAnswers((prev) => ({ ...prev, [q.id]: optIdx }));
         };
+
+        const handleStudentFileUpload = (file: File | null) => {
+            if (!file) return;
+            if (file.size > 5 * 1024 * 1024) {
+                setNotice('File is too large. Maximum allowed file size is 5 MB.');
+                return;
+            }
+            setNotice('');
+            const reader = new FileReader();
+            reader.onload = () => {
+                setFileAnswers((prev) => ({
+                    ...prev,
+                    [q.id]: {
+                        name: file.name,
+                        type: file.type || 'application/octet-stream',
+                        size: file.size,
+                        dataUrl: String(reader.result || ''),
+                    },
+                }));
+            };
+            reader.readAsDataURL(file);
+        };
+
+        const fileAcceptAttr =
+            q.allowedFileTypes === 'images_pdf'
+                ? 'image/*,.pdf'
+                : q.allowedFileTypes === 'documents'
+                ? '.pdf,.doc,.docx,.txt,.rtf'
+                : '*/*';
 
         return (
             <div className="mx-auto max-w-2xl pb-24">
@@ -3133,10 +3248,14 @@ function StudentView({
                                 Question {index + 1} of {questions.length}
                             </span>
                             {isAnswered && (
-                                isSchoolCandidate ? (
+                                isSchoolCandidate || qType !== 'multiple_choice' ? (
                                     <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2.5 py-1 text-xs font-bold text-[#364c83]">
                                         <CheckCircle2 size={13} />
-                                        Option {LETTERS[selectedOption]} Selected
+                                        {qType === 'text'
+                                            ? 'Text Answer Entered'
+                                            : qType === 'file_upload'
+                                            ? 'File Attached'
+                                            : `Option ${LETTERS[selectedOption]} Selected`}
                                     </span>
                                 ) : (
                                     <span
@@ -3183,83 +3302,203 @@ function StudentView({
 
                     <div className="mt-4">
                         <FormattedQuestionText text={q.text} className="text-base sm:text-lg font-semibold text-slate-900" />
+                        {q.imageUrl && (
+                            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-2.5 flex justify-center">
+                                <img
+                                    src={q.imageUrl}
+                                    alt={`Reference visual for Question ${index + 1}`}
+                                    className="max-h-72 rounded-lg object-contain"
+                                />
+                            </div>
+                        )}
                     </div>
 
-                    {/* Answer Options */}
-                    <div className="mt-5 space-y-2.5">
-                        {(Array.isArray(q.options) ? q.options : []).map((opt, i) => {
-                            const isSelected = selectedOption === i;
-                            const isThisCorrect = q.correctIndex === i;
-
-                            let btnStyle = 'border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-800';
-                            let badgeStyle = 'bg-slate-100 text-slate-600';
-
-                            if (isSchoolCandidate) {
-                                // School Candidate mode: highlight selection without spoiling correctness or explanation
-                                if (isSelected) {
-                                    btnStyle = 'border-[#364c83] bg-indigo-50/80 text-[#364c83] font-semibold ring-2 ring-[#364c83]/20';
-                                    badgeStyle = 'bg-[#364c83] text-white';
-                                } else {
-                                    btnStyle = 'border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-800';
-                                    badgeStyle = 'bg-slate-100 text-slate-600';
-                                }
-                            } else if (isAnswered) {
-                                // Adult study / GES Promotion instant grading mode
-                                if (isThisCorrect) {
-                                    btnStyle =
-                                        'border-emerald-500 bg-emerald-50 text-emerald-950 font-medium ring-1 ring-emerald-500/30';
-                                    badgeStyle = 'bg-emerald-600 text-white';
-                                } else if (isSelected && !isThisCorrect) {
-                                    btnStyle =
-                                        'border-rose-400 bg-rose-50 text-rose-950 font-medium ring-1 ring-rose-400/30';
-                                    badgeStyle = 'bg-rose-600 text-white';
-                                } else {
-                                    btnStyle = 'border-slate-200 bg-slate-50/40 text-slate-400 opacity-60';
-                                    badgeStyle = 'bg-slate-100 text-slate-400';
-                                }
-                            }
-
-                            return (
-                                <button
-                                    key={i}
-                                    type="button"
-                                    disabled={!isSchoolCandidate && isAnswered}
-                                    onClick={() => handleSelectOption(i)}
-                                    className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3.5 text-left text-sm transition-all ${btnStyle}`}
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <span
-                                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${badgeStyle}`}
-                                        >
-                                            {LETTERS[i]}
-                                        </span>
-                                        <span className="leading-snug">{opt}</span>
+                    {/* Answer Area: Text, Upload File, or Multiple Choice */}
+                    {qType === 'text' ? (
+                        <div className="mt-5 space-y-2">
+                            <label className="block text-xs font-bold text-slate-600">
+                                Enter your answer below:
+                            </label>
+                            {q.longAnswer ? (
+                                <textarea
+                                    rows={5}
+                                    value={currentTextAns}
+                                    onChange={(e) =>
+                                        setTextAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))
+                                    }
+                                    placeholder="Type your detailed answer here..."
+                                    className="input w-full text-sm leading-relaxed bg-white"
+                                />
+                            ) : (
+                                <input
+                                    type="text"
+                                    value={currentTextAns}
+                                    onChange={(e) =>
+                                        setTextAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))
+                                    }
+                                    placeholder="Type your short answer here..."
+                                    className="input w-full text-sm bg-white"
+                                />
+                            )}
+                            <p className="text-[11px] text-slate-400">
+                                Your response is saved automatically as you type.
+                            </p>
+                        </div>
+                    ) : qType === 'file_upload' ? (
+                        <div className="mt-5 space-y-3">
+                            {currentFileAns ? (
+                                <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2.5">
+                                            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                                                <Paperclip size={18} />
+                                            </span>
+                                            <div>
+                                                <p className="text-sm font-bold text-slate-900">{currentFileAns.name}</p>
+                                                <p className="text-[11px] text-slate-500">
+                                                    {(currentFileAns.size / 1024).toFixed(1)} KB &middot; Ready for submission
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <label className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer transition">
+                                                <Upload size={13} />
+                                                <span>Replace</span>
+                                                <input
+                                                    type="file"
+                                                    accept={fileAcceptAttr}
+                                                    className="hidden"
+                                                    onChange={(e) => {
+                                                        handleStudentFileUpload(e.target.files?.[0] || null);
+                                                        e.target.value = '';
+                                                    }}
+                                                />
+                                            </label>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    setFileAnswers((prev) => {
+                                                        const next = { ...prev };
+                                                        delete next[q.id];
+                                                        return next;
+                                                    })
+                                                }
+                                                className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 cursor-pointer transition"
+                                            >
+                                                <Trash2 size={13} />
+                                                <span>Remove</span>
+                                            </button>
+                                        </div>
                                     </div>
-                                    {isSchoolCandidate && isSelected && (
-                                        <span className="flex items-center gap-1 text-xs font-bold text-[#364c83]">
-                                            <CheckCircle2 size={16} />
-                                            Selected
-                                        </span>
+                                    {currentFileAns.type.startsWith('image/') && (
+                                        <img
+                                            src={currentFileAns.dataUrl}
+                                            alt={currentFileAns.name}
+                                            className="max-h-56 rounded-lg border border-slate-200 bg-white p-1 object-contain"
+                                        />
                                     )}
-                                    {!isSchoolCandidate && isAnswered && isThisCorrect && (
-                                        <span className="flex items-center gap-1 text-xs font-bold text-emerald-700">
-                                            <CheckCircle2 size={16} />
-                                            Correct Answer
-                                        </span>
-                                    )}
-                                    {!isSchoolCandidate && isAnswered && isSelected && !isThisCorrect && (
-                                        <span className="flex items-center gap-1 text-xs font-bold text-rose-600">
-                                            <XCircle size={16} />
-                                            Your Answer
-                                        </span>
-                                    )}
-                                </button>
-                            );
-                        })}
-                    </div>
+                                </div>
+                            ) : (
+                                <label className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/70 hover:border-[#364c83] hover:bg-indigo-50/40 px-6 py-8 text-center cursor-pointer transition">
+                                    <span className="flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100 text-[#364c83]">
+                                        <Upload size={20} />
+                                    </span>
+                                    <span className="text-sm font-bold text-[#364c83]">Upload file</span>
+                                    <span className="text-xs text-slate-500">
+                                        {q.allowedFileTypes === 'images_pdf'
+                                            ? 'Allowed: Images (JPG, PNG) or PDF • Max 5 MB'
+                                            : q.allowedFileTypes === 'documents'
+                                            ? 'Allowed: PDF, Word (DOC/DOCX), Text • Max 5 MB'
+                                            : 'Click to browse and attach your file (Image, PDF, Word, etc.) • Max 5 MB'}
+                                    </span>
+                                    <input
+                                        type="file"
+                                        accept={fileAcceptAttr}
+                                        className="hidden"
+                                        onChange={(e) => {
+                                            handleStudentFileUpload(e.target.files?.[0] || null);
+                                            e.target.value = '';
+                                        }}
+                                    />
+                                </label>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="mt-5 space-y-2.5">
+                            {(Array.isArray(q.options) ? q.options : []).map((opt, i) => {
+                                const isSelected = selectedOption === i;
+                                const isThisCorrect = q.correctIndex === i;
+
+                                let btnStyle = 'border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-800';
+                                let badgeStyle = 'bg-slate-100 text-slate-600';
+
+                                if (isSchoolCandidate) {
+                                    // School Candidate mode: highlight selection without spoiling correctness or explanation
+                                    if (isSelected) {
+                                        btnStyle = 'border-[#364c83] bg-indigo-50/80 text-[#364c83] font-semibold ring-2 ring-[#364c83]/20';
+                                        badgeStyle = 'bg-[#364c83] text-white';
+                                    } else {
+                                        btnStyle = 'border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-800';
+                                        badgeStyle = 'bg-slate-100 text-slate-600';
+                                    }
+                                } else if (isAnswered) {
+                                    // Adult study / GES Promotion instant grading mode
+                                    if (isThisCorrect) {
+                                        btnStyle =
+                                            'border-emerald-500 bg-emerald-50 text-emerald-950 font-medium ring-1 ring-emerald-500/30';
+                                        badgeStyle = 'bg-emerald-600 text-white';
+                                    } else if (isSelected && !isThisCorrect) {
+                                        btnStyle =
+                                            'border-rose-400 bg-rose-50 text-rose-950 font-medium ring-1 ring-rose-400/30';
+                                        badgeStyle = 'bg-rose-600 text-white';
+                                    } else {
+                                        btnStyle = 'border-slate-200 bg-slate-50/40 text-slate-400 opacity-60';
+                                        badgeStyle = 'bg-slate-100 text-slate-400';
+                                    }
+                                }
+
+                                return (
+                                    <button
+                                        key={i}
+                                        type="button"
+                                        disabled={!isSchoolCandidate && isAnswered}
+                                        onClick={() => handleSelectOption(i)}
+                                        className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3.5 text-left text-sm transition-all ${btnStyle}`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <span
+                                                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${badgeStyle}`}
+                                            >
+                                                {LETTERS[i]}
+                                            </span>
+                                            <span className="leading-snug">{opt}</span>
+                                        </div>
+                                        {isSchoolCandidate && isSelected && (
+                                            <span className="flex items-center gap-1 text-xs font-bold text-[#364c83]">
+                                                <CheckCircle2 size={16} />
+                                                Selected
+                                            </span>
+                                        )}
+                                        {!isSchoolCandidate && isAnswered && isThisCorrect && (
+                                            <span className="flex items-center gap-1 text-xs font-bold text-emerald-700">
+                                                <CheckCircle2 size={16} />
+                                                Correct Answer
+                                            </span>
+                                        )}
+                                        {!isSchoolCandidate && isAnswered && isSelected && !isThisCorrect && (
+                                            <span className="flex items-center gap-1 text-xs font-bold text-rose-600">
+                                                <XCircle size={16} />
+                                                Your Answer
+                                            </span>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
 
                     {/* Instant Explanation & Scoring Card (only for adult study tracks; candidates from Basic 4 - 9 and SHS receive explanations at the end) */}
-                    {!isSchoolCandidate && isAnswered && (
+                    {!isSchoolCandidate && qType === 'multiple_choice' && isAnswered && (
                         <div
                             className={`mt-5 rounded-xl border p-4.5 text-xs transition-all ${
                                 isCorrectChoice
@@ -3528,16 +3767,29 @@ function StudentView({
                 <div className="mt-3 space-y-3.5">
                     {questions.map((q, i) => {
                         const r = reviewById.get(q.id);
+                        const qType = r?.type || q.type || 'multiple_choice';
+                        const isPending = Boolean(r?.pendingReview);
                         const chosen = r ? r.chosen : answers[q.id];
-                        const isAnswered = chosen !== undefined && chosen !== null && chosen !== -1;
+                        const studentTextAns = r?.textAnswer ?? (textAnswers[q.id]?.trim() || null);
+                        const studentFileAns = r?.fileAnswer ?? (fileAnswers[q.id] || null);
+                        const acceptedAns = r?.acceptedAnswer ?? (q.acceptedAnswer || null);
+                        const qImg = r?.imageUrl || q.imageUrl || null;
+                        const isAnswered =
+                            qType === 'text'
+                                ? Boolean(studentTextAns)
+                                : qType === 'file_upload'
+                                ? Boolean(studentFileAns?.dataUrl)
+                                : chosen !== undefined && chosen !== null && chosen !== -1;
                         const correctIndex = typeof q.correctIndex === 'number' ? q.correctIndex : (r?.correctIndex ?? 0);
-                        const isCorrect = r ? r.correct : (isAnswered && chosen === correctIndex);
+                        const isCorrect = r ? r.correct : (qType === 'multiple_choice' && isAnswered && chosen === correctIndex);
                         const explanationText = (r && r.explanation) || q.explanation || '';
 
                         return (
                             <div key={q.id} className="rounded-xl border border-slate-200 bg-white p-4.5 shadow-2xs">
                                 <div className="flex items-start gap-2.5">
-                                    {isCorrect ? (
+                                    {isPending ? (
+                                        <Clock className="mt-0.5 shrink-0 text-amber-600" size={18} />
+                                    ) : isCorrect ? (
                                         <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-600" size={18} />
                                     ) : (
                                         <XCircle className="mt-0.5 shrink-0 text-red-500" size={18} />
@@ -3545,34 +3797,103 @@ function StudentView({
                                     <div className="text-sm font-medium text-slate-900 flex-1">
                                         <span className="font-bold text-[#364c83] mr-1">{i + 1}.</span>
                                         <FormattedQuestionText text={q.text} />
+                                        {qImg && (
+                                            <img
+                                                src={qImg}
+                                                alt={`Question ${i + 1} visual`}
+                                                className="mt-2 max-h-48 rounded-lg border border-slate-200 bg-slate-50 p-1 object-contain"
+                                            />
+                                        )}
                                     </div>
                                 </div>
                                 <div className="mt-3 space-y-1.5 pl-6">
-                                    {(Array.isArray(q.options) ? q.options : []).map((opt, oi) => {
-                                        const isCorrectChoice = oi === correctIndex;
-                                        const isChosenWrong = isAnswered && oi === chosen && !isCorrect;
-                                        return (
-                                            <p
-                                                key={oi}
-                                                className={`rounded-md px-2.5 py-1.5 text-sm ${
-                                                    isCorrectChoice
-                                                        ? 'bg-emerald-50 font-medium text-emerald-800'
-                                                        : isChosenWrong
-                                                        ? 'bg-red-50 text-red-700 font-medium'
-                                                        : 'text-slate-500'
-                                                }`}
-                                            >
-                                                <span className="font-bold mr-1.5">{LETTERS[oi]}.</span>
-                                                {opt}
-                                                {isCorrectChoice && ' (correct answer)'}
-                                                {isChosenWrong && ' (your answer)'}
-                                            </p>
-                                        );
-                                    })}
-                                    {!isAnswered && (
-                                        <p className="mt-1 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 border border-amber-200/70 inline-block">
-                                            Question was not answered
-                                        </p>
+                                    {qType === 'text' ? (
+                                        <div className="space-y-1.5">
+                                            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-2.5 text-sm">
+                                                <span className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">Your Answer</span>
+                                                <p className="text-slate-900 whitespace-pre-wrap">
+                                                    {studentTextAns || <span className="italic text-slate-400">No text answer submitted</span>}
+                                                </p>
+                                            </div>
+                                            {acceptedAns && (
+                                                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-900">
+                                                    <strong>Expected Answer:</strong> {acceptedAns}
+                                                </div>
+                                            )}
+                                            {isPending && (
+                                                <p className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 border border-amber-200/70">
+                                                    <Clock size={12} />
+                                                    Submitted for Teacher Review
+                                                </p>
+                                            )}
+                                        </div>
+                                    ) : qType === 'file_upload' ? (
+                                        <div className="space-y-1.5">
+                                            {studentFileAns?.dataUrl ? (
+                                                <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-2.5 space-y-2">
+                                                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                                        <span className="flex items-center gap-1.5 font-bold text-slate-900">
+                                                            <Paperclip size={13} className="text-[#364c83]" />
+                                                            {studentFileAns.name}
+                                                        </span>
+                                                        <a
+                                                            href={studentFileAns.dataUrl}
+                                                            download={studentFileAns.name}
+                                                            className="inline-flex items-center gap-1 rounded-md bg-white border border-indigo-200 px-2 py-0.5 text-[11px] font-bold text-[#364c83] hover:bg-indigo-50"
+                                                        >
+                                                            <Download size={11} />
+                                                            Download
+                                                        </a>
+                                                    </div>
+                                                    {String(studentFileAns.type || '').startsWith('image/') && (
+                                                        <img
+                                                            src={studentFileAns.dataUrl}
+                                                            alt={studentFileAns.name}
+                                                            className="max-h-44 rounded border border-slate-200 bg-white object-contain"
+                                                        />
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <p className="mt-1 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 border border-amber-200/70 inline-block">
+                                                    No file was uploaded
+                                                </p>
+                                            )}
+                                            {isPending && (
+                                                <p className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 border border-amber-200/70">
+                                                    <Clock size={12} />
+                                                    Submitted for Teacher Review
+                                                </p>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            {(Array.isArray(q.options) ? q.options : []).map((opt, oi) => {
+                                                const isCorrectChoice = oi === correctIndex;
+                                                const isChosenWrong = isAnswered && oi === chosen && !isCorrect;
+                                                return (
+                                                    <p
+                                                        key={oi}
+                                                        className={`rounded-md px-2.5 py-1.5 text-sm ${
+                                                            isCorrectChoice
+                                                                ? 'bg-emerald-50 font-medium text-emerald-800'
+                                                                : isChosenWrong
+                                                                ? 'bg-red-50 text-red-700 font-medium'
+                                                                : 'text-slate-500'
+                                                        }`}
+                                                    >
+                                                        <span className="font-bold mr-1.5">{LETTERS[oi]}.</span>
+                                                        {opt}
+                                                        {isCorrectChoice && ' (correct answer)'}
+                                                        {isChosenWrong && ' (your answer)'}
+                                                    </p>
+                                                );
+                                            })}
+                                            {!isAnswered && (
+                                                <p className="mt-1 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 border border-amber-200/70 inline-block">
+                                                    Question was not answered
+                                                </p>
+                                            )}
+                                        </>
                                     )}
 
                                     {/* Prominent explanation block at the end */}
